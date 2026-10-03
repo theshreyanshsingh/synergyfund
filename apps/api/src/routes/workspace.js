@@ -214,18 +214,41 @@ workspaceRouter.get(
     const loans = await Loan.find({ propertyId: { $in: properties.map((property) => property._id) } })
     const names = new Map(properties.map((property) => [String(property._id), property.address]))
     res.json({
-      items: loans.map((loan) => ({
-        id: String(loan._id),
-        propertyId: String(loan.propertyId),
-        address: names.get(String(loan.propertyId)) || "",
-        lender: loan.lender || "Not provided",
-        balance: loan.balance ?? null,
-        payment: loan.payment ?? null,
-        maturity: loan.maturity || "",
-        termsStatus: loan.termsStatus,
-        importSource: loan.importSource || null,
-      })),
+      items: loans.map((loan) => presentLoan(loan, names)),
     })
+  }),
+)
+
+workspaceRouter.post(
+  "/loans",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const lender = String(req.body.lender || "").trim()
+    if (!lender) {
+      sendError(res, 400, "Enter the lender.")
+      return
+    }
+    if (!req.body.propertyId) {
+      sendError(res, 400, "Choose the property this loan is on.")
+      return
+    }
+    const property = await Property.findOne({ _id: req.body.propertyId, ...propertyFilter(req.user) })
+    if (!property) {
+      sendError(res, 404, "That property is not available.")
+      return
+    }
+    const loan = await Loan.create({
+      propertyId: property._id,
+      lender,
+      loanNumber: String(req.body.loanNumber || "").trim(),
+      balance: optionalNumber(req.body.balance),
+      payment: optionalNumber(req.body.payment),
+      originalAmount: optionalNumber(req.body.originalAmount),
+      maturity: String(req.body.maturity || ""),
+      termsStatus: req.body.termsStatus === "Verified" ? "Verified" : "Needs verification",
+    })
+    await recordActivity({ user: req.user, title: "Loan recorded", detail: `${lender} · ${property.address}`, propertyId: property._id })
+    res.status(201).json({ loan: presentLoan(loan, new Map([[String(property._id), property.address]])) })
   }),
 )
 
@@ -683,6 +706,26 @@ function shiftKey(key, days) {
   const date = new Date(year, month - 1, day)
   date.setDate(date.getDate() + days)
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
+}
+
+function presentLoan(loan, names) {
+  return {
+    id: String(loan._id),
+    propertyId: loan.propertyId ? String(loan.propertyId) : "",
+    address: names.get(String(loan.propertyId || "")) || "",
+    lender: loan.lender || "Not provided",
+    balance: loan.balance ?? null,
+    payment: loan.payment ?? null,
+    maturity: loan.maturity || "",
+    termsStatus: loan.termsStatus,
+    importSource: loan.importSource || null,
+  }
+}
+
+function optionalNumber(value) {
+  if (value === "" || value == null) return undefined
+  const number = Number(value)
+  return Number.isFinite(number) ? number : undefined
 }
 
 function presentTask(task) {
