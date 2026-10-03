@@ -1,0 +1,16 @@
+{
+  "name": "synergifund",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,magenta \"npm run dev -w @synergifund/api\" \"npm run dev -w @synergifund/web\"",
+    "dev:api": "npm run dev -w @synergifund/api",
+    "dev:web": "npm run dev -w @synergifund/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
