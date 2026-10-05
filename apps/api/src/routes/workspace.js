@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { can, isRole, knownPermissions, permissionOverrides, permissionsFor, PERMISSIONS } from "@synergifund/shared"
+import { can, ensureTaskPermissions, isRole, permissionOverrides, permissionsFor, PERMISSIONS } from "@synergifund/shared"
 import {
   Activity,
   AgentThread,
@@ -9,6 +9,7 @@ import {
   Draw,
   DrawBudget,
   Expense,
+  Lender,
   Loan,
   MailMessage,
   Notification,
@@ -18,12 +19,13 @@ import {
   Task,
   User,
 } from "../models/index.js"
-import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
+import { asyncHandler, requireAnyPermission, requirePermission, sendError } from "../lib/http.js"
 import { publicUser } from "../lib/serialize.js"
 import { propertyFilter } from "../services/access.js"
 import { refreshRehabRemaining } from "./draws.js"
 import { answerQuestion } from "../services/agent.js"
 import { saveUploadedFile, upload } from "../services/files.js"
+import { ensureLenders, lenderForName, presentLender } from "../services/lenders.js"
 import { notify, recordActivity } from "../services/notify.js"
 
 export const workspaceRouter = Router()
@@ -45,7 +47,7 @@ workspaceRouter.get(
     const arv = sum(properties, "arv")
     const rehab = sum(properties, "rehabBudget")
     const rent = sum(properties, "actualRent")
-    const balance = loans.reduce((total, loan) => total + Number(loan.balance || 0), 0)
+    const monthlyMortgage = loans.reduce((total, loan) => total + Number(loan.payment || 0), 0)
     const received = draws.filter((draw) => draw.status === "Funded").reduce((total, draw) => total + Number(draw.fundedAmount ?? draw.amount ?? 0), 0)
     const undrawn = properties.reduce((total, property) => {
       const schedule = drawSchedule(property, budgets, draws)
@@ -78,10 +80,21 @@ workspaceRouter.get(
       series("Budget", properties.filter((property) => property.rehabBudget != null).map((property) => ({ at: property.createdAt, amount: Number(property.rehabBudget) })), months, days),
       series("Costs", rehabCosts.map((expense) => ({ at: expense.date || expense.createdAt, amount: Number(expense.amount || 0) })), months, days),
     ]))
-    cards.push(lineCard("Loans and rent", currency(balance), "Loan balances and rent as they were recorded", `${currency(rent)} rent on file`, true, [
-      series("Loans", loans.map((loan) => ({ at: loan.createdAt, amount: Number(loan.balance || 0) })), months, days),
-      series("Rent", properties.filter((property) => property.actualRent != null).map((property) => ({ at: property.createdAt, amount: Number(property.actualRent) })), months, days),
-    ]))
+    const periods = days / 30
+    const projectedMortgage = monthlyMortgage * periods
+    const projectedRent = rent * periods
+    cards.push({
+      id: "Loans and rent",
+      title: "Mortgage payments",
+      value: currency(projectedMortgage),
+      hint: `Scheduled for the next ${days} days`,
+      note: `${currency(projectedRent)} rent on file · ${currency(projectedRent - projectedMortgage)} after scheduled mortgage payments. Only recorded monthly schedules are included.`,
+      money: true,
+      lines: [
+        scheduledSeries("Mortgage", monthlyMortgage, projectedMortgage, months),
+        scheduledSeries("Rent", rent, projectedRent, months),
+      ],
+    })
     cards.push(lineCard("Open work", String(openTasks.length), "Tasks added over the last months", `${verify.length} marked Verify · ${properties.filter((property) => property.purchasePrice == null).length} missing a purchase price`, false, [
       series("Tasks", tasks.map((task) => ({ at: task.createdAt, amount: 1 })), months, days),
       series("Verify", tasks.filter((task) => (task.labels || []).includes("Verify")).map((task) => ({ at: task.createdAt, amount: 1 })), months, days),
@@ -89,12 +102,26 @@ workspaceRouter.get(
     const bills = req.permissions.includes("expenses.read")
       ? await Bill.find({ $or: [{ propertyId: { $in: ids } }, { propertyId: null }] })
       : []
+    const names = new Map(properties.map((property) => [String(property._id), property.address]))
     res.json({
       days,
       labels,
+      attention: attentionItems({ properties, budgets, draws, loans, bills, tasks: openTasks, names }),
       projection: expenseProjection(expenses, bills, days),
+      order: cleanOverviewOrder(req.user.overviewOrder),
       cards: cards.map((card) => ({ ...card, labels })),
     })
+  }),
+)
+
+workspaceRouter.patch(
+  "/overview/order",
+  requirePermission("properties.read"),
+  asyncHandler(async (req, res) => {
+    const order = cleanOverviewOrder(req.body.order)
+    req.user.overviewOrder = order
+    await req.user.save()
+    res.json({ order })
   }),
 )
 
@@ -105,39 +132,68 @@ workspaceRouter.get(
     await moveOpenReviewsOntoTasks()
     const properties = await Property.find(propertyFilter(req.user)).select("_id")
     const items = await Task.find({ $or: [{ propertyId: { $in: properties.map((property) => property._id) } }, { propertyId: null }] }).sort({ done: 1, due: 1 })
-    res.json({ items: items.map(presentTask) })
+    const people = await assigneeMap(items)
+    const includeEmail = req.permissions.includes(PERMISSIONS.tasksAssign)
+    res.json({ items: items.map((task) => presentTask(task, people.get(String(task.assigneeId || "")), includeEmail)) })
+  }),
+)
+
+workspaceRouter.get(
+  "/tasks/assignees",
+  requirePermission(PERMISSIONS.tasksAssign),
+  asyncHandler(async (req, res) => {
+    const users = await User.find().select("name email").sort({ name: 1, email: 1 })
+    res.json({ items: users.map((user) => ({ id: String(user._id), name: user.name, email: user.email })) })
   }),
 )
 
 workspaceRouter.post(
   "/tasks",
-  requirePermission("tasks.write"),
+  requirePermission(PERMISSIONS.tasksManage),
   asyncHandler(async (req, res) => {
     if (!req.body.title) {
       sendError(res, 400, "Describe what needs to happen.")
       return
     }
+    const assignee = await readAssignee(req, res)
+    if (!assignee) return
     const task = await Task.create({
       title: req.body.title,
       propertyId: req.body.propertyId || undefined,
-      owner: req.body.owner || req.user.name,
+      assigneeId: assignee.assignee?._id,
+      owner: assignee.assignee?.name || "",
       due: req.body.due || "",
       priority: req.body.priority || "Medium",
       labels: cleanLabels(req.body.labels),
       notes: req.body.notes || "",
     })
-    res.status(201).json({ task: presentTask(task) })
+    const mail = await mailAssignee({ user: req.user, task, assignee: assignee.assignee })
+    res.status(201).json({ task: presentTask(task, assignee.assignee, true), mail })
   }),
 )
 
 workspaceRouter.patch(
   "/tasks/:id",
-  requirePermission("tasks.write"),
+  requireAnyPermission(PERMISSIONS.tasksEdit, PERMISSIONS.tasksManage, PERMISSIONS.tasksAssign),
   asyncHandler(async (req, res) => {
     const task = await Task.findById(req.params.id)
     if (!task) {
       sendError(res, 404, "That task was not found.")
       return
+    }
+    const editing = ["title", "due", "priority", "labels", "notes", "done"].some((key) => key in req.body)
+    if (editing && !req.permissions.includes(PERMISSIONS.tasksEdit) && !req.permissions.includes(PERMISSIONS.tasksManage)) {
+      sendError(res, 403, "You do not have permission to edit tasks.")
+      return
+    }
+    const previousAssignee = String(task.assigneeId || "")
+    let assignee = null
+    if ("assigneeId" in req.body) {
+      const next = await readAssignee(req, res)
+      if (!next) return
+      assignee = next.assignee
+      task.assigneeId = assignee ? assignee._id : null
+      task.owner = assignee?.name || ""
     }
     if ("done" in req.body) task.done = Boolean(req.body.done)
     if (req.body.title) task.title = req.body.title
@@ -146,7 +202,23 @@ workspaceRouter.patch(
     if ("labels" in req.body) task.labels = cleanLabels(req.body.labels)
     if ("notes" in req.body) task.notes = req.body.notes || ""
     await task.save()
-    res.json({ task: presentTask(task) })
+    const changedAssignee = "assigneeId" in req.body && String(task.assigneeId || "") !== previousAssignee
+    const mail = changedAssignee ? await mailAssignee({ user: req.user, task, assignee }) : "Skipped"
+    res.json({ task: presentTask(task, assignee, req.permissions.includes(PERMISSIONS.tasksAssign)), mail })
+  }),
+)
+
+workspaceRouter.delete(
+  "/tasks/:id",
+  requirePermission(PERMISSIONS.tasksManage),
+  asyncHandler(async (req, res) => {
+    const task = await Task.findById(req.params.id)
+    if (!task) {
+      sendError(res, 404, "That task was not found.")
+      return
+    }
+    await task.deleteOne()
+    res.json({ ok: true })
   }),
 )
 
@@ -210,12 +282,74 @@ workspaceRouter.get(
   "/loans",
   requirePermission("properties.read"),
   asyncHandler(async (req, res) => {
-    const properties = await Property.find(propertyFilter(req.user)).select("_id address")
+    await ensureLenders()
+    const properties = await Property.find(propertyFilter(req.user)).select("_id address city labels")
     const loans = await Loan.find({ propertyId: { $in: properties.map((property) => property._id) } })
-    const names = new Map(properties.map((property) => [String(property._id), property.address]))
+    const names = new Map(properties.map((property) => [String(property._id), property]))
+    const lenders = await Lender.find({ _id: { $in: loans.map((loan) => loan.lenderId).filter(Boolean) } })
     res.json({
-      items: loans.map((loan) => presentLoan(loan, names)),
+      items: loans.map((loan) => presentLoan(loan, names, lenders)),
+      lenders: lenders.map((lender) => presentLender(lender, loans.filter((loan) => String(loan.lenderId) === String(lender._id)))),
     })
+  }),
+)
+
+workspaceRouter.get(
+  "/lenders/:id",
+  requirePermission("properties.read"),
+  asyncHandler(async (req, res) => {
+    await ensureLenders()
+    const lender = await Lender.findById(req.params.id)
+    if (!lender) {
+      sendError(res, 404, "That lender was not found.")
+      return
+    }
+    const properties = await Property.find(propertyFilter(req.user)).select("_id address city labels")
+    const loans = await Loan.find({ lenderId: lender._id, propertyId: { $in: properties.map((property) => property._id) } })
+    const names = new Map(properties.map((property) => [String(property._id), property]))
+    res.json({
+      lender: presentLender(lender, loans),
+      loans: loans.map((loan) => presentLoan(loan, names, [lender])),
+    })
+  }),
+)
+
+workspaceRouter.post(
+  "/lenders",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const name = String(req.body.name || "").trim()
+    if (!name) {
+      sendError(res, 400, "Enter the lender name.")
+      return
+    }
+    const existing = await Lender.findOne({ name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") })
+    if (existing) {
+      sendError(res, 409, "That lender is already on file. Open it to add a property.")
+      return
+    }
+    const lender = await Lender.create({ name, terms: String(req.body.terms || "") })
+    await recordActivity({ user: req.user, title: "Lender saved", detail: lender.name })
+    res.status(201).json({ lender: presentLender(lender, []) })
+  }),
+)
+
+workspaceRouter.patch(
+  "/lenders/:id",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const lender = await Lender.findById(req.params.id)
+    if (!lender) {
+      sendError(res, 404, "That lender was not found.")
+      return
+    }
+    if (req.body.name) lender.name = String(req.body.name).trim()
+    if ("terms" in req.body) lender.terms = String(req.body.terms || "")
+    await lender.save()
+    if (req.body.name) await Loan.updateMany({ lenderId: lender._id }, { lender: lender.name })
+    const loans = await Loan.find({ lenderId: lender._id })
+    await recordActivity({ user: req.user, title: "Lender updated", detail: lender.name })
+    res.json({ lender: presentLender(lender, loans) })
   }),
 )
 
@@ -223,9 +357,9 @@ workspaceRouter.post(
   "/loans",
   requirePermission("properties.write"),
   asyncHandler(async (req, res) => {
-    const lender = String(req.body.lender || "").trim()
+    const lender = req.body.lenderId ? await Lender.findById(req.body.lenderId) : await lenderForName(req.body.lender)
     if (!lender) {
-      sendError(res, 400, "Enter the lender.")
+      sendError(res, 400, "Choose a lender.")
       return
     }
     if (!req.body.propertyId) {
@@ -239,7 +373,10 @@ workspaceRouter.post(
     }
     const loan = await Loan.create({
       propertyId: property._id,
-      lender,
+      lenderId: lender._id,
+      lender: lender.name,
+      label: cleanLoanLabel(req.body.label),
+      terms: String(req.body.terms || "").trim(),
       loanNumber: String(req.body.loanNumber || "").trim(),
       balance: optionalNumber(req.body.balance),
       payment: optionalNumber(req.body.payment),
@@ -247,8 +384,54 @@ workspaceRouter.post(
       maturity: String(req.body.maturity || ""),
       termsStatus: req.body.termsStatus === "Verified" ? "Verified" : "Needs verification",
     })
-    await recordActivity({ user: req.user, title: "Loan recorded", detail: `${lender} · ${property.address}`, propertyId: property._id })
-    res.status(201).json({ loan: presentLoan(loan, new Map([[String(property._id), property.address]])) })
+    await recordActivity({ user: req.user, title: "Loan recorded", detail: `${lender.name} · ${property.address}`, propertyId: property._id })
+    res.status(201).json({ loan: presentLoan(loan, new Map([[String(property._id), property]]), [lender]) })
+  }),
+)
+
+workspaceRouter.patch(
+  "/loans/:id",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const loan = await Loan.findById(req.params.id)
+    if (!loan) {
+      sendError(res, 404, "That loan was not found.")
+      return
+    }
+    const property = await Property.findOne({ _id: loan.propertyId, ...propertyFilter(req.user) })
+    if (!property) {
+      sendError(res, 404, "That property is not available.")
+      return
+    }
+    if (req.body.lenderId) {
+      const lender = await Lender.findById(req.body.lenderId)
+      if (!lender) {
+        sendError(res, 404, "That lender was not found.")
+        return
+      }
+      loan.lenderId = lender._id
+      loan.lender = lender.name
+    }
+    if ("label" in req.body) loan.label = cleanLoanLabel(req.body.label)
+    if ("terms" in req.body) loan.terms = String(req.body.terms || "").trim()
+    if ("loanNumber" in req.body) loan.loanNumber = String(req.body.loanNumber || "").trim()
+    if ("balance" in req.body) loan.balance = optionalNumber(req.body.balance)
+    if ("payment" in req.body) loan.payment = optionalNumber(req.body.payment)
+    if ("originalAmount" in req.body) loan.originalAmount = optionalNumber(req.body.originalAmount)
+    if ("maturity" in req.body) loan.maturity = String(req.body.maturity || "")
+    if ("termsStatus" in req.body) loan.termsStatus = req.body.termsStatus === "Verified" ? "Verified" : "Needs verification"
+    if (req.body.propertyId && String(req.body.propertyId) !== String(loan.propertyId)) {
+      const next = await Property.findOne({ _id: req.body.propertyId, ...propertyFilter(req.user) })
+      if (!next) {
+        sendError(res, 404, "That property is not available.")
+        return
+      }
+      loan.propertyId = next._id
+    }
+    await loan.save()
+    const lender = loan.lenderId ? await Lender.findById(loan.lenderId) : null
+    const current = await Property.findById(loan.propertyId).select("address city labels")
+    res.json({ loan: presentLoan(loan, new Map([[String(current._id), current]]), lender ? [lender] : []) })
   }),
 )
 
@@ -402,6 +585,10 @@ workspaceRouter.patch(
       sendError(res, 404, "That person was not found.")
       return
     }
+    if (user.role === "admin" && !req.permissions.includes(PERMISSIONS.superAdmin)) {
+      sendError(res, 403, "Only a super admin can change an admin.")
+      return
+    }
     const access = readAccess(req, res)
     if (!access) return
     if (String(user._id) === String(req.user._id) && (access.role !== "admin" || access.deniedPermissions.includes(PERMISSIONS.membersManage))) {
@@ -437,6 +624,10 @@ workspaceRouter.post(
       sendError(res, 404, "That person was not found.")
       return
     }
+    if (user.role === "admin" && !req.permissions.includes(PERMISSIONS.superAdmin)) {
+      sendError(res, 403, "Only a super admin can change an admin.")
+      return
+    }
     if (password.length < 8) {
       sendError(res, 400, "Use a password of at least 8 characters.")
       return
@@ -466,6 +657,10 @@ workspaceRouter.delete(
     }
     if (String(user._id) === String(req.user._id)) {
       sendError(res, 400, "You can't remove your own account.")
+      return
+    }
+    if (user.role === "admin" && !req.permissions.includes(PERMISSIONS.superAdmin)) {
+      sendError(res, 403, "Only a super admin can change an admin.")
       return
     }
     if (user.role === "admin") {
@@ -498,8 +693,12 @@ function readAccess(req, res) {
     sendError(res, 400, "Choose a role.")
     return null
   }
+  if ((role === "admin" || (req.body.permissions || []).includes(PERMISSIONS.superAdmin)) && !req.permissions.includes(PERMISSIONS.superAdmin)) {
+    sendError(res, 403, "Only a super admin can grant that access.")
+    return null
+  }
   if (role === "admin") return { role, extraPermissions: [], deniedPermissions: [] }
-  const selected = knownPermissions(req.body.permissions || permissionsFor({ role }))
+  const selected = ensureTaskPermissions(req.body.permissions || permissionsFor({ role }))
   const actorCan = new Set(req.permissions)
   const blocked = selected.filter((id) => !actorCan.has(id))
   if (blocked.length) {
@@ -708,18 +907,34 @@ function shiftKey(key, days) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
 }
 
-function presentLoan(loan, names) {
+function presentLoan(loan, names, lenders = []) {
+  const property = names.get(String(loan.propertyId || ""))
+  const address = typeof property === "string" ? property : property?.address || ""
+  const lender = lenders.find((item) => String(item._id) === String(loan.lenderId || ""))
   return {
     id: String(loan._id),
     propertyId: loan.propertyId ? String(loan.propertyId) : "",
-    address: names.get(String(loan.propertyId || "")) || "",
-    lender: loan.lender || "Not provided",
+    address,
+    city: typeof property === "string" ? "" : property?.city || "",
+    propertyLabels: typeof property === "string" ? [] : property?.labels || [],
+    lenderId: loan.lenderId ? String(loan.lenderId) : "",
+    lender: lender?.name || loan.lender || "Not provided",
+    lenderTerms: lender?.terms || "",
+    label: loan.label || "Financed",
+    terms: loan.terms || "",
+    loanNumber: loan.loanNumber || "",
     balance: loan.balance ?? null,
     payment: loan.payment ?? null,
+    originalAmount: loan.originalAmount ?? null,
     maturity: loan.maturity || "",
     termsStatus: loan.termsStatus,
     importSource: loan.importSource || null,
   }
+}
+
+function cleanLoanLabel(value) {
+  const label = String(value || "").trim().replace(/\s+/g, " ").slice(0, 40)
+  return label || "Financed"
 }
 
 function optionalNumber(value) {
@@ -728,8 +943,62 @@ function optionalNumber(value) {
   return Number.isFinite(number) ? number : undefined
 }
 
-function presentTask(task) {
-  return { id: String(task._id), title: task.title, owner: task.owner || "", due: task.due || "", priority: task.priority, labels: task.labels || [], done: task.done, propertyId: task.propertyId ? String(task.propertyId) : "", notes: task.notes || "" }
+function presentTask(task, person, includeEmail) {
+  return {
+    id: String(task._id),
+    title: task.title,
+    owner: person?.name || task.owner || "",
+    assigneeId: task.assigneeId ? String(task.assigneeId) : "",
+    assigneeName: person?.name || task.owner || "",
+    assigneeEmail: includeEmail ? person?.email || "" : "",
+    due: task.due || "",
+    priority: task.priority,
+    labels: task.labels || [],
+    done: task.done,
+    propertyId: task.propertyId ? String(task.propertyId) : "",
+    notes: task.notes || "",
+  }
+}
+
+async function assigneeMap(tasks) {
+  const ids = [...new Set(tasks.map((task) => task.assigneeId).filter(Boolean).map(String))]
+  if (!ids.length) return new Map()
+  const people = await User.find({ _id: { $in: ids } }).select("name email")
+  return new Map(people.map((person) => [String(person._id), person]))
+}
+
+async function readAssignee(req, res) {
+  if (!("assigneeId" in req.body)) return { assignee: null }
+  if (!req.permissions.includes(PERMISSIONS.tasksAssign)) {
+    sendError(res, 403, "You do not have permission to assign tasks.")
+    return null
+  }
+  const value = String(req.body.assigneeId || "").trim()
+  if (!value) return { assignee: null }
+  if (!/^[a-f\d]{24}$/i.test(value)) {
+    sendError(res, 400, "Choose an assignee from the list.")
+    return null
+  }
+  const assignee = await User.findById(value).select("name email")
+  if (!assignee) {
+    sendError(res, 400, "Choose an assignee from the list.")
+    return null
+  }
+  return { assignee }
+}
+
+async function mailAssignee({ user, task, assignee }) {
+  if (!assignee) return "Skipped"
+  const due = task.due ? ` Due ${task.due}.` : ""
+  const labels = task.labels?.length ? ` Labels: ${task.labels.join(", ")}.` : ""
+  const result = await notify({
+    userIds: [assignee._id],
+    title: `Task assigned: ${task.title}`,
+    body: `${user.name} assigned you “${task.title}”.${due}${labels}`,
+    href: "/tasks",
+    event: "task.assigned",
+  })
+  return result?.status || "Skipped"
 }
 
 function cleanLabels(value) {
@@ -761,6 +1030,129 @@ async function moveOpenReviewsOntoTasks() {
     item.status = "Moved"
     await item.save()
   }
+}
+
+function attentionItems({ properties, budgets, draws, loans, bills, tasks, names }) {
+  const today = todayKey()
+  const week = shiftKey(today, 7)
+  const twoWeeks = shiftKey(today, 14)
+  const month = shiftKey(today, 30)
+  const items = []
+  for (const draw of draws) {
+    const requested = dateKey(draw.requestedDate)
+    if (draw.status === "Funded" || !requested) continue
+    const arrive = addBusinessDays(requested, 4)
+    if (arrive > month) continue
+    items.push({
+      id: `draw-${draw._id}`,
+      kind: "Draw",
+      title: draw.title,
+      property: names.get(String(draw.propertyId || "")) || "",
+      date: arrive,
+      amount: draw.amount ?? null,
+      tone: arrive < today ? "bad" : "warn",
+      detail: arrive < today ? "Funding window has started" : "Funding window opens in 4 business days",
+      href: "/draws",
+    })
+  }
+  for (const property of properties) {
+    const budget = budgets.find((item) => String(item.propertyId) === String(property._id) && Number(item.budget) > 0)
+    if (!budget) continue
+    const scheduled = Number(budget.budget)
+    const propertyDraws = draws.filter((draw) => String(draw.propertyId) === String(property._id))
+    const funded = propertyDraws
+      .filter((draw) => draw.status === "Funded")
+      .reduce((total, draw) => total + Number(draw.fundedAmount ?? draw.amount ?? 0), 0)
+    const remaining = Math.max(0, scheduled - funded)
+    const alreadyRequested = propertyDraws.some((draw) => draw.status !== "Funded")
+    if (remaining <= 0 || alreadyRequested) continue
+    items.push({
+      id: `undrawn-${property._id}`,
+      kind: "Draw",
+      title: "Draw remaining to schedule",
+      property: names.get(String(property._id)) || "",
+      date: "",
+      amount: remaining,
+      tone: "warn",
+      detail: budget.approvalStatus === "Not confirmed"
+        ? "Draw budget needs confirmation and scheduling"
+        : "Still undrawn · schedule the next draw",
+      href: "/draws",
+    })
+  }
+  for (const loan of loans) {
+    if (!(Number(loan.payment) > 0)) continue
+    const hasDatedBill = bills.some((bill) => {
+      const mortgage = bill.category === "Mortgage" || /mortgage/i.test(bill.title || "")
+      const due = dateKey(bill.due)
+      return mortgage && bill.status !== "Paid" && due && due <= month && String(bill.propertyId || "") === String(loan.propertyId || "")
+    })
+    if (hasDatedBill) continue
+    items.push({
+      id: `loan-payment-${loan._id}`,
+      kind: "Mortgage",
+      title: loan.lender && loan.lender !== "Not provided" ? `${loan.lender} payment` : "Monthly mortgage payment",
+      property: names.get(String(loan.propertyId || "")) || "",
+      date: "",
+      amount: loan.payment,
+      tone: "warn",
+      detail: "Due within 30 days · payment date not recorded",
+      href: "/loans",
+    })
+  }
+  for (const bill of bills) {
+    const due = dateKey(bill.due)
+    const mortgage = bill.category === "Mortgage" || /mortgage/i.test(bill.title || "")
+    if (!mortgage || bill.status === "Paid" || !due) continue
+    if (due > month) continue
+    items.push({
+      id: `bill-${bill._id}`,
+      kind: "Mortgage",
+      title: bill.title,
+      property: names.get(String(bill.propertyId || "")) || "",
+      date: due,
+      amount: bill.amount ?? null,
+      tone: due < today ? "bad" : "warn",
+      detail: due < today ? "Payment overdue" : "Payment due",
+      href: "/payments",
+    })
+  }
+  for (const task of tasks) {
+    const due = dateKey(task.due)
+    if (!due) continue
+    const marked = task.priority === "High" || (task.labels || []).includes("Verify")
+    const overdue = due < today
+    if (!overdue && due > (marked ? twoWeeks : week)) continue
+    items.push({
+      id: `task-${task._id}`,
+      kind: (task.labels || []).includes("Verify") ? "Verify" : "Task",
+      title: task.title,
+      property: names.get(String(task.propertyId || "")) || "",
+      date: due,
+      amount: null,
+      tone: overdue ? "bad" : "warn",
+      detail: overdue ? "Overdue" : "Due soon",
+      href: "/tasks",
+    })
+  }
+  items.sort((left, right) => {
+    const late = (item) => item.date && item.date < today ? 0 : 1
+    const undated = (item) => item.date ? 0 : 1
+    return late(left) - late(right) || undated(left) - undated(right) || left.date.localeCompare(right.date)
+  })
+  return items
+}
+
+function addBusinessDays(key, count) {
+  const [year, month, day] = key.split("-").map(Number)
+  const date = new Date(year, month - 1, day, 12)
+  let added = 0
+  while (added < count) {
+    date.setDate(date.getDate() + 1)
+    const weekday = date.getDay()
+    if (weekday !== 0 && weekday !== 6) added += 1
+  }
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
 }
 
 function presentBill(bill) {
@@ -830,8 +1222,20 @@ function cumulative(events, months) {
   })
 }
 
+const OVERVIEW_CARDS = ["Portfolio", "Recorded value", "Draws", "Rehab", "Loans and rent", "Open work"]
+
+function cleanOverviewOrder(value) {
+  const order = []
+  for (const id of Array.isArray(value) ? value : []) {
+    const title = String(id || "")
+    if (!OVERVIEW_CARDS.includes(title) || order.includes(title)) continue
+    order.push(title)
+  }
+  return order
+}
+
 function lineCard(title, value, hint, note, money, lines) {
-  return { title, value, hint: hint, note: `${note}. ${projectionClause(lines, money)}`, money, lines: lines.map((line) => ({ name: line.name, points: line.points })) }
+  return { id: title, title, value, hint: hint, note: `${note}. ${projectionClause(lines, money)}`, money, lines: lines.map((line) => ({ name: line.name, points: line.points })) }
 }
 
 function allowedDays(value) {
@@ -844,6 +1248,12 @@ function series(name, events, months, days) {
   const added = events.reduce((total, event) => total + (inPastWindow(event.at, days) ? Number(event.amount) || 0 : 0), 0)
   const last = points.length ? points[points.length - 1] : 0
   return { name, points: [...points, last + added], added, days }
+}
+
+function scheduledSeries(name, monthly, projected, months) {
+  const points = months.map(() => 0)
+  if (points.length) points[points.length - 1] = monthly
+  return { name, points: [...points, projected] }
 }
 
 function projectionClause(lines, money) {

@@ -22,11 +22,14 @@ export const PERMISSIONS = {
   documentsDelete: "documents.delete",
   importsRun: "imports.run",
   membersManage: "members.manage",
+  superAdmin: "super.admin",
   agentAsk: "agent.ask",
   photosRead: "photos.read",
   photosWrite: "photos.write",
   activityRead: "activity.read",
-  tasksWrite: "tasks.write",
+  tasksEdit: "tasks.edit",
+  tasksAssign: "tasks.assign",
+  tasksManage: "tasks.manage",
 }
 
 const all = Object.values(PERMISSIONS)
@@ -53,7 +56,7 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.photosRead,
     PERMISSIONS.photosWrite,
     PERMISSIONS.agentAsk,
-    PERMISSIONS.tasksWrite,
+    PERMISSIONS.tasksEdit,
     PERMISSIONS.activityRead,
   ],
   finance: [
@@ -69,7 +72,7 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.documentsRead,
     PERMISSIONS.drawsRead,
     PERMISSIONS.agentAsk,
-    PERMISSIONS.tasksWrite,
+    PERMISSIONS.tasksEdit,
     PERMISSIONS.activityRead,
   ],
   developer: [
@@ -133,7 +136,9 @@ export const PERMISSION_CATALOG = [
   { group: "Money", id: PERMISSIONS.expensesApprove, label: "Approve expenses", detail: "Approve, reject, and mark bills paid." },
   { group: "Money", id: PERMISSIONS.drawsRead, label: "View draws", detail: "See rehab funding and draw history." },
   { group: "Money", id: PERMISSIONS.drawsWrite, label: "Manage draws", detail: "Record funding and pull a draw." },
-  { group: "Money", id: PERMISSIONS.tasksWrite, label: "Edit the to-do list", detail: "Add tasks and mark them done." },
+  { group: "To-do list", id: PERMISSIONS.tasksEdit, label: "Edit tasks", detail: "Change a task and mark it done." },
+  { group: "To-do list", id: PERMISSIONS.tasksAssign, label: "Assign tasks", detail: "Choose an assignee and see every member email." },
+  { group: "To-do list", id: PERMISSIONS.tasksManage, label: "Create and delete tasks", detail: "Add and remove tasks. Assignment is included." },
   { group: "Documents", id: PERMISSIONS.documentsRead, label: "View documents", detail: "Open files in the knowledge base." },
   { group: "Documents", id: PERMISSIONS.documentsWrite, label: "Upload documents", detail: "Add files and weekly photos." },
   { group: "Documents", id: PERMISSIONS.documentsDelete, label: "Remove documents", detail: "Delete a file from the library." },
@@ -141,6 +146,7 @@ export const PERMISSION_CATALOG = [
   { group: "Documents", id: PERMISSIONS.photosRead, label: "View photos", detail: "See weekly house photos and draw reports." },
   { group: "Documents", id: PERMISSIONS.photosWrite, label: "File photos", detail: "Upload a weekly photo set." },
   { group: "People", id: PERMISSIONS.membersManage, label: "Manage members", detail: "Invite people and set what they can do." },
+  { group: "People", id: PERMISSIONS.superAdmin, label: "Super admin", detail: "Change or remove an admin, and grant every permission." },
   { group: "People", id: PERMISSIONS.activityRead, label: "See activity", detail: "Read the activity log and notifications." },
   { group: "Knowledge", id: PERMISSIONS.agentAsk, label: "Ask the knowledge base", detail: "Question records this person is allowed to see." },
 ]
@@ -164,12 +170,29 @@ export function permissionOverrides(role, selected) {
   }
 }
 
+export const TASK_LABELS = ["EMD", "Mortgage payment", "Draw", "Verify", "Inspection", "Closing", "Insurance", "Taxes"]
+
+export const PROPERTY_LABELS = ["Financed", "Refinanced", "Flip", "Hold", "Rent"]
+
+export const LOAN_LABELS = ["Financed", "Refinanced", "Construction", "Bridge", "Seller financing"]
+
+export function ensureTaskPermissions(list = []) {
+  const selected = knownPermissions(list)
+  if (selected.includes(PERMISSIONS.tasksManage) && !selected.includes(PERMISSIONS.tasksAssign)) selected.push(PERMISSIONS.tasksAssign)
+  return selected
+}
+
 export function permissionsFor(user) {
   if (user?.role === "admin") return [...all]
   const granted = new Set(ROLE_PERMISSIONS[user?.role] || [])
-  for (const permission of user?.extraPermissions || []) granted.add(permission)
-  for (const permission of user?.deniedPermissions || []) granted.delete(permission)
-  return [...granted]
+  const extra = [...(user?.extraPermissions || [])]
+  const denied = [...(user?.deniedPermissions || [])]
+  if (extra.includes("tasks.write")) extra.push(PERMISSIONS.tasksEdit, PERMISSIONS.tasksManage, PERMISSIONS.tasksAssign)
+  if (denied.includes("tasks.write")) denied.push(PERMISSIONS.tasksEdit, PERMISSIONS.tasksManage, PERMISSIONS.tasksAssign)
+  for (const permission of extra) granted.add(permission)
+  for (const permission of denied) granted.delete(permission)
+  if (granted.has(PERMISSIONS.tasksManage)) granted.add(PERMISSIONS.tasksAssign)
+  return knownPermissions([...granted])
 }
 
 export function can(user, permission) {

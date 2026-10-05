@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ROLE_PERMISSIONS, ROLES, initials, permissionsFor } from "@synergifund/shared"
+import { PERMISSIONS, ROLE_PERMISSIONS, ROLES, can, initials, permissionsFor } from "@synergifund/shared"
 import { PermissionPicker } from "../../../components/members/PermissionPicker"
 import { StatusPill } from "../../../components/ui/StatusPill"
 import { WorkspacePage } from "../../../components/ui/WorkspacePage"
@@ -48,6 +48,7 @@ export default function MembersPage() {
       permissions: row.permissions || permissionsFor(row),
       propertyIds: row.propertyIds || [],
       nextPassword: "",
+      locked: row.role === "admin" && !(session?.user && can(session.user, PERMISSIONS.superAdmin)),
     })
   }
 
@@ -110,6 +111,7 @@ export default function MembersPage() {
   }
 
   const custom = people.filter((person) => (person.extraPermissions || []).length || (person.deniedPermissions || []).length).length
+  const superAdmin = session?.user && can(session.user, PERMISSIONS.superAdmin)
 
   return (
     <>
@@ -200,8 +202,8 @@ export default function MembersPage() {
               <div className="role-block">
                 <span className="split"><span>Role</span>{draft.mode === "edit" && <button type="button" className="tool" onClick={() => chooseRole(draft.role)}>Reset to role</button>}</span>
                 <div className="role-pills">
-                  {ROLES.map((role) => (
-                    <button key={role.id} type="button" className={draft.role === role.id ? "role-pill is-on" : "role-pill"} onClick={() => chooseRole(role.id)}>
+                  {ROLES.filter((role) => role.id !== "admin" || superAdmin || draft.role === "admin").map((role) => (
+                    <button key={role.id} type="button" className={draft.role === role.id ? "role-pill is-on" : "role-pill"} disabled={role.id === "admin" && !superAdmin} onClick={() => { if (role.id !== "admin" || superAdmin) chooseRole(role.id) }}>
                       {role.label}
                     </button>
                   ))}
@@ -221,19 +223,20 @@ export default function MembersPage() {
                   </div>
                 </div>
               )}
+              {draft.locked && <p className="banner">Only a super admin can change an admin.</p>}
               {draft.role === "admin" ? (
                 <p className="muted">An admin can use every part of the workspace. That access is not limited.</p>
               ) : (
-                <PermissionPicker role={draft.role} selected={draft.permissions} onChange={(permissions) => setDraft({ ...draft, permissions })} />
+                <PermissionPicker role={draft.role} selected={draft.permissions} disabledIds={superAdmin ? [] : [PERMISSIONS.superAdmin]} onChange={(permissions) => setDraft({ ...draft, permissions })} />
               )}
             </div>
             <footer>
               {draft.mode === "edit" ? (
-                <button type="button" className="danger" disabled={draft.id === session?.user?.id} onClick={() => setRemoving(draft)}>Remove</button>
+                <button type="button" className="danger" disabled={draft.id === session?.user?.id || draft.locked} onClick={() => setRemoving(draft)}>Remove</button>
               ) : <span />}
               <span className="row-actions">
                 <button type="button" className="tool" onClick={() => setDraft(null)}>Cancel</button>
-                <button className="primary" type="submit" disabled={pending}>{pending ? "Saving…" : draft.mode === "invite" ? "Create access" : "Save changes"}</button>
+                <button className="primary" type="submit" disabled={pending || draft.locked}>{pending ? "Saving…" : draft.mode === "invite" ? "Create access" : "Save changes"}</button>
               </span>
             </footer>
           </form>

@@ -15,3 +15,13 @@ export function requirePermission(permission) {
     next()
   }
 }
+
+export function requireAnyPermission(...permissions) {
+  return (req, res, next) => {
+    if (!permissions.some((permission) => req.permissions.includes(permission))) {
+      sendError(res, 403, "You do not have permission for that action.")
+      return
+    }
+    next()
+  }
+}

@@ -15,6 +15,7 @@ export function WorkspacePage({
   toolbar = true,
   views = true,
   title,
+  underTitle,
   important,
   empty,
   children,
@@ -45,6 +46,7 @@ export function WorkspacePage({
       <div className="workspace-top">
         <div className="page-heading">
           {title && <h1 className="page-title">{title}</h1>}
+          {underTitle}
         {views && (
           <div className="views">
             <button type="button" className={view === "default" ? "view is-active" : "view"} onClick={() => setView("default")}>All</button>

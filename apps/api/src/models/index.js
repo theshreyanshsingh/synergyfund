@@ -24,6 +24,7 @@ export const User = register(
       extraPermissions: [String],
       deniedPermissions: [String],
       propertyIds: [{ type: Schema.Types.ObjectId, ref: "Property" }],
+      overviewOrder: [String],
     },
     { timestamps: true },
   ),
@@ -54,11 +55,14 @@ export const Property = register(
       rentStatus: String,
       rentMarket: String,
       rentNotes: String,
+      customerTerms: String,
       rehabBudget: Number,
       rehabRemaining: Number,
+      labels: [String],
       scopeLines: [
         {
           title: String,
+          description: String,
           budget: Number,
           status: { type: String, default: "Not started" },
         },
@@ -160,12 +164,26 @@ export const Draw = register(
   ),
 )
 
+export const Lender = register(
+  "Lender",
+  new Schema(
+    {
+      name: { type: String, required: true },
+      terms: { type: String, default: "" },
+    },
+    { timestamps: true },
+  ),
+)
+
 export const Loan = register(
   "Loan",
   new Schema(
     {
       propertyId: { type: Schema.Types.ObjectId, ref: "Property" },
+      lenderId: { type: Schema.Types.ObjectId, ref: "Lender" },
       lender: String,
+      label: { type: String, default: "Financed" },
+      terms: { type: String, default: "" },
       loanNumber: String,
       balance: Number,
       payment: Number,
@@ -239,6 +257,7 @@ export const Task = register(
     {
       propertyId: { type: Schema.Types.ObjectId, ref: "Property" },
       title: { type: String, required: true },
+      assigneeId: { type: Schema.Types.ObjectId, ref: "User" },
       owner: String,
       due: String,
       priority: { type: String, default: "Medium" },

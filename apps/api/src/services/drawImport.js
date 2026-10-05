@@ -1,6 +1,6 @@
 import xlsx from "xlsx"
 
-const FIELD_ALIASES = [
+export const DRAW_FIELD_ALIASES = [
   ["fundedAmount", ["funded amount", "lender cash", "received amount"]],
   ["requestedDate", ["forecast finish", "requested date", "request date", "est date", "forecast"]],
   ["fundedDate", ["funded date", "received date", "date received"]],
@@ -12,12 +12,13 @@ const FIELD_ALIASES = [
   ["city", ["location", "city"]],
 ]
 
-export function readWorkbook(filePath) {
+export function readWorkbook(filePath, aliasNames = []) {
   const book = xlsx.readFile(filePath, { cellDates: false })
+  const wanted = new Set(aliasNames.map((name) => String(name).trim().toLowerCase()))
   const tables = []
   for (const name of book.SheetNames) {
     const grid = xlsx.utils.sheet_to_json(book.Sheets[name], { header: 1, raw: false, defval: "" })
-    const headerIndex = grid.findIndex((line) => (line || []).some((cell) => String(cell || "").trim()))
+    const headerIndex = chooseHeader(grid, wanted)
     if (headerIndex < 0) continue
     const headers = grid[headerIndex].map((cell, index) => String(cell || "").trim() || `Column ${index + 1}`)
     const rows = []
@@ -138,6 +139,21 @@ export async function appendNewDrawRows({ rows, properties, draws, Draw, Propert
     return { marks, propertyIds: [...propertyIds], counts: { pending: 0, added, duplicate, skipped } }
 }
 
+function chooseHeader(grid, wanted) {
+  let bestIndex = -1
+  let bestScore = 0
+  const limit = Math.min(grid.length, 30)
+  for (let index = 0; index < limit; index += 1) {
+    const score = (grid[index] || []).filter((cell) => wanted.has(String(cell || "").trim().toLowerCase())).length
+    if (score > bestScore) {
+      bestScore = score
+      bestIndex = index
+    }
+  }
+  if (bestIndex >= 0) return bestIndex
+  return grid.findIndex((line) => (line || []).some((cell) => String(cell || "").trim()))
+}
+
 function decideRow(source, propertiesByAddress, existingKeys, seen) {
   const mapped = mapRow(source.cells)
   const address = String(mapped.address || "").trim()
@@ -166,7 +182,7 @@ function mapRow(cells) {
   const headers = Object.keys(cells)
   const used = new Set()
   const mapped = {}
-  const aliases = FIELD_ALIASES.flatMap(([field, names]) => names.map((name) => ({ field, name })))
+  const aliases = DRAW_FIELD_ALIASES.flatMap(([field, names]) => names.map((name) => ({ field, name })))
   aliases.sort((left, right) => right.name.length - left.name.length)
   for (const alias of aliases) {
     if (mapped[alias.field] !== undefined) continue

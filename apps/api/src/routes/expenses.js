@@ -140,6 +140,51 @@ expensesRouter.post(
   }),
 )
 
+expensesRouter.post(
+  "/post",
+  requirePermission("expenses.approve"),
+  upload.array("proof", 12),
+  asyncHandler(async (req, res) => {
+    const amount = Number(req.body.amount)
+    if (!req.body.title || !Number.isFinite(amount) || amount <= 0) {
+      sendError(res, 400, "Enter a description and an amount.")
+      return
+    }
+    const property = await Property.findById(req.body.propertyId)
+    if (!property || !ownsProperty(req.user, property)) {
+      sendError(res, 404, "That property is not available.")
+      return
+    }
+    const scopeLineId = String(req.body.scopeLineId || "")
+    if (scopeLineId && !(property.scopeLines || []).some((line) => String(line._id) === scopeLineId)) {
+      sendError(res, 400, "That part of the house is not on this property.")
+      return
+    }
+    const proofs = []
+    for (const file of req.files || []) {
+      proofs.push(await saveUploadedFile(file, req.user, { propertyId: property._id, kind: "receipt" }))
+    }
+    const expense = await Expense.create({
+      propertyId: property._id,
+      title: String(req.body.title).trim(),
+      amount,
+      category: EXPENSE_CATEGORIES.includes(req.body.category) ? req.body.category : "Materials",
+      vendor: req.body.vendor || "",
+      date: req.body.date || new Date().toISOString().slice(0, 10),
+      entity: req.body.entity || "Construction company",
+      costTreatment: req.body.costTreatment || "Include in construction margin",
+      proofFileId: proofs[0]?._id,
+      proofFileIds: proofs.map((file) => file._id),
+      drawId: req.body.drawId || undefined,
+      scopeLineId,
+      postedBy: req.user._id,
+    })
+    await refreshRehabRemaining(property._id)
+    await recordActivity({ user: req.user, title: "Cost added", detail: expense.title, propertyId: property._id })
+    res.status(201).json({ expense: presentExpense(expense) })
+  }),
+)
+
 expensesRouter.patch(
   "/:id",
   requirePermission("expenses.read"),

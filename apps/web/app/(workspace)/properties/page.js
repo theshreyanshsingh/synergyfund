@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Loader } from "../../../components/ui/Loader"
-import { can, STAGES, STRATEGIES } from "@synergifund/shared"
+import { PROPERTY_LABELS, can, STAGES, STRATEGIES } from "@synergifund/shared"
 import { FormSheet } from "../../../components/ui/FormSheet"
 import { StatusPill } from "../../../components/ui/StatusPill"
 import { WorkspacePage } from "../../../components/ui/WorkspacePage"
@@ -19,7 +19,9 @@ function PropertiesScreen() {
   const [open, setOpen] = useState(params.get("new") === "1")
   const [error, setError] = useState("")
   const [form, setForm] = useState({ address: "", city: "", stage: "Under contract", strategy: "Fix & flip", purchasePrice: "", arv: "", rehabBudget: "", nextAction: "" })
-  const [scopeLines, setScopeLines] = useState([{ title: "", budget: "", status: "Not started" }])
+  const [scopeLines, setScopeLines] = useState([{ title: "", description: "", budget: "", status: "Not started" }])
+  const [labels, setLabels] = useState([])
+  const [labelDraft, setLabelDraft] = useState("")
   const [assigned, setAssigned] = useState([])
   const [contractors, setContractors] = useState([])
   const writable = session?.user && can(session.user, "properties.write")
@@ -38,12 +40,15 @@ function PropertiesScreen() {
     event.preventDefault()
     setError("")
     const body = new FormData(event.currentTarget)
+    body.set("labels", JSON.stringify(labelDraft.trim() ? [...labels, labelDraft.trim()] : labels))
     body.set("scopeLines", JSON.stringify(scopeLines.filter((line) => line.title.trim())))
     body.set("assignedUserIds", JSON.stringify(assigned))
     try {
       await api("/properties", { method: "POST", body })
       setOpen(false)
-      setScopeLines([{ title: "", budget: "", status: "Not started" }])
+      setLabels([])
+      setLabelDraft("")
+      setScopeLines([{ title: "", description: "", budget: "", status: "Not started" }])
       setAssigned([])
       list.reload()
     } catch (err) {
@@ -80,14 +85,27 @@ function PropertiesScreen() {
             <label className="field"><span>Rehab budget</span><input name="rehabBudget" value={form.rehabBudget} onChange={set("rehabBudget")} /></label>
             <label className="field wide"><span>Next step</span><input name="nextAction" value={form.nextAction} onChange={set("nextAction")} /></label>
             <div className="field wide">
+              <span>Labels</span>
+              <div className="label-editor">
+                {labels.map((label) => <button key={label} type="button" className="label-chip" onClick={() => setLabels((current) => current.filter((item) => item !== label))}>{label} ×</button>)}
+                <input value={labelDraft} placeholder="Add a label" onChange={(event) => setLabelDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); const label = labelDraft.trim(); if (label) setLabels((current) => current.some((item) => item.toLowerCase() === label.toLowerCase()) ? current : [...current, label].slice(0, 8)); setLabelDraft("") } }} />
+              </div>
+              <div className="label-suggestions">
+                {PROPERTY_LABELS.filter((label) => !labels.some((item) => item.toLowerCase() === label.toLowerCase())).map((label) => (
+                  <button key={label} type="button" onClick={() => setLabels((current) => current.some((item) => item.toLowerCase() === label.toLowerCase()) ? current : [...current, label].slice(0, 8))}>{label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="field wide">
               <span>Scope lines</span>
               {scopeLines.map((line, index) => (
                 <div key={index} className="scope-edit">
                   <input placeholder="Part of the house" value={line.title} onChange={(event) => setScopeLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, title: event.target.value } : item))} />
                   <input placeholder="Budget" value={line.budget} onChange={(event) => setScopeLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, budget: event.target.value } : item))} />
+                  <input className="wide" placeholder="Description" value={line.description} onChange={(event) => setScopeLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item))} />
                 </div>
               ))}
-              <button type="button" className="tool" onClick={() => setScopeLines((current) => [...current, { title: "", budget: "", status: "Not started" }])}>Add a line</button>
+              <button type="button" className="tool" onClick={() => setScopeLines((current) => [...current, { title: "", description: "", budget: "", status: "Not started" }])}>Add a line</button>
             </div>
             {contractors.length > 0 && (
               <div className="field wide">

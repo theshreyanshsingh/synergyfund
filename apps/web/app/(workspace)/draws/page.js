@@ -235,7 +235,7 @@ function PropertyCard({ project, open, writable, onToggle, onForecast, onPull })
               <h3>Scope on the property</h3>
               {project.scopeLines.map((line) => (
                 <div key={line.title} className="draw-line">
-                  <div><strong>{line.title}</strong><span><StatusPill>{line.status}</StatusPill></span></div>
+                  <div><strong>{line.title}</strong>{line.description && <span>{line.description}</span>}<span><StatusPill>{line.status}</StatusPill></span></div>
                   <div className="draw-line-money"><b>{cash(line.budget)}</b><span>Scope budget</span></div>
                 </div>
               ))}

@@ -1,10 +1,15 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core"
+import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 import { can } from "@synergifund/shared"
 import { Icon } from "../../../components/ui/Icon"
+import { Modal } from "../../../components/ui/Modal"
 import { useSession } from "../../../components/shell/Providers"
+import { api } from "../../../lib/api"
 import { useApi } from "../../../lib/useApi"
 import { money as formatMoney } from "../../../lib/format"
 
@@ -17,17 +22,21 @@ export default function OverviewPage() {
   const [days, setDays] = useState(30)
   const overview = useApi(`/overview?days=${days}`)
   const writable = session?.user && can(session.user, "properties.write")
-  const cards = overview.data?.cards || []
+  const sourceCards = overview.data?.cards || []
+  const [order, setOrder] = useState([])
+  const cards = useMemo(() => arrangeCards(sourceCards, order), [sourceCards, order])
   const projection = overview.data?.projection
+  const attention = overview.data?.attention || []
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+  const savingOrder = useRef(false)
 
   useEffect(() => {
-    const stored = Number(window.localStorage.getItem("synergifund-overview-days"))
-    if (WINDOWS.includes(stored)) setDays(stored)
-  }, [])
+    if (savingOrder.current || !Array.isArray(overview.data?.order)) return
+    setOrder(overview.data.order)
+  }, [overview.data])
 
   function choose(next) {
     setDays(next)
-    window.localStorage.setItem("synergifund-overview-days", String(next))
   }
 
   return (
@@ -50,32 +59,135 @@ export default function OverviewPage() {
           )}
         </div>
       </div>
+      <Attention items={attention} onOpen={(href) => router.push(href)} />
       {projection && <Projection days={projection.days} projection={projection} />}
       {overview.error && <p className="draws-empty">{overview.error}</p>}
       {overview.loading && !cards.length && <p className="draws-empty">Loading the portfolio…</p>}
-      <div className="overview-grid">
-        {cards.map((card) => (
-          <article key={card.title} className="overview-card">
-            <div className="overview-card-top">
-              <div>
-                <span>{card.title}</span>
-                <strong>{card.value}</strong>
-                <p>{card.hint}</p>
-              </div>
-              <div className="overview-legend">
-                {card.lines.map((line, index) => (
-                  <span key={line.name}><i style={{ background: LINE_COLORS[index % LINE_COLORS.length] }} />{line.name}</span>
-                ))}
-                <span><i className="overview-legend-dash" />Projection</span>
-              </div>
-            </div>
-            <LineChart labels={card.labels || overview.data?.labels || []} lines={card.lines} money={card.money} />
-            {card.note && <p className="overview-note">{card.note}</p>}
-          </article>
-        ))}
-      </div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={async (event) => {
+        const { active, over } = event
+        if (!over || active.id === over.id) return
+        const next = arrayMove(cards.map((card) => card.id), cards.findIndex((card) => card.id === active.id), cards.findIndex((card) => card.id === over.id))
+        savingOrder.current = true
+        setOrder(next)
+        try {
+          const result = await api("/overview/order", { method: "PATCH", body: { order: next } })
+          setOrder(result.order)
+        } catch (err) {
+          window.alert(err.message)
+        } finally {
+          savingOrder.current = false
+        }
+      }}>
+        <SortableContext items={cards.map((card) => card.id)} strategy={rectSortingStrategy}>
+          <div className="overview-grid">
+            {cards.map((card) => (
+              <SortableCard key={card.id} card={card} labels={card.labels || overview.data?.labels || []} />
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
     </div>
   )
+}
+
+function Attention({ items, onOpen }) {
+  const [showAll, setShowAll] = useState(false)
+  const overdue = items.filter((item) => item.tone === "bad").length
+  const preview = items.slice(0, 3)
+  const openItem = (href) => {
+    setShowAll(false)
+    onOpen(href)
+  }
+  return (
+    <section className="overview-attention">
+      <header>
+        <div>
+          <h2>Needs attention</h2>
+          {items.length > 0 && <p>{items.length} {items.length === 1 ? "item" : "items"}{overdue ? ` · ${overdue} overdue` : ""}</p>}
+        </div>
+        {items.length > 3 && <button type="button" className="overview-attention-more" onClick={() => setShowAll(true)}>View all</button>}
+      </header>
+      {items.length === 0 && <p className="overview-attention-empty">Nothing in those books is overdue or coming up.</p>}
+      {items.length > 0 && (
+        <ul className="overview-attention-list">
+          {preview.map((item) => <AttentionItem key={item.id} item={item} onOpen={openItem} />)}
+        </ul>
+      )}
+      {showAll && (
+        <Modal title={`Needs attention · ${items.length}`} wide onClose={() => setShowAll(false)}>
+          <p className="overview-attention-summary">{overdue ? `${overdue} overdue · ` : ""}Ordered by urgency and due date</p>
+          <ul className="overview-attention-list is-all">
+            {items.map((item) => <AttentionItem key={item.id} item={item} onOpen={openItem} />)}
+          </ul>
+        </Modal>
+      )}
+    </section>
+  )
+}
+
+function AttentionItem({ item, onOpen }) {
+  return (
+    <li>
+      <button type="button" className={`overview-attn tone-${item.tone}`} onClick={() => onOpen(item.href)}>
+        <span className="overview-attn-icon">
+          <Icon name={attentionIcon(item.kind)} size={16} />
+        </span>
+        <span className="overview-attn-copy">
+          <small>{item.kind}{item.tone === "bad" ? " · Overdue" : ""}</small>
+          <strong>{item.title}</strong>
+          <em>{[item.property, item.detail, item.date].filter(Boolean).join(" · ")}</em>
+        </span>
+        {item.amount != null && <b>{formatMoney(item.amount)}</b>}
+      </button>
+    </li>
+  )
+}
+
+function attentionIcon(kind) {
+  if (kind === "Draw") return "layers"
+  if (kind === "Mortgage") return "bank"
+  if (kind === "Verify") return "alert"
+  return "check"
+}
+
+function SortableCard({ card, labels }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id })
+  const style = { transform: CSS.Transform.toString(transform), transition }
+  return (
+    <article ref={setNodeRef} style={style} className={isDragging ? "overview-card is-dragging" : "overview-card"}>
+      <div className="overview-card-top">
+        <div className="overview-card-copy">
+          <span>{card.title}</span>
+          <strong>{card.value}</strong>
+          <p>{card.hint}</p>
+        </div>
+        <div className="overview-legend">
+          {card.lines.map((line, index) => (
+            <span key={line.name}><i style={{ background: LINE_COLORS[index % LINE_COLORS.length] }} />{line.name}</span>
+          ))}
+          <span><i className="overview-legend-dash" />Projection</span>
+        </div>
+        <button type="button" className="overview-handle" aria-label={`Move ${card.title}`} {...attributes} {...listeners}>
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="4" cy="3" r="1.1" /><circle cx="10" cy="3" r="1.1" /><circle cx="4" cy="7" r="1.1" /><circle cx="10" cy="7" r="1.1" /><circle cx="4" cy="11" r="1.1" /><circle cx="10" cy="11" r="1.1" /></svg>
+        </button>
+      </div>
+      <LineChart labels={labels} lines={card.lines} money={card.money} />
+      {card.note && <p className="overview-note">{card.note}</p>}
+    </article>
+  )
+}
+
+function arrangeCards(cards, order) {
+  const pending = new Map(cards.map((card) => [card.id, card]))
+  const arranged = []
+  for (const id of order) {
+    const card = pending.get(id)
+    if (!card) continue
+    arranged.push(card)
+    pending.delete(id)
+  }
+  arranged.push(...pending.values())
+  return arranged
 }
 
 function Projection({ days, projection }) {
@@ -86,7 +198,7 @@ function Projection({ days, projection }) {
       <div>
         <span>Next {days} days</span>
         <strong>{formatMoney(projection.expenseTotal || 0)}</strong>
-        <p>Posted in the past {days} days, by category. The last point on each graph repeats that same window. Financing is included here and left off the Rehab costs line.</p>
+        <p>Same pace as the past {days} days. Financing is listed here and left off the Rehab costs line.</p>
       </div>
       <ul>
         {expenses.map((item) => (

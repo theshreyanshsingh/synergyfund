@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { can } from "@synergifund/shared"
+import { LOAN_LABELS, can } from "@synergifund/shared"
 import { FormSheet } from "../../../components/ui/FormSheet"
 import { StatusPill } from "../../../components/ui/StatusPill"
 import { WorkspacePage } from "../../../components/ui/WorkspacePage"
@@ -16,21 +16,22 @@ export default function LoansPage() {
   const session = useSession()
   const list = useApi("/loans")
   const properties = useApi("/properties")
-  const [open, setOpen] = useState(false)
+  const [section, setSection] = useState("loans")
+  const [open, setOpen] = useState("")
   const [error, setError] = useState("")
   const [pending, setPending] = useState(false)
   const items = list.data?.items || []
+  const lenders = list.data?.lenders || []
   const writable = session?.user && can(session.user, "properties.write")
 
-  async function submit(event) {
+  async function submitLoan(event) {
     event.preventDefault()
     setPending(true)
     setError("")
-    const form = new FormData(event.currentTarget)
-    const body = Object.fromEntries(form.entries())
+    const form = Object.fromEntries(new FormData(event.currentTarget))
     try {
-      await api("/loans", { method: "POST", body })
-      setOpen(false)
+      await api("/loans", { method: "POST", body: form })
+      setOpen("")
       list.reload()
     } catch (err) {
       setError(err.message)
@@ -39,55 +40,121 @@ export default function LoansPage() {
     }
   }
 
+  async function submitLender(event) {
+    event.preventDefault()
+    setPending(true)
+    setError("")
+    const form = Object.fromEntries(new FormData(event.currentTarget))
+    try {
+      const result = await api("/lenders", { method: "POST", body: form })
+      setOpen("")
+      router.push(`/loans/lenders/${result.lender.id}`)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  const switcher = (
+    <div className="property-switch" role="tablist" aria-label="Loans and lenders">
+      <button type="button" role="tab" aria-selected={section === "loans"} className={section === "loans" ? "is-on" : ""} onClick={() => setSection("loans")}>Loans</button>
+      <button type="button" role="tab" aria-selected={section === "lenders"} className={section === "lenders" ? "is-on" : ""} onClick={() => setSection("lenders")}>Lenders</button>
+    </div>
+  )
+
   return (
     <>
-      <WorkspacePage
-        views={false}
-        title="Loans & lenders"
-        action={writable ? { label: "Add loan", onClick: () => setOpen(true) } : null}
-        stats={[
-          { label: "Reported balances", value: money(items.reduce((sum, item) => sum + Number(item.balance || 0), 0)), hint: "Supplied values only" },
-          { label: "Monthly payments", value: money(items.reduce((sum, item) => sum + Number(item.payment || 0), 0)), hint: "Recorded schedules" },
-          { label: "Loan records", value: String(items.length), hint: "Applications stay separate" },
-          { label: "Need verification", value: String(items.filter((item) => item.termsStatus !== "Verified").length), hint: "Source terms" },
-          { label: "Verified", value: String(items.filter((item) => item.termsStatus === "Verified").length), hint: "Confirmed servicing" },
-        ]}
-        columns={[
-          { key: "lender", label: "Name", avatar: (row) => row.lender, render: (row) => row.lender },
-          { key: "address", label: "Property" },
-          { key: "balance", label: "Balance", render: (row) => money(row.balance) },
-          { key: "maturity", label: "Maturity" },
-          { key: "termsStatus", label: "Status", render: (row) => <StatusPill>{row.termsStatus}</StatusPill> },
-          { key: "open", label: "", pin: "right", render: (row) => row.propertyId ? <span className="row-actions"><button type="button" onClick={(event) => { event.stopPropagation(); router.push(`/properties/${row.propertyId}`) }}>Open property</button></span> : null },
-        ]}
-        rows={items}
-        important={(row) => row.termsStatus === "Needs verification"}
-        onRow={(row) => row.propertyId && router.push(`/properties/${row.propertyId}`)}
-      />
-      {open && (
-        <FormSheet eyebrow="Loans" title="Add a loan" hint="Leave a figure blank when it has not been entered. The lender is the name on this loan." onClose={() => setOpen(false)} onSubmit={submit} submitLabel="Save loan" pending={pending} error={error}>
+      {section === "loans" ? (
+        <WorkspacePage
+          views={false}
+          title="Loans & lenders"
+          underTitle={switcher}
+          action={writable ? { label: "Add loan", onClick: () => { setError(""); setOpen("loan") } } : null}
+          stats={[
+            { label: "Reported balances", value: money(items.reduce((sum, item) => sum + Number(item.balance || 0), 0)), hint: "From the loan records" },
+            { label: "Monthly payments", value: money(items.reduce((sum, item) => sum + Number(item.payment || 0), 0)), hint: "Same figure as Overview" },
+            { label: "Loan records", value: String(items.length), hint: "One loan, one property" },
+            { label: "Lenders", value: String(lenders.length), hint: "Shared lender records" },
+          ]}
+          columns={[
+            { key: "lender", label: "Lender", avatar: (row) => row.lender, render: (row) => <span className="person-copy"><strong>{row.lender}</strong><small>{row.label}</small></span> },
+            { key: "address", label: "Property", render: (row) => <span className="person-copy"><strong>{row.address || "No property"}</strong><small>{[row.city, row.loanNumber].filter(Boolean).join(" · ")}</small></span> },
+            { key: "balance", label: "Balance", render: (row) => money(row.balance) },
+            { key: "payment", label: "Payment", render: (row) => money(row.payment) },
+            { key: "maturity", label: "Maturity", render: (row) => row.maturity || "No date" },
+            { key: "termsStatus", label: "Status", render: (row) => <StatusPill>{row.termsStatus}</StatusPill> },
+          ]}
+          rows={items}
+          important={(row) => row.termsStatus === "Needs verification"}
+          onRow={(row) => row.lenderId && router.push(`/loans/lenders/${row.lenderId}`)}
+          empty="No loans yet. Add a lender, then attach a property."
+        />
+      ) : (
+        <WorkspacePage
+          views={false}
+          title="Loans & lenders"
+          underTitle={switcher}
+          action={writable ? { label: "Add lender", onClick: () => { setError(""); setOpen("lender") } } : null}
+          columns={[
+            { key: "name", label: "Lender", avatar: (row) => row.name, render: (row) => <span className="person-copy"><strong>{row.name}</strong><small>{row.terms || "No custom terms yet"}</small></span> },
+            { key: "properties", label: "Properties" },
+            { key: "balance", label: "Balances", render: (row) => money(row.balance) },
+            { key: "payment", label: "Monthly", render: (row) => money(row.payment) },
+          ]}
+          rows={lenders}
+          onRow={(row) => router.push(`/loans/lenders/${row.id}`)}
+          empty="No lenders yet."
+        />
+      )}
+      {open === "loan" && (
+        <FormSheet eyebrow="Loans" title="Add a loan" hint="The payment recorded here is the monthly mortgage used on Overview." onClose={() => setOpen("")} onSubmit={submitLoan} submitLabel="Save loan" pending={pending} error={error}>
+          <LoanFields lenders={lenders} properties={properties.data?.items || []} />
+        </FormSheet>
+      )}
+      {open === "lender" && (
+        <FormSheet eyebrow="Lenders" title="Add a lender" hint="Terms written here show on every property financed with this lender." onClose={() => setOpen("")} onSubmit={submitLender} submitLabel="Save lender" pending={pending} error={error}>
           <div className="form-grid">
-            <label className="field wide"><span>Lender</span><input name="lender" required /></label>
-            <label className="field wide"><span>Property</span>
-              <select name="propertyId" required>
-                <option value="">Choose</option>
-                {(properties.data?.items || []).map((property) => <option key={property.id} value={property.id}>{property.address}</option>)}
-              </select>
-            </label>
-            <label className="field"><span>Balance</span><input name="balance" inputMode="decimal" /></label>
-            <label className="field"><span>Monthly payment</span><input name="payment" inputMode="decimal" /></label>
-            <label className="field"><span>Original amount</span><input name="originalAmount" inputMode="decimal" /></label>
-            <label className="field"><span>Maturity</span><input name="maturity" type="date" /></label>
-            <label className="field"><span>Loan number</span><input name="loanNumber" /></label>
-            <label className="field"><span>Terms</span>
-              <select name="termsStatus">
-                <option>Needs verification</option>
-                <option>Verified</option>
-              </select>
-            </label>
+            <label className="field wide"><span>Name</span><input name="name" required /></label>
+            <label className="field wide"><span>Custom terms</span><textarea name="terms" placeholder="Rate, recourse, draws, or anything this lender requires" /></label>
           </div>
         </FormSheet>
       )}
     </>
+  )
+}
+
+export function LoanFields({ lenders, properties, loan }) {
+  return (
+    <div className="form-grid">
+      <label className="field wide"><span>Lender</span>
+        <select name="lenderId" required defaultValue={loan?.lenderId || ""}>
+          <option value="">Choose</option>
+          {lenders.map((lender) => <option key={lender.id} value={lender.id}>{lender.name}</option>)}
+        </select>
+      </label>
+      <label className="field wide"><span>Property</span>
+        <select name="propertyId" required defaultValue={loan?.propertyId || ""}>
+          <option value="">Choose</option>
+          {properties.map((property) => <option key={property.id} value={property.id}>{property.address}</option>)}
+        </select>
+      </label>
+      <label className="field"><span>Nature</span>
+        <input name="label" list="loan-labels" defaultValue={loan?.label || "Financed"} />
+        <datalist id="loan-labels">{LOAN_LABELS.map((label) => <option key={label} value={label} />)}</datalist>
+      </label>
+      <label className="field"><span>Loan number</span><input name="loanNumber" defaultValue={loan?.loanNumber || ""} /></label>
+      <label className="field"><span>Balance</span><input name="balance" inputMode="decimal" defaultValue={loan?.balance ?? ""} /></label>
+      <label className="field"><span>Monthly payment</span><input name="payment" inputMode="decimal" defaultValue={loan?.payment ?? ""} /></label>
+      <label className="field"><span>Original amount</span><input name="originalAmount" inputMode="decimal" defaultValue={loan?.originalAmount ?? ""} /></label>
+      <label className="field"><span>Maturity</span><input name="maturity" type="date" defaultValue={loan?.maturity || ""} /></label>
+      <label className="field"><span>Terms status</span>
+        <select name="termsStatus" defaultValue={loan?.termsStatus || "Needs verification"}>
+          <option>Needs verification</option>
+          <option>Verified</option>
+        </select>
+      </label>
+      <label className="field wide"><span>Terms for this property</span><textarea name="terms" defaultValue={loan?.terms || ""} placeholder="Anything specific to this house" /></label>
+    </div>
   )
 }

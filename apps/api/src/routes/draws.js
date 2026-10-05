@@ -3,7 +3,7 @@ import { DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, ImportJob, Pho
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { propertyFilter } from "../services/access.js"
 import { comparePhotosForDraw } from "../services/agent.js"
-import { appendNewDrawRows, classifyDrawRows, readWorkbook } from "../services/drawImport.js"
+import { DRAW_FIELD_ALIASES, appendNewDrawRows, classifyDrawRows, readWorkbook } from "../services/drawImport.js"
 import { saveUploadedFile, upload, uploadsPath } from "../services/files.js"
 import { notify, recordActivity } from "../services/notify.js"
 
@@ -69,6 +69,7 @@ drawsRouter.get(
         rehabRemaining: property.rehabRemaining ?? null,
         scopeLines: (property.scopeLines || []).map((line) => ({
           title: line.title,
+          description: line.description || "",
           budget: line.budget ?? null,
           status: line.status || "Not started",
         })),
@@ -144,7 +145,7 @@ drawsRouter.post(
       return
     }
     const saved = await saveUploadedFile(req.file, req.user, { kind: "import" })
-    const tables = readWorkbook(uploadsPath(saved.storagePath))
+    const tables = readWorkbook(uploadsPath(saved.storagePath), DRAW_FIELD_ALIASES.flatMap((entry) => entry[1]))
     if (!tables.length) {
       sendError(res, 400, "That workbook has no rows to read.")
       return

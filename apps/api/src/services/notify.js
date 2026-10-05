@@ -7,13 +7,17 @@ function mailer() {
   return new Resend(key)
 }
 
+function escapeHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]))
+}
+
 function messageHtml({ title, body, href }) {
   const link = href ? `${process.env.WEB_ORIGIN || "http://localhost:3000"}${href}` : ""
   return `<div style="font-family:Inter,Arial,sans-serif;color:#111827;line-height:1.5">
     <p style="margin:0 0 8px;font-size:12px;letter-spacing:.08em;color:#6b7280">SYNERGIFUND</p>
-    <h1 style="margin:0 0 12px;font-size:20px">${title}</h1>
-    <p style="margin:0 0 16px">${body}</p>
-    ${link ? `<a href="${link}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;border-radius:8px;padding:8px 12px">Open in SynergiFund</a>` : ""}
+    <h1 style="margin:0 0 12px;font-size:20px">${escapeHtml(title)}</h1>
+    <p style="margin:0 0 16px">${escapeHtml(body)}</p>
+    ${link ? `<a href="${escapeHtml(link)}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;border-radius:8px;padding:8px 12px">Open in SynergiFund</a>` : ""}
   </div>`
 }
 
@@ -28,7 +32,7 @@ export async function notify({ roles = [], userIds = [], title, body, href, even
     seen.add(id)
     return true
   })
-  if (!unique.length) return
+  if (!unique.length) return { status: "Skipped" }
   await Notification.insertMany(
     unique.map((person) => ({ userId: person._id, title, body, href, event })),
   )
@@ -40,7 +44,7 @@ export async function notify({ roles = [], userIds = [], title, body, href, even
     event,
     status: resend ? "Sending" : "Queued",
   })
-  if (!resend) return
+  if (!resend) return { status: "Queued" }
   const from = process.env.RESEND_FROM || "SynergiFund <onboarding@resend.dev>"
   const results = await Promise.allSettled(
     unique.map((person) =>
@@ -55,6 +59,7 @@ export async function notify({ roles = [], userIds = [], title, body, href, even
   )
   record.status = results.every((result) => result.status === "fulfilled" && !result.value?.error) ? "Sent" : "Failed"
   await record.save()
+  return { status: record.status }
 }
 
 export async function recordActivity({ user, title, detail, propertyId }) {
