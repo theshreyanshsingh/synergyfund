@@ -3,7 +3,7 @@ import { APPROVAL_THRESHOLD, EXPENSE_CATEGORIES } from "@synergifund/shared"
 import { Expense, ExpenseRequest, Property } from "../models/index.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { ownsProperty, propertyFilter } from "../services/access.js"
-import { saveUploadedFile, upload } from "../services/files.js"
+import { saveUploadedFile, upload, withProofUrls } from "../services/files.js"
 import { notify, recordActivity } from "../services/notify.js"
 import { refreshRehabRemaining } from "./draws.js"
 
@@ -60,14 +60,16 @@ expensesRouter.get(
   asyncHandler(async (req, res) => {
     const allowed = req.user.role === "contractor" ? await Property.find(propertyFilter(req.user)).select("_id") : null
     const propertyScope = allowed ? { propertyId: { $in: allowed.map((property) => property._id) } } : {}
-    const [requests, expenses] = await Promise.all([
-      ExpenseRequest.find(propertyScope).sort({ createdAt: -1 }),
-      Expense.find(propertyScope).sort({ createdAt: -1 }),
-    ])
+    const requestScope = req.user.role === "contractor" ? { ...propertyScope, requestedBy: req.user._id } : propertyScope
+    const requests = await ExpenseRequest.find(requestScope).sort({ createdAt: -1 })
+    const expenseScope = req.user.role === "contractor"
+      ? { ...propertyScope, requestId: { $in: requests.map((item) => item._id) } }
+      : propertyScope
+    const expenses = await Expense.find(expenseScope).sort({ createdAt: -1 })
     const requestsById = new Map(requests.map((request) => [String(request._id), request]))
     res.json({
-      requests: requests.map(presentRequest),
-      expenses: expenses.map((expense) => presentExpense(expense, requestsById.get(String(expense.requestId || "")))),
+      requests: await withProofUrls(requests.map(presentRequest)),
+      expenses: await withProofUrls(expenses.map((expense) => presentExpense(expense, requestsById.get(String(expense.requestId || ""))))),
     })
   }),
 )
@@ -136,7 +138,7 @@ expensesRouter.post(
       event: "expense.submitted",
     })
     await recordActivity({ user: req.user, title: "Expense submitted", detail: request.title, propertyId: request.propertyId })
-    res.status(201).json({ request: presentRequest(request) })
+    res.status(201).json({ request: await withProofUrls(presentRequest(request)) })
   }),
 )
 
@@ -181,7 +183,7 @@ expensesRouter.post(
     })
     await refreshRehabRemaining(property._id)
     await recordActivity({ user: req.user, title: "Cost added", detail: expense.title, propertyId: property._id })
-    res.status(201).json({ expense: presentExpense(expense) })
+    res.status(201).json({ expense: await withProofUrls(presentExpense(expense)) })
   }),
 )
 
@@ -241,7 +243,7 @@ expensesRouter.patch(
     if (!request.proofFileId) request.proofFileId = request.proofFileIds[0]
     await request.save()
     await recordActivity({ user: req.user, title: "Expense request updated", detail: request.title, propertyId: request.propertyId })
-    res.json({ request: presentRequest(request) })
+    res.json({ request: await withProofUrls(presentRequest(request)) })
   }),
 )
 
@@ -283,7 +285,7 @@ expensesRouter.post(
       event: "expense.submitted",
     })
     await recordActivity({ user: req.user, title: "Expense submitted again", detail: request.title, propertyId: request.propertyId })
-    res.json({ request: presentRequest(request) })
+    res.json({ request: await withProofUrls(presentRequest(request)) })
   }),
 )
 
@@ -312,7 +314,7 @@ expensesRouter.post(
       await request.save()
       await recordActivity({ user: req.user, title: "Expense rejected", detail: request.title, propertyId: request.propertyId })
       await notify({ userIds: [request.requestedBy], roles: ["admin"], title: "Expense rejected", body: `${request.title} was rejected. ${request.reviewNote}`, href: "/expenses", event: "expense.rejected" })
-      res.json({ request: presentRequest(request) })
+      res.json({ request: await withProofUrls(presentRequest(request)) })
       return
     }
     if (action === "needs_information") {
@@ -321,7 +323,7 @@ expensesRouter.post(
       request.reviewedBy = req.user._id
       await request.save()
       await notify({ userIds: [request.requestedBy], title: "Expense needs information", body: request.reviewNote, href: "/expenses", event: "expense.needs_information" })
-      res.json({ request: presentRequest(request) })
+      res.json({ request: await withProofUrls(presentRequest(request)) })
       return
     }
     if (request.propertyId && request.category !== "Shared rehab") {
@@ -341,7 +343,7 @@ expensesRouter.post(
       request.reviewedBy = req.user._id
       await request.save()
       await notify({ roles: ["admin"], title: "Second approval needed", body: `${request.title} is above $${APPROVAL_THRESHOLD.toLocaleString("en-US")}.`, href: "/expenses", event: "expense.second_approval" })
-      res.json({ request: presentRequest(request) })
+      res.json({ request: await withProofUrls(presentRequest(request)) })
       return
     }
     request.status = "Approved"
@@ -369,7 +371,7 @@ expensesRouter.post(
     await refreshRehabRemaining(expense.propertyId)
     await notify({ userIds: [request.requestedBy], title: "Expense approved", body: `${request.title} posted to the property books.`, href: "/expenses", event: "expense.approved" })
     await recordActivity({ user: req.user, title: "Expense approved", detail: request.reapplied ? `${request.title} · reapplied` : request.title, propertyId: request.propertyId })
-    res.json({ request: presentRequest(request), expense: presentExpense(expense) })
+    res.json({ request: await withProofUrls(presentRequest(request)), expense: await withProofUrls(presentExpense(expense)) })
   }),
 )
 

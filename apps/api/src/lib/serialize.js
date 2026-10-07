@@ -17,6 +17,15 @@ export function publicUser(user) {
 
 export function presentProperty(property, user) {
   const source = property.toObject ? property.toObject() : property
+  if (user?.role === "contractor") {
+    return {
+      id: String(source._id),
+      address: source.address,
+      city: source.city || "",
+      stage: source.stage,
+      accessInfo: source.accessInfo || "",
+    }
+  }
   const visible = {
     id: String(source._id),
     address: source.address,

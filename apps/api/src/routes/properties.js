@@ -5,9 +5,10 @@ import { Bill, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, 
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
 import { propertyFilter, ownsProperty } from "../services/access.js"
-import { saveUploadedFile, upload } from "../services/files.js"
+import { publicFileUrl, saveUploadedFile, upload, withProofUrls } from "../services/files.js"
 import { ensureLenders } from "../services/lenders.js"
 import { recordActivity } from "../services/notify.js"
+import { presentContractorDraw, presentDraw } from "./draws.js"
 
 export const propertiesRouter = Router()
 
@@ -81,13 +82,22 @@ propertiesRouter.get(
       internal ? Loan.find({ propertyId: property._id }) : [],
       internal && req.permissions.includes("expenses.read") ? Bill.find({ propertyId: property._id, status: { $ne: "Paid" } }).sort({ due: 1 }) : [],
     ])
+    if (!internal) {
+      res.json({
+        property: presentProperty(property, req.user),
+        photos: photos.map(presentPhoto),
+        expenses: await withProofUrls(expenseDocs.filter((item) => item.drawId).map(presentCost)),
+        draws: canDraws ? { items: draws.map(presentContractorDraw) } : null,
+      })
+      return
+    }
     res.json({
       property: presentProperty(property, req.user),
       rehabSpent,
       pendingExpenses: pending[0]?.total || 0,
       contractors: people.map((person) => ({ id: String(person._id), name: person.name, email: person.email })),
-      photos: photos.map((file) => ({ id: String(file._id), name: file.name })),
-      expenses: expenseDocs.map(presentCost),
+      photos: photos.map(presentPhoto),
+      expenses: await withProofUrls(expenseDocs.map(presentCost)),
       requests: requestDocs.map(presentCost),
       loans: await presentPropertyLoans(loans),
       upcoming: bills.filter((bill) => bill.due).map((bill) => ({
@@ -100,14 +110,7 @@ propertiesRouter.get(
       draws: canDraws ? {
         received,
         undrawn: schedule ? Math.max(0, schedule - received) : null,
-        items: draws.map((draw) => ({
-          id: String(draw._id),
-          title: draw.title,
-          status: draw.status,
-          amount: draw.amount ?? null,
-          fundedAmount: draw.fundedAmount ?? null,
-          fundedDate: draw.fundedDate || "",
-        })),
+        items: draws.map(presentDraw),
       } : null,
     })
   }),
@@ -193,6 +196,10 @@ propertiesRouter.patch(
   }),
 )
 
+function presentPhoto(file) {
+  return { id: String(file._id), name: file.name, url: publicFileUrl(file) }
+}
+
 function presentCost(item) {
   const proofFileIds = (item.proofFileIds || []).map(String)
   if (item.proofFileId && !proofFileIds.includes(String(item.proofFileId))) proofFileIds.unshift(String(item.proofFileId))
@@ -206,6 +213,7 @@ function presentCost(item) {
     costTreatment: item.costTreatment || "",
     vendor: item.vendor || "",
     date: item.date || "",
+    drawId: item.drawId ? String(item.drawId) : "",
     proofFileIds,
   }
 }

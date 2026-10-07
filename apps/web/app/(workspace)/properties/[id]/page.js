@@ -11,6 +11,7 @@ import { useSession } from "../../../../components/shell/Providers"
 import { StatusPill } from "../../../../components/ui/StatusPill"
 import { Loader } from "../../../../components/ui/Loader"
 import { DetailFrame } from "../../../../components/ui/DetailFrame"
+import { CameraCapture } from "../../../../components/photos/CameraCapture"
 
 export default function PropertyDetailPage({ params }) {
   const { id } = use(params)
@@ -21,16 +22,21 @@ export default function PropertyDetailPage({ params }) {
   const [files, setFiles] = useState([])
   const [message, setMessage] = useState("")
   const [termsMessage, setTermsMessage] = useState("")
-  const [requestError, setRequestError] = useState("")
   const [editing, setEditing] = useState(null)
   const [editError, setEditError] = useState("")
+  const [addingDraw, setAddingDraw] = useState(false)
+  const [drawLines, setDrawLines] = useState([blankDrawLine()])
+  const [drawError, setDrawError] = useState("")
+  const [drawPending, setDrawPending] = useState(false)
+  const [shots, setShots] = useState([])
   const property = detail.data?.property
   if (!property) return detail.error ? <div className="boot"><p className="banner">{detail.error}</p></div> : <Loader label="Opening property" />
 
   const internal = session?.user?.role !== "contractor"
   const canWrite = session?.user && can(session.user, "properties.write")
   const canPost = session?.user && can(session.user, "expenses.approve")
-  const canRequest = session?.user && can(session.user, "expenses.submit") && !canPost && (property.scopeLines || []).length > 0
+  const canRequest = session?.user && can(session.user, "expenses.submit") && !canPost
+  const canDraws = session?.user && can(session.user, "draws.write")
   const spent = detail.data.rehabSpent || 0
   const postedCosts = (detail.data.expenses || []).filter((item) => item.costTreatment !== "Exclude from construction margin")
   const left = property.rehabBudget == null ? null : Math.max(0, Number(property.rehabBudget) - spent)
@@ -46,9 +52,69 @@ export default function PropertyDetailPage({ params }) {
   ].filter(Boolean)
   const tabs = [
     { id: "overview", label: "Overview" },
-    { id: "scope", label: "Scope of work" },
   ]
   if (internal) tabs.push({ id: "financing", label: "Financing" }, { id: "draws", label: "Draws" })
+
+  if (!internal) {
+    return (
+      <DetailFrame backHref="/properties" backLabel="Properties" title={property.address} meta={property.city || ""} actions={<StatusPill>{property.stage}</StatusPill>}>
+        {property.accessInfo && (
+          <section className="panel property-card">
+            <h2>Access</h2>
+            <p>{property.accessInfo}</p>
+          </section>
+        )}
+        <section className="panel property-card">
+          <div className="property-card-head">
+            <div>
+              <h2>Draws</h2>
+              <p className="property-missing">Open a draw to see the work, then file a cost with a camera photo.</p>
+            </div>
+          </div>
+          {(draws?.items || []).length === 0 && <p className="property-missing">No draws on this house yet.</p>}
+          {(draws?.items || []).map((draw) => (
+            <DrawFold key={draw.id} draw={draw} canEdit={false} canPost={false} canRequest={canRequest} costs={postedCosts.filter((item) => item.drawId === draw.id)} propertyId={id} onSaved={() => detail.reload()} />
+          ))}
+        </section>
+        <section className="panel property-card">
+          <h2>Weekly photos</h2>
+          <p className="property-missing">Take this week’s photos on site. Photos from the library are not accepted.</p>
+          <FiledPhotos photos={detail.data.photos || []} />
+          {session?.user && can(session.user, "photos.write") && (
+            <form className="photo-form" onSubmit={async (event) => {
+              event.preventDefault()
+              if (!shots.length) {
+                setMessage("Take at least one photo with the camera.")
+                return
+              }
+              const form = new FormData(event.currentTarget)
+              form.set("propertyId", id)
+              for (const shot of shots) form.append("photos", shot.file, shot.file.name)
+              try {
+                const result = await api("/photo-sets", { method: "POST", body: form })
+                setMessage(`${result.count} photos filed.`)
+                for (const shot of shots) URL.revokeObjectURL(shot.url)
+                setShots([])
+                event.currentTarget.reset()
+                detail.reload()
+              } catch (err) {
+                setMessage(err.message)
+              }
+            }}>
+              <label className="field"><span>Week of</span><input name="weekOf" type="date" required /></label>
+              <div className="field">
+                <span>Photos</span>
+                <CameraCapture shots={shots} onChange={setShots} />
+              </div>
+              <label className="field wide"><span>What changed on site</span><input name="note" value={note} onChange={(event) => setNote(event.target.value)} /></label>
+              <div className="photo-form-actions"><button className="primary" type="submit">File this week</button></div>
+            </form>
+          )}
+          {message && <p className="property-missing">{message}</p>}
+        </section>
+      </DetailFrame>
+    )
+  }
 
   return (
     <DetailFrame
@@ -180,16 +246,7 @@ export default function PropertyDetailPage({ params }) {
           <section className="panel property-card">
             <h2>Weekly photos</h2>
             <p className="property-missing">A full set for one week. A draw compares it with the previous set.</p>
-            {(detail.data.photos || []).length > 0 && (
-              <div className="property-photos">
-                {detail.data.photos.map((photo) => (
-                  <a key={photo.id} href={`/api/documents/${photo.id}/raw`} target="_blank" rel="noreferrer">
-                    <img src={`/api/documents/${photo.id}/raw`} alt={photo.name} />
-                  </a>
-                ))}
-              </div>
-            )}
-            {(detail.data.photos || []).length === 0 && <p className="property-missing">No photos filed yet.</p>}
+            <FiledPhotos photos={detail.data.photos || []} />
             {session?.user && can(session.user, "photos.write") && (
               <form className="photo-form" onSubmit={async (event) => {
                 event.preventDefault()
@@ -221,89 +278,6 @@ export default function PropertyDetailPage({ params }) {
             {message && <p className="property-missing">{message}</p>}
           </section>
         </>
-      )}
-
-      {section === "scope" && (
-        <section className="panel property-card">
-          <h2>Scope of work</h2>
-          {(property.scopeLines || []).length === 0 && <p className="property-missing">No scope lines yet.</p>}
-          <ul className="property-scope">
-            {(property.scopeLines || []).map((line) => {
-              const lineId = String(line._id || "")
-              const posted = postedCosts.filter((item) => item.scopeLineId === lineId)
-              const waiting = (detail.data.requests || []).filter((item) => item.scopeLineId === lineId && item.status !== "Approved")
-              return (
-                <li key={lineId || line.title}>
-                  <div>
-                    <strong>{line.title}</strong>
-                    {line.description && <em>{line.description}</em>}
-                    {posted.map((item) => <em key={item.id}>{item.title} posted {money(item.amount)}</em>)}
-                    {waiting.map((item) => <em key={item.id}>{item.title} · {item.status}</em>)}
-                  </div>
-                  <span>{line.budget == null ? "Budget not entered" : money(line.budget)}</span>
-                  <StatusPill>{line.status || "Not started"}</StatusPill>
-                </li>
-              )
-            })}
-          </ul>
-          {(canPost || canRequest) && (
-            <form className="photo-form" onSubmit={async (event) => {
-              event.preventDefault()
-              setRequestError("")
-              const body = new FormData(event.currentTarget)
-              body.set("propertyId", id)
-              body.set("category", "Materials")
-              body.set("entity", "Construction company")
-              body.set("costTreatment", "Include in construction margin")
-              try {
-                await api(canPost ? "/expenses/post" : "/expenses", { method: "POST", body })
-                event.currentTarget.reset()
-                detail.reload()
-              } catch (err) {
-                setRequestError(err.message)
-              }
-            }}>
-              <label className="field wide"><span>Material or cost</span><input name="title" required /></label>
-              <label className="field"><span>Amount</span><input name="amount" type="number" min="0.01" step="0.01" required /></label>
-              <label className="field"><span>Part of the house</span>
-                <select name="scopeLineId" required={!canPost}>
-                  <option value="">{canPost ? "Whole property" : "Choose"}</option>
-                  {(property.scopeLines || []).map((line) => <option key={line._id} value={line._id}>{line.title}</option>)}
-                </select>
-              </label>
-              {draws?.items?.length > 0 && (
-                <label className="field"><span>Draw</span>
-                  <select name="drawId"><option value="">None</option>{draws.items.map((draw) => <option key={draw.id} value={draw.id}>{draw.title}</option>)}</select>
-                </label>
-              )}
-              <div className="field wide">
-                <span>Proof photos</span>
-                <label className="photo-pick">Attach photos<input name="proof" type="file" accept="image/*" multiple required={!canPost} /></label>
-              </div>
-              <label className="field wide"><span>Note</span><input name="note" /></label>
-              {requestError && <p className="banner wide">{requestError}</p>}
-              <div className="photo-form-actions"><button className="primary" type="submit">{canPost ? "Add cost" : "Request approval"}</button></div>
-            </form>
-          )}
-          <h2 className="property-follow">Posted costs</h2>
-          {postedCosts.length === 0 && <p className="property-missing">No costs on this house yet.</p>}
-          <ul className="property-scope">
-            {postedCosts.map((item) => {
-              const line = (property.scopeLines || []).find((entry) => String(entry._id) === item.scopeLineId)
-              return (
-                <li key={item.id}>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <em>{[line?.title, item.date, item.vendor].filter(Boolean).join(" · ") || "Whole property"}</em>
-                    <ProofPhotos ids={item.proofFileIds} />
-                  </div>
-                  <span>{money(item.amount)}</span>
-                  <StatusPill>Posted</StatusPill>
-                </li>
-              )
-            })}
-          </ul>
-        </section>
       )}
 
       {section === "financing" && (
@@ -345,7 +319,6 @@ export default function PropertyDetailPage({ params }) {
             actualRent: blankNumber(editing.actualRent),
             marketRent: blankNumber(editing.marketRent),
             labels: editing.labels,
-            scopeLines: editing.scopeLines.filter((line) => line.title.trim()).map((line) => ({ id: line.id, title: line.title.trim(), description: line.description.trim(), budget: blankNumber(line.budget), status: line.status || "Not started" })),
           }
           if ("houseBoughtPrice" in property) body.houseBoughtPrice = blankNumber(editing.houseBoughtPrice)
           try {
@@ -372,42 +345,251 @@ export default function PropertyDetailPage({ params }) {
             <label className="field wide"><span>Next step</span><input value={editing.nextAction} onChange={(event) => setEditing({ ...editing, nextAction: event.target.value })} /></label>
             <label className="field wide"><span>Access</span><input value={editing.accessInfo} onChange={(event) => setEditing({ ...editing, accessInfo: event.target.value })} /></label>
             {"houseBoughtPrice" in property && <label className="field"><span>HouseBought price</span><input value={editing.houseBoughtPrice} onChange={(event) => setEditing({ ...editing, houseBoughtPrice: event.target.value })} /></label>}
-            <div className="field wide">
-              <span>Scope lines</span>
-              {editing.scopeLines.map((line, index) => (
-                <div key={line.id || index} className="scope-edit">
-                  <input placeholder="Part of the house" value={line.title} onChange={(event) => setEditing((current) => ({ ...current, scopeLines: current.scopeLines.map((item, itemIndex) => itemIndex === index ? { ...item, title: event.target.value } : item) }))} />
-                  <input placeholder="Budget" value={line.budget} onChange={(event) => setEditing((current) => ({ ...current, scopeLines: current.scopeLines.map((item, itemIndex) => itemIndex === index ? { ...item, budget: event.target.value } : item) }))} />
-                  <input className="wide" placeholder="Description" value={line.description} onChange={(event) => setEditing((current) => ({ ...current, scopeLines: current.scopeLines.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item) }))} />
-                </div>
-              ))}
-              <button type="button" className="tool" onClick={() => setEditing((current) => ({ ...current, scopeLines: [...current.scopeLines, { id: "", title: "", description: "", budget: "", status: "Not started" }] }))}>Add a line</button>
-            </div>
           </div>
         </FormSheet>
       )}
 
       {section === "draws" && (
         <section className="panel property-card">
-          <h2>Draws</h2>
+          <div className="property-card-head">
+            <div>
+              <h2>Draws</h2>
+              <p className="property-missing">Open a draw to see its full scope and posted costs.</p>
+            </div>
+            {canDraws && <button type="button" className="primary" onClick={() => { setDrawError(""); setDrawLines([blankDrawLine()]); setAddingDraw(true) }}>Add draw</button>}
+          </div>
           {draws?.undrawn != null && <p className="property-missing">{money(draws.undrawn)} still undrawn · {money(draws.received)} received</p>}
           {(draws?.items || []).length === 0 && <p className="property-missing">No draws recorded.</p>}
-          <ul className="property-scope">
-            {(draws?.items || []).map((draw) => (
-              <li key={draw.id}>
-                <div>
-                  <strong>{draw.title}</strong>
-                  <em>{draw.fundedDate || (draw.status === "Funded" ? "Funded" : "Can be pulled")}</em>
-                </div>
-                <span>{money(draw.status === "Funded" ? draw.fundedAmount ?? draw.amount : draw.amount)}</span>
-                <StatusPill>{draw.status}</StatusPill>
-              </li>
-            ))}
-          </ul>
+          {(draws?.items || []).map((draw) => (
+            <DrawFold key={draw.id} draw={draw} canEdit={canDraws} canPost={canPost} canRequest={canRequest} costs={postedCosts.filter((item) => item.drawId === draw.id)} propertyId={id} onSaved={() => detail.reload()} />
+          ))}
         </section>
+      )}
+      {addingDraw && (
+        <FormSheet
+          eyebrow="Draws"
+          title="Add draw"
+          hint="Create the draw first, then list every scope item included in it."
+          onClose={() => setAddingDraw(false)}
+          onSubmit={async (event) => {
+            event.preventDefault()
+            setDrawPending(true)
+            setDrawError("")
+            const form = Object.fromEntries(new FormData(event.currentTarget))
+            try {
+              await api("/draws", {
+                method: "POST",
+                body: {
+                  propertyId: id,
+                  title: form.title,
+                  requestedDate: form.requestedDate || "",
+                  lines: cleanDrawLines(drawLines),
+                },
+              })
+              setAddingDraw(false)
+              detail.reload()
+            } catch (err) {
+              setDrawError(err.message)
+            } finally {
+              setDrawPending(false)
+            }
+          }}
+          submitLabel="Add draw"
+          pending={drawPending}
+          error={drawError}
+        >
+          <div className="form-grid">
+            <label className="field"><span>Draw name</span><input name="title" placeholder="Draw 3" required /></label>
+            <label className="field"><span>Forecast finish</span><input name="requestedDate" type="date" /></label>
+            <DrawLinesEditor lines={drawLines} onChange={setDrawLines} />
+          </div>
+        </FormSheet>
       )}
     </DetailFrame>
   )
+}
+
+function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, onSaved }) {
+  const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [addingCost, setAddingCost] = useState(false)
+  const [lines, setLines] = useState([])
+  const [proofs, setProofs] = useState([])
+  const [error, setError] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  return (
+    <article className={open ? "draw-fold is-open" : "draw-fold"}>
+      <button type="button" className="draw-fold-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <span className="draw-fold-title"><small>Draw</small><b>{draw.title}</b><em>{draw.status}</em></span>
+        <span><small>Amount</small><b>{money(draw.amount)}</b></span>
+        <span><small>Pulled</small><b>{money(draw.pulled)}</b></span>
+        <span><small>Remaining</small><b>{money(draw.remaining)}</b></span>
+        <i aria-hidden="true">⌄</i>
+      </button>
+      {open && (
+        <div className="draw-fold-body">
+          <div className="draw-fold-toolbar">
+            <div>
+              <strong>Scope of work</strong>
+              <span>{(draw.lines || []).length} {(draw.lines || []).length === 1 ? "line item" : "line items"}</span>
+            </div>
+            <div className="row-actions">
+              {(canPost || canRequest) && <button type="button" className="tool" onClick={() => { setError(""); setProofs([]); setAddingCost(true) }}>{canPost ? "Add cost" : "Request cost"}</button>}
+              {canEdit && <button type="button" className="primary" onClick={() => { setError(""); setLines((draw.lines || []).length ? draw.lines.map((line) => ({ ...line })) : [blankDrawLine()]); setEditing(true) }}>Edit draw</button>}
+            </div>
+          </div>
+          <table className="sow-table">
+            <thead><tr><th>Line item</th><th>Description</th><th>Amount</th></tr></thead>
+            <tbody>
+              {(draw.lines || []).length === 0 && <tr><td colSpan="3" className="sow-empty">No scope lines have been added to this draw.</td></tr>}
+              {(draw.lines || []).map((line) => (
+                <tr key={line.id || line.title}>
+                  <td><strong>{line.title}</strong></td>
+                  <td>{line.description || "—"}</td>
+                  <td>{money(line.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+            {(draw.lines || []).length > 0 && <tfoot><tr><td colSpan="2">Draw total</td><td>{money(draw.amount)}</td></tr></tfoot>}
+          </table>
+          {costs.length > 0 && (
+            <div className="draw-costs">
+              <h3>Posted costs</h3>
+              <ul className="property-scope">
+              {costs.map((item) => (
+                <li key={item.id}>
+                  <div><strong>{item.title}</strong><em>{item.date || "Posted"}</em><ProofPhotos ids={item.proofFileIds} urls={item.proofUrls} /></div>
+                  <span>{money(item.amount)}</span>
+                  <StatusPill>Posted</StatusPill>
+                </li>
+              ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+      {editing && (
+        <FormSheet
+          eyebrow={draw.title}
+          title="Edit draw"
+          hint="The draw amount is calculated from the scope lines below."
+          onClose={() => setEditing(false)}
+          onSubmit={async (event) => {
+            event.preventDefault()
+            setSaving(true)
+            setError("")
+            const form = Object.fromEntries(new FormData(event.currentTarget))
+            try {
+              await api(`/draws/${draw.id}`, {
+                method: "PATCH",
+                body: {
+                  title: form.title,
+                  requestedDate: form.requestedDate || "",
+                  lines: cleanDrawLines(lines),
+                },
+              })
+              setEditing(false)
+              onSaved()
+            } catch (err) {
+              setError(err.message)
+            } finally {
+              setSaving(false)
+            }
+          }}
+          submitLabel="Save draw"
+          pending={saving}
+          error={error}
+        >
+          <div className="form-grid">
+            <label className="field"><span>Draw name</span><input name="title" defaultValue={draw.title} required /></label>
+            <label className="field"><span>Forecast finish</span><input name="requestedDate" type="date" defaultValue={draw.requestedDate || ""} /></label>
+            <DrawLinesEditor lines={lines} onChange={setLines} />
+          </div>
+        </FormSheet>
+      )}
+      {addingCost && (
+        <FormSheet
+          eyebrow={draw.title}
+          title={canPost ? "Add cost" : "Request cost"}
+          hint="This cost will stay linked to this draw."
+          onClose={() => setAddingCost(false)}
+          onSubmit={async (event) => {
+              event.preventDefault()
+              setError("")
+              if (!canPost && !proofs.length) {
+                setError("Take at least one photo with the camera.")
+                return
+              }
+              const body = new FormData(event.currentTarget)
+              body.set("propertyId", propertyId)
+              body.set("drawId", draw.id)
+              body.set("category", "Materials")
+              body.set("entity", "Construction company")
+              body.set("costTreatment", "Include in construction margin")
+              for (const shot of proofs) body.append("proof", shot.file, shot.file.name)
+              try {
+                await api(canPost ? "/expenses/post" : "/expenses", { method: "POST", body })
+                setAddingCost(false)
+                onSaved()
+              } catch (err) {
+                setError(err.message)
+              }
+            }}
+          submitLabel={canPost ? "Add cost" : "Submit request"}
+          error={error}
+        >
+            <div className="form-grid">
+              <label className="field wide"><span>Material or cost</span><input name="title" required /></label>
+              <label className="field"><span>Amount</span><input name="amount" type="number" min="0.01" step="0.01" required /></label>
+              <label className="field"><span>Date</span><input name="date" type="date" /></label>
+              <div className="field wide">
+                <span>Proof photos</span>
+                {canPost ? (
+                  <label className="photo-pick">Attach photos<input name="proof" type="file" accept="image/*" multiple /></label>
+                ) : (
+                  <CameraCapture shots={proofs} onChange={setProofs} />
+                )}
+              </div>
+              <label className="field wide"><span>Note</span><input name="note" /></label>
+            </div>
+        </FormSheet>
+      )}
+    </article>
+  )
+}
+
+function DrawLinesEditor({ lines, onChange }) {
+  function update(index, key, value) {
+    onChange(lines.map((line, lineIndex) => lineIndex === index ? { ...line, [key]: value } : line))
+  }
+  return (
+    <div className="field wide draw-lines-editor">
+      <div className="draw-lines-label">
+        <span>Scope of work</span>
+        <button type="button" className="tool" onClick={() => onChange([...lines, blankDrawLine()])}>Add line</button>
+      </div>
+      {lines.map((line, index) => (
+        <div className="draw-line-edit" key={line.id || index}>
+          <input aria-label="Line item" placeholder="Line item" value={line.title} onChange={(event) => update(index, "title", event.target.value)} />
+          <input aria-label="Description" placeholder="Description from scope of work" value={line.description || ""} onChange={(event) => update(index, "description", event.target.value)} />
+          <input aria-label="Amount" placeholder="Amount" inputMode="decimal" value={line.amount ?? ""} onChange={(event) => update(index, "amount", event.target.value)} />
+          <button type="button" className="icon-btn" aria-label="Remove line" onClick={() => onChange(lines.filter((_, lineIndex) => lineIndex !== index))}>×</button>
+        </div>
+      ))}
+      <div className="draw-lines-total"><span>Draw total</span><strong>{money(lines.reduce((total, line) => total + (Number(line.amount) || 0), 0))}</strong></div>
+    </div>
+  )
+}
+
+function blankDrawLine() {
+  return { id: "", title: "", description: "", amount: "" }
+}
+
+function cleanDrawLines(lines) {
+  return lines
+    .filter((line) => line.title.trim())
+    .map((line) => ({ id: line.id, title: line.title.trim(), description: String(line.description || "").trim(), amount: line.amount === "" ? null : Number(line.amount) }))
 }
 
 function propertyForm(property) {
@@ -428,7 +610,6 @@ function propertyForm(property) {
     nextAction: property.nextAction || "",
     houseBoughtPrice: property.houseBoughtPrice ?? "",
     labels: property.labels || [],
-    scopeLines: (property.scopeLines || []).map((line) => ({ id: String(line._id || ""), title: line.title || "", description: line.description || "", budget: line.budget ?? "", status: line.status || "Not started" })),
   }
 }
 
@@ -462,15 +643,34 @@ function blankNumber(value) {
   return Number.isFinite(number) ? number : null
 }
 
-function ProofPhotos({ ids }) {
+function FiledPhotos({ photos }) {
+  if (!photos.length) return <p className="property-missing">No photos filed yet.</p>
+  return (
+    <div className="property-photos">
+      {photos.map((photo) => {
+        const href = photo.url || `/api/documents/${photo.id}/raw`
+        return (
+          <a key={photo.id} href={href} target="_blank" rel="noreferrer">
+            <img src={href} alt={photo.name} />
+          </a>
+        )
+      })}
+    </div>
+  )
+}
+
+function ProofPhotos({ ids, urls = {} }) {
   if (!ids?.length) return null
   return (
     <div className="property-photos">
-      {ids.map((id) => (
-        <a key={id} href={`/api/documents/${id}/raw`} target="_blank" rel="noreferrer">
-          <img src={`/api/documents/${id}/raw`} alt="Proof" />
-        </a>
-      ))}
+      {ids.map((id) => {
+        const href = urls[id] || `/api/documents/${id}/raw`
+        return (
+          <a key={id} href={href} target="_blank" rel="noreferrer">
+            <img src={href} alt="Proof" />
+          </a>
+        )
+      })}
     </div>
   )
 }

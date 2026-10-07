@@ -1,5 +1,3 @@
-import fs from "node:fs"
-import path from "node:path"
 import { Router } from "express"
 import mammoth from "mammoth"
 import xlsx from "xlsx"
@@ -8,7 +6,7 @@ import { lenderForName } from "../services/lenders.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { propertyFilter } from "../services/access.js"
 import { readWorkbook } from "../services/drawImport.js"
-import { saveUploadedFile, upload, uploadsPath } from "../services/files.js"
+import { deleteStoredFile, materializeStoredFile, publicFileUrl, saveUploadedFile, sendStoredFile, upload } from "../services/files.js"
 import { recordActivity } from "../services/notify.js"
 
 export const documentsRouter = Router()
@@ -23,6 +21,7 @@ function present(file) {
     kind: file.kind,
     version: file.version,
     createdAt: file.createdAt,
+    url: publicFileUrl(file),
   }
 }
 
@@ -68,7 +67,7 @@ documentsRouter.get(
       sendError(res, 404, "That file is not available.")
       return
     }
-    res.download(uploadsPath(file.storagePath), file.name)
+    await sendStoredFile(res, file, { download: true })
   }),
 )
 
@@ -81,24 +80,28 @@ documentsRouter.get(
       sendError(res, 404, "That file is not available.")
       return
     }
-    const fullPath = uploadsPath(file.storagePath)
     const lower = file.name.toLowerCase()
-    if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
-      const book = xlsx.readFile(fullPath)
-      const sheets = book.SheetNames.map((name) => ({
-        name,
-        rows: xlsx.utils.sheet_to_json(book.Sheets[name], { header: 1, raw: false, defval: "" }).slice(0, 80),
-      }))
-      res.json({ kind: "sheet", file: present(file), sheets })
-      return
-    }
-    if (lower.endsWith(".docx")) {
-      const result = await mammoth.convertToHtml({ path: fullPath })
-      res.json({ kind: "document", file: present(file), html: result.value })
+    if (lower.endsWith(".xlsx") || lower.endsWith(".xls") || lower.endsWith(".docx")) {
+      const stored = await materializeStoredFile(file)
+      try {
+        if (lower.endsWith(".docx")) {
+          const result = await mammoth.convertToHtml({ path: stored.path })
+          res.json({ kind: "document", file: present(file), html: result.value })
+          return
+        }
+        const book = xlsx.readFile(stored.path)
+        const sheets = book.SheetNames.map((name) => ({
+          name,
+          rows: xlsx.utils.sheet_to_json(book.Sheets[name], { header: 1, raw: false, defval: "" }).slice(0, 80),
+        }))
+        res.json({ kind: "sheet", file: present(file), sheets })
+      } finally {
+        await stored.cleanup()
+      }
       return
     }
     if (file.mime?.startsWith("image/")) {
-      res.json({ kind: "image", file: present(file), url: `/api/documents/${file._id}/raw` })
+      res.json({ kind: "image", file: present(file), url: publicFileUrl(file) || `/api/documents/${file._id}/raw` })
       return
     }
     res.json({ kind: "file", file: present(file) })
@@ -114,8 +117,12 @@ documentsRouter.get(
       sendError(res, 404, "That file is not available.")
       return
     }
-    res.setHeader("Content-Type", file.mime || "application/octet-stream")
-    fs.createReadStream(uploadsPath(file.storagePath)).pipe(res)
+    const direct = publicFileUrl(file)
+    if (direct) {
+      res.redirect(direct)
+      return
+    }
+    await sendStoredFile(res, file)
   }),
 )
 
@@ -128,6 +135,7 @@ documentsRouter.delete(
       sendError(res, 404, "That file is not available.")
       return
     }
+    await deleteStoredFile(file)
     await file.deleteOne()
     await recordActivity({ user: req.user, title: "File removed from the library", detail: file.name, propertyId: file.propertyId })
     res.json({ ok: true })
@@ -175,7 +183,13 @@ documentsRouter.post(
       return
     }
     const saved = await saveUploadedFile(req.file, req.user, { kind: "import" })
-    const tables = readWorkbook(uploadsPath(saved.storagePath), PORTFOLIO_ALIASES)
+    const stored = await materializeStoredFile(saved)
+    let tables
+    try {
+      tables = readWorkbook(stored.path, PORTFOLIO_ALIASES)
+    } finally {
+      await stored.cleanup()
+    }
     const rows = tables.flatMap((table) => table.rows.map((source) => ({
       sheet: source.sheet,
       row: source.row,

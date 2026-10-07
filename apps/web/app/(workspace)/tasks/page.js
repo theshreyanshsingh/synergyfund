@@ -190,7 +190,9 @@ export default function TasksPage() {
 }
 
 function mailNotice(mail) {
-  if (mail === "Queued") return "Task saved. The assignment email is queued because the Resend API key is not set."
-  if (mail === "Failed") return "Task saved, but the assignment email did not send."
-  return ""
+  const status = typeof mail === "string" ? mail : mail?.status
+  const error = typeof mail === "string" ? "" : mail?.error
+  if (status === "Sent") return "Assignment email sent."
+  if (!status || status === "Skipped") return ""
+  return `Task saved, but the assignment email did not send. ${error || ""}`.trim()
 }

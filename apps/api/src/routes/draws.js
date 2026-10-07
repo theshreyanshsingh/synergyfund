@@ -4,7 +4,7 @@ import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { propertyFilter } from "../services/access.js"
 import { comparePhotosForDraw } from "../services/agent.js"
 import { DRAW_FIELD_ALIASES, appendNewDrawRows, classifyDrawRows, readWorkbook } from "../services/drawImport.js"
-import { saveUploadedFile, upload, uploadsPath } from "../services/files.js"
+import { materializeStoredFile, saveUploadedFile, upload } from "../services/files.js"
 import { notify, recordActivity } from "../services/notify.js"
 
 export const drawsRouter = Router()
@@ -25,19 +25,46 @@ function presentBudget(item) {
   }
 }
 
-function presentDraw(item) {
+export function presentDraw(item) {
+  const lines = (item.lines || []).map((line) => ({
+    id: String(line._id),
+    title: line.title || "",
+    description: line.description || "",
+    amount: line.amount ?? null,
+  }))
+  const figured = lines.some((line) => line.amount != null)
+  const amount = figured ? lines.reduce((total, line) => total + Number(line.amount || 0), 0) : item.amount ?? null
+  const pulled = item.fundedAmount != null ? Number(item.fundedAmount) : item.status === "Funded" && amount != null ? Number(amount) : 0
   return {
     id: String(item._id),
     propertyId: String(item.propertyId),
     budgetId: item.budgetId ? String(item.budgetId) : "",
     title: item.title,
     status: item.status,
-    amount: item.amount ?? null,
+    amount,
     fundedAmount: item.fundedAmount ?? null,
+    pulled,
+    remaining: amount == null ? null : Math.max(0, Number(amount) - pulled),
     cashBasis: item.cashBasis,
     requestedDate: item.requestedDate || "",
     fundedDate: item.fundedDate || "",
     notes: item.notes || "",
+    lines,
+  }
+}
+
+export function presentContractorDraw(item) {
+  const draw = presentDraw(item)
+  return {
+    id: draw.id,
+    propertyId: draw.propertyId,
+    title: draw.title,
+    status: draw.status,
+    amount: draw.amount,
+    pulled: draw.pulled,
+    remaining: draw.remaining,
+    requestedDate: draw.requestedDate,
+    lines: draw.lines,
   }
 }
 
@@ -54,6 +81,21 @@ drawsRouter.get(
       ExpenseRequest.find({ propertyId: { $in: ids }, status: { $in: ["Submitted", "Needs information", "Needs second approval"] } }),
       PhotoReport.find({ propertyId: { $in: ids } }).sort({ createdAt: -1 }),
     ])
+    if (req.user.role === "contractor") {
+      res.json({
+        properties: properties.map((property) => ({
+          id: String(property._id),
+          address: property.address,
+          city: property.city,
+          stage: property.stage,
+        })),
+        budgets: [],
+        draws: draws.map(presentContractorDraw),
+        reports: [],
+        totals: null,
+      })
+      return
+    }
     await syncRehabRemaining(properties, expenses)
     const funded = draws.filter((draw) => draw.status === "Funded").reduce((sum, draw) => sum + Number(draw.fundedAmount || 0), 0)
     const pendingShare = requests.reduce((sum, request) => sum + Number(request.amount || 0), 0)
@@ -145,7 +187,13 @@ drawsRouter.post(
       return
     }
     const saved = await saveUploadedFile(req.file, req.user, { kind: "import" })
-    const tables = readWorkbook(uploadsPath(saved.storagePath), DRAW_FIELD_ALIASES.flatMap((entry) => entry[1]))
+    const stored = await materializeStoredFile(saved)
+    let tables
+    try {
+      tables = readWorkbook(stored.path, DRAW_FIELD_ALIASES.flatMap((entry) => entry[1]))
+    } finally {
+      await stored.cleanup()
+    }
     if (!tables.length) {
       sendError(res, 400, "That workbook has no rows to read.")
       return
@@ -232,17 +280,21 @@ drawsRouter.post(
       sendError(res, 400, "A draw needs a property and a name.")
       return
     }
+    const lines = parseDrawLines(req.body.lines)
     const draw = await Draw.create({
       propertyId: req.body.propertyId,
       budgetId: req.body.budgetId || undefined,
       title: req.body.title,
       status: req.body.status || "Requested",
-      amount: numberOrUndefined(req.body.amount),
+      amount: lines.some((line) => line.amount != null)
+        ? lines.reduce((total, line) => total + Number(line.amount || 0), 0)
+        : numberOrUndefined(req.body.amount),
       fundedAmount: numberOrUndefined(req.body.fundedAmount),
       cashBasis: req.body.cashBasis || "Confirmed receipt",
       requestedDate: req.body.requestedDate || "",
       fundedDate: req.body.fundedDate || "",
       notes: req.body.notes || "",
+      lines,
     })
     await recordActivity({ user: req.user, title: "Draw recorded", detail: draw.title, propertyId: draw.propertyId })
     res.status(201).json({ draw: presentDraw(draw) })
@@ -261,6 +313,12 @@ drawsRouter.patch(
     if ("requestedDate" in req.body) draw.requestedDate = req.body.requestedDate || ""
     if ("title" in req.body && req.body.title) draw.title = req.body.title
     if ("amount" in req.body) draw.amount = numberOrUndefined(req.body.amount)
+    if ("lines" in req.body) {
+      draw.lines = parseDrawLines(req.body.lines)
+      if (draw.lines.some((line) => line.amount != null)) {
+        draw.amount = draw.lines.reduce((total, line) => total + Number(line.amount || 0), 0)
+      }
+    }
     await draw.save()
     res.json({ draw: presentDraw(draw) })
   }),
@@ -349,6 +407,20 @@ export async function refreshRehabRemaining(propertyId) {
   if (!property) return
   const expenses = await Expense.find({ propertyId: property._id })
   await syncRehabRemaining([property], expenses)
+}
+
+function parseDrawLines(value) {
+  const list = Array.isArray(value) ? value : []
+  return list.flatMap((line) => {
+    const title = String(line?.title || "").trim()
+    if (!title) return []
+    return [{
+      _id: line.id || line._id || undefined,
+      title,
+      description: String(line.description || "").trim(),
+      amount: numberOrUndefined(line.amount),
+    }]
+  })
 }
 
 function numberOrUndefined(value) {

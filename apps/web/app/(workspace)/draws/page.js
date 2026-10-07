@@ -205,41 +205,47 @@ function PropertyCard({ project, open, writable, onToggle, onForecast, onPull })
         <div className="draw-body">
           <h3>Draw lines</h3>
           {project.lines.length === 0 && <p className="draws-empty">No draw has been recorded. The schedule above is the figure already stored on the property.</p>}
-          {project.lines.map((line) => {
-            const amount = Number(line.amount) || 0
-            const funded = line.status === "Funded" ? Number(line.fundedAmount ?? line.amount) || 0 : Number(line.fundedAmount) || 0
-            const left = Math.max(0, amount - funded)
-            return (
-              <div key={line.id} className="draw-line">
-                <div>
-                  <strong>{line.title}</strong>
-                  <span><StatusPill>{line.status}</StatusPill>{line.fundedDate ? ` Received ${shortDate(line.fundedDate)}` : ""}</span>
-                </div>
-                <div className="draw-line-money">
-                  <b>{cash(amount)}</b>
-                  <span>{funded ? `${cash(funded)} in` : "Not received"}{left && line.status !== "Funded" ? ` · ${cash(left)} left` : ""}</span>
-                </div>
-                {writable && line.status !== "Funded" && (
-                  <div className="draw-line-actions">
-                    <label>Forecast finish
-                      <input type="date" defaultValue={line.requestedDate || ""} onChange={(event) => onForecast(line.id, event.target.value)} />
-                    </label>
-                    <button type="button" onClick={() => onPull(line.id)}>Pull draw</button>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-          {project.scopeLines.length > 0 && (
-            <>
-              <h3>Scope on the property</h3>
-              {project.scopeLines.map((line) => (
-                <div key={line.title} className="draw-line">
-                  <div><strong>{line.title}</strong>{line.description && <span>{line.description}</span>}<span><StatusPill>{line.status}</StatusPill></span></div>
-                  <div className="draw-line-money"><b>{cash(line.budget)}</b><span>Scope budget</span></div>
-                </div>
+          {project.lines.map((line) => (
+            <DrawRow key={line.id} line={line} writable={writable} onForecast={onForecast} onPull={onPull} />
+          ))}
+        </div>
+      )}
+    </article>
+  )
+}
+
+function DrawRow({ line, writable, onForecast, onPull }) {
+  const [open, setOpen] = useState(false)
+  const amount = line.amount
+  const pulled = line.pulled ?? (line.status === "Funded" ? line.fundedAmount ?? line.amount : line.fundedAmount || 0)
+  const remaining = line.remaining ?? (amount == null ? null : Math.max(0, Number(amount) - Number(pulled || 0)))
+  return (
+    <article className={open ? "draw-fold is-open" : "draw-fold"}>
+      <button type="button" className="draw-fold-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <span><small>Draw</small><b>{line.title}</b></span>
+        <span><small>Amount</small><b>{cash(amount)}</b></span>
+        <span><small>Pulled</small><b>{cash(pulled)}</b></span>
+        <span><small>Remaining</small><b>{cash(remaining)}</b></span>
+        <i>{open ? "Hide" : "Open"}</i>
+      </button>
+      {open && (
+        <div className="draw-fold-body">
+          <table className="sow-table">
+            <thead><tr><th>Line item</th><th>Description</th><th>Amount</th></tr></thead>
+            <tbody>
+              {(line.lines || []).length === 0 && <tr><td colSpan="3">No scope lines on this draw yet.</td></tr>}
+              {(line.lines || []).map((item) => (
+                <tr key={item.id || item.title}><td>{item.title}</td><td>{item.description || "—"}</td><td>{cash(item.amount)}</td></tr>
               ))}
-            </>
+            </tbody>
+          </table>
+          {writable && line.status !== "Funded" && (
+            <div className="draw-line-actions">
+              <label>Forecast finish
+                <input type="date" defaultValue={line.requestedDate || ""} onChange={(event) => onForecast(line.id, event.target.value)} />
+              </label>
+              <button type="button" onClick={() => onPull(line.id)}>Pull draw</button>
+            </div>
           )}
         </div>
       )}

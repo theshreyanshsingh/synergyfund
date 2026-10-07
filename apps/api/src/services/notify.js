@@ -36,30 +36,35 @@ export async function notify({ roles = [], userIds = [], title, body, href, even
   await Notification.insertMany(
     unique.map((person) => ({ userId: person._id, title, body, href, event })),
   )
+  const recipients = unique.map((person) => String(person.email || "").trim()).filter(Boolean)
+  if (!recipients.length) return { status: "Failed", error: "The assignee has no email address." }
   const resend = mailer()
   const record = await MailMessage.create({
-    to: unique.map((person) => person.email),
+    to: recipients,
     subject: title,
     body,
     event,
-    status: resend ? "Sending" : "Queued",
+    status: resend ? "Sending" : "Failed",
+    error: resend ? "" : "RESEND_API_KEY is not set.",
   })
-  if (!resend) return { status: "Queued" }
-  const from = process.env.RESEND_FROM || "SynergiFund <onboarding@resend.dev>"
-  const results = await Promise.allSettled(
-    unique.map((person) =>
+  if (!resend) return { status: "Failed", error: record.error }
+  const from = process.env.RESEND_FROM || "SynergiFund <noreply@superblocks.xyz>"
+  const results = await Promise.all(
+    recipients.map((email) =>
       resend.emails.send({
         from,
-        to: person.email,
+        to: email,
         subject: title,
         text: body,
         html: messageHtml({ title, body, href }),
       }),
     ),
   )
-  record.status = results.every((result) => result.status === "fulfilled" && !result.value?.error) ? "Sent" : "Failed"
+  const errors = results.map((result) => result?.error?.message).filter(Boolean)
+  record.status = errors.length ? "Failed" : "Sent"
+  record.error = errors.join(" ")
   await record.save()
-  return { status: record.status }
+  return { status: record.status, error: record.error }
 }
 
 export async function recordActivity({ user, title, detail, propertyId }) {

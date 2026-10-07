@@ -1,12 +1,14 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useSession } from "./Providers"
 import { Sidebar } from "./Sidebar"
 import { CommandPalette } from "./CommandPalette"
 import { Loader } from "../ui/Loader"
 import { Icon } from "../ui/Icon"
+import { api } from "../../lib/api"
 
 const NARROW = "(max-width: 1100px)"
 
@@ -51,6 +53,24 @@ export function AppShell({ children }) {
     return <Loader />
   }
 
+  if (session.user.role === "contractor") {
+    return (
+      <div className="app is-contractor">
+        <header className="contractor-bar">
+          <Link href="/properties" className="contractor-brand">
+            <span className="mark">S</span>
+            <span>SynergiFund</span>
+          </Link>
+          <Link href="/expenses" className={pathname === "/expenses" ? "contractor-link is-on" : "contractor-link"}>Expenses</Link>
+          <span className="contractor-person">{session.user.name}</span>
+          <ThemeToggle />
+          <button type="button" className="tool" onClick={async () => { await api("/auth/logout", { method: "POST" }); router.replace("/login"); router.refresh() }}>Logout</button>
+        </header>
+        <main className="main">{children}</main>
+      </div>
+    )
+  }
+
   const shellClass = `app${menuOpen ? " menu-open" : ""}${collapsed ? " menu-collapsed" : ""}`
 
   return (
@@ -63,5 +83,23 @@ export function AppShell({ children }) {
       <main className="main">{children}</main>
       <CommandPalette user={session.user} open={searchOpen} onClose={closeSearch} />
     </div>
+  )
+}
+
+function ThemeToggle() {
+  const [dark, setDark] = useState(false)
+  useEffect(() => {
+    setDark(document.documentElement.dataset.theme === "dark")
+  }, [])
+  function toggle() {
+    const next = !dark
+    document.documentElement.dataset.theme = next ? "dark" : "light"
+    localStorage.setItem("synergifund-theme", next ? "dark" : "light")
+    setDark(next)
+  }
+  return (
+    <button type="button" className="icon-btn contractor-theme" aria-label={dark ? "Light mode" : "Dark mode"} onClick={toggle}>
+      <Icon name={dark ? "sun" : "moon"} size={16} />
+    </button>
   )
 }

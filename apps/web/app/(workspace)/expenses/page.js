@@ -9,6 +9,7 @@ import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
 import { money } from "../../../lib/format"
 import { useApi } from "../../../lib/useApi"
+import { CameraCapture } from "../../../components/photos/CameraCapture"
 
 export default function ExpensesPage() {
   const session = useSession()
@@ -18,6 +19,8 @@ export default function ExpensesPage() {
   const [error, setError] = useState("")
   const [propertyId, setPropertyId] = useState("")
   const [selected, setSelected] = useState(null)
+  const [proofs, setProofs] = useState([])
+  const camera = session?.user?.role === "contractor"
   const canSubmit = session?.user && can(session.user, "expenses.submit")
   const canApprove = session?.user && can(session.user, "expenses.approve")
   const canReapply = (row) => row.book === "Request" && row.status === "Rejected" && session?.user?.role === "contractor" && row.requestedBy === session?.user?.id
@@ -35,8 +38,17 @@ export default function ExpensesPage() {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     setError("")
+    if (camera) {
+      if (!proofs.length) {
+        setError("Take at least one photo with the camera.")
+        return
+      }
+      for (const shot of proofs) form.append("proof", shot.file, shot.file.name)
+    }
     try {
       await api("/expenses", { method: "POST", body: form })
+      for (const shot of proofs) URL.revokeObjectURL(shot.url)
+      setProofs([])
       setOpen(false)
       list.reload()
     } catch (err) {
@@ -73,7 +85,10 @@ export default function ExpensesPage() {
         views={false}
         title="Expenses"
         action={canSubmit ? { label: "Add expense", onClick: () => setOpen(true) } : null}
-        stats={[
+        stats={camera ? [
+          { label: "Your requests", value: String(visibleRequests.length), hint: "Waiting for a decision" },
+          { label: "Posted", value: String(posted.length), hint: "Approved costs you filed" },
+        ] : [
           { label: "Requests", value: String(visibleRequests.length), hint: "Waiting and closed" },
           { label: "Posted", value: String(posted.length), hint: "On the property books" },
           { label: "Materials pending", value: String(visibleRequests.filter((item) => item.category === "Materials" && !["Approved", "Rejected"].includes(item.status)).length), hint: "Not yet accounted for" },
@@ -111,6 +126,7 @@ export default function ExpensesPage() {
           canEdit={selected.book === "Request" && !["Approved", "Rejected"].includes(selected.status) && session?.user?.role === "contractor" && selected.requestedBy === session?.user?.id}
           canApprove={canApprove && selected.book === "Request" && !["Approved", "Rejected"].includes(selected.status)}
           canReapply={canReapply(selected)}
+          camera={camera}
           onClose={() => setSelected(null)}
           onSaved={async (request) => {
             setSelected({ ...request, book: "Request" })
@@ -138,7 +154,7 @@ export default function ExpensesPage() {
               </select>
             </label>
             <label className="field"><span>Margin</span><select name="costTreatment"><option>Include in construction margin</option><option>Exclude from construction margin</option></select></label>
-            <label className="field wide"><span>Proof photos</span><input name="proof" type="file" accept="image/*" multiple required /></label>
+            <label className="field wide"><span>Proof photos</span>{camera ? <CameraCapture shots={proofs} onChange={setProofs} /> : <input name="proof" type="file" accept="image/*" multiple required />}</label>
           </div>
         </FormSheet>
       )}
@@ -152,10 +168,11 @@ function proofIds(item) {
   return ids
 }
 
-function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, onClose, onSaved, onDecide, onReapply }) {
+function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camera, onClose, onSaved, onDecide, onReapply }) {
   const [error, setError] = useState("")
   const [pending, setPending] = useState(false)
   const [removed, setRemoved] = useState([])
+  const [proofs, setProofs] = useState([])
   const photos = proofIds(item).filter((id) => !removed.includes(id))
   const property = properties.find((entry) => entry.id === item.propertyId)
   const line = (property?.scopeLines || []).find((entry) => String(entry._id) === item.scopeLineId)
@@ -165,7 +182,9 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, onClo
     setPending(true)
     setError("")
     try {
-      const result = await api(`/expenses/${item.id}`, { method: "PATCH", body: new FormData(event.currentTarget) })
+      const body = new FormData(event.currentTarget)
+      for (const shot of proofs) body.append("proof", shot.file, shot.file.name)
+      const result = await api(`/expenses/${item.id}`, { method: "PATCH", body })
       await onSaved(result.request)
     } catch (err) {
       setError(err.message)
@@ -178,8 +197,8 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, onClo
     <div className="property-photos">
       {photos.map((id) => (
         <div key={id} className="proof-tile">
-          <a href={`/api/documents/${id}/raw`} target="_blank" rel="noreferrer">
-            <img src={`/api/documents/${id}/raw`} alt="Proof" />
+          <a href={item.proofUrls?.[id] || `/api/documents/${id}/raw`} target="_blank" rel="noreferrer">
+            <img src={item.proofUrls?.[id] || `/api/documents/${id}/raw`} alt="Proof" />
           </a>
           {canEdit && <button type="button" onClick={() => setRemoved((current) => [...current, id])}>Remove</button>}
         </div>
@@ -224,7 +243,7 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, onClo
         <label className="field"><span>Amount</span><input name="amount" type="number" min="0.01" step="0.01" defaultValue={item.amount} required /></label>
         <label className="field"><span>Vendor</span><input name="vendor" defaultValue={item.vendor || ""} /></label>
         <label className="field wide"><span>Note</span><input name="note" defaultValue={item.note || ""} /></label>
-        <label className="field wide"><span>Add or replace proof photos</span><input name="proof" type="file" accept="image/*" multiple /></label>
+        <label className="field wide"><span>Add or replace proof photos</span>{camera ? <CameraCapture shots={proofs} onChange={setProofs} /> : <input name="proof" type="file" accept="image/*" multiple />}</label>
       </div>
     </FormSheet>
   )

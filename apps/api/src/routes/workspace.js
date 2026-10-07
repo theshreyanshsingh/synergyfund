@@ -988,17 +988,18 @@ async function readAssignee(req, res) {
 }
 
 async function mailAssignee({ user, task, assignee }) {
-  if (!assignee) return "Skipped"
+  if (!assignee) return { status: "Skipped" }
+  if (!assignee.email) return { status: "Failed", error: "The assignee has no email address." }
   const due = task.due ? ` Due ${task.due}.` : ""
   const labels = task.labels?.length ? ` Labels: ${task.labels.join(", ")}.` : ""
-  const result = await notify({
+  const notes = task.notes ? ` Note: ${task.notes}` : ""
+  return notify({
     userIds: [assignee._id],
     title: `Task assigned: ${task.title}`,
-    body: `${user.name} assigned you “${task.title}”.${due}${labels}`,
+    body: `${user.name} assigned you “${task.title}”.${due}${labels}${notes}`,
     href: "/tasks",
     event: "task.assigned",
   })
-  return result?.status || "Skipped"
 }
 
 function cleanLabels(value) {

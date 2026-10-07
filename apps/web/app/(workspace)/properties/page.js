@@ -19,12 +19,12 @@ function PropertiesScreen() {
   const [open, setOpen] = useState(params.get("new") === "1")
   const [error, setError] = useState("")
   const [form, setForm] = useState({ address: "", city: "", stage: "Under contract", strategy: "Fix & flip", purchasePrice: "", arv: "", rehabBudget: "", nextAction: "" })
-  const [scopeLines, setScopeLines] = useState([{ title: "", description: "", budget: "", status: "Not started" }])
   const [labels, setLabels] = useState([])
   const [labelDraft, setLabelDraft] = useState("")
   const [assigned, setAssigned] = useState([])
   const [contractors, setContractors] = useState([])
   const writable = session?.user && can(session.user, "properties.write")
+  const contractor = session?.user?.role === "contractor"
   const canMembers = session?.user && can(session.user, "members.manage")
 
   useEffect(() => {
@@ -41,14 +41,12 @@ function PropertiesScreen() {
     setError("")
     const body = new FormData(event.currentTarget)
     body.set("labels", JSON.stringify(labelDraft.trim() ? [...labels, labelDraft.trim()] : labels))
-    body.set("scopeLines", JSON.stringify(scopeLines.filter((line) => line.title.trim())))
     body.set("assignedUserIds", JSON.stringify(assigned))
     try {
       await api("/properties", { method: "POST", body })
       setOpen(false)
       setLabels([])
       setLabelDraft("")
-      setScopeLines([{ title: "", description: "", budget: "", status: "Not started" }])
       setAssigned([])
       list.reload()
     } catch (err) {
@@ -64,12 +62,12 @@ function PropertiesScreen() {
         action={writable ? { label: "New property", onClick: () => setOpen(true) } : null}
         columns={[
           { key: "address", label: "Name", avatar: (row) => row.address, render: (row) => <span className="person-copy"><strong>{row.address}</strong><small>{row.city || "Location not entered"}</small></span> },
-          { key: "nextAction", label: "Next step", render: (row) => row.nextAction || "Set the next action" },
+          ...(contractor ? [] : [{ key: "nextAction", label: "Next step", render: (row) => row.nextAction || "Set the next action" }]),
           { key: "stage", label: "Status", render: (row) => <StatusPill>{row.stage}</StatusPill> },
           { key: "open", label: "", pin: "right", render: (row) => <span className="row-actions"><button type="button" onClick={(event) => { event.stopPropagation(); router.push(`/properties/${row.id}`) }}>Open</button></span> },
         ]}
         rows={list.data?.items || []}
-        important={(row) => row.health === "Needs attention" || !row.purchasePrice}
+        important={contractor ? undefined : (row) => row.health === "Needs attention" || !row.purchasePrice}
         onRow={(row) => router.push(`/properties/${row.id}`)}
         empty={list.error || "No properties yet."}
       />
@@ -95,17 +93,6 @@ function PropertiesScreen() {
                   <button key={label} type="button" onClick={() => setLabels((current) => current.some((item) => item.toLowerCase() === label.toLowerCase()) ? current : [...current, label].slice(0, 8))}>{label}</button>
                 ))}
               </div>
-            </div>
-            <div className="field wide">
-              <span>Scope lines</span>
-              {scopeLines.map((line, index) => (
-                <div key={index} className="scope-edit">
-                  <input placeholder="Part of the house" value={line.title} onChange={(event) => setScopeLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, title: event.target.value } : item))} />
-                  <input placeholder="Budget" value={line.budget} onChange={(event) => setScopeLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, budget: event.target.value } : item))} />
-                  <input className="wide" placeholder="Description" value={line.description} onChange={(event) => setScopeLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item))} />
-                </div>
-              ))}
-              <button type="button" className="tool" onClick={() => setScopeLines((current) => [...current, { title: "", description: "", budget: "", status: "Not started" }])}>Add a line</button>
             </div>
             {contractors.length > 0 && (
               <div className="field wide">
