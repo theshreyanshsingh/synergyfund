@@ -244,8 +244,8 @@ export const ImportJob = register(
       type: String,
       sheet: String,
       headers: [String],
-      rows: [Schema.Types.Mixed],
-      marks: [Schema.Types.Mixed],
+      rows: { type: Array, default: [] },
+      marks: { type: Array, default: [] },
       counts: {
         pending: Number,
         added: Number,

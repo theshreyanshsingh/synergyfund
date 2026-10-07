@@ -225,7 +225,7 @@ export const NAV = [
   { href: "/payments", label: "Upcoming payments", icon: "card", permission: PERMISSIONS.expensesRead, section: "Plan your day" },
   { href: "/calendar", label: "Payment calendar", icon: "calendar", permission: PERMISSIONS.expensesRead, section: "Plan your day" },
   { href: "/properties", label: "Properties", icon: "building", permission: PERMISSIONS.propertiesRead, section: "Projects" },
-  { href: "/construction", label: "Construction intelligence", icon: "chart", permission: PERMISSIONS.drawsRead, section: "Projects" },
+  { href: "/construction", label: "Construction intelligence", icon: "chart", permission: PERMISSIONS.drawsRead, section: "Projects", badge: "Soon" },
   { href: "/loans", label: "Loans & lenders", icon: "bank", permission: PERMISSIONS.propertiesRead, section: "Projects" },
   { href: "/expenses", label: "Expenses", icon: "receipt", permission: PERMISSIONS.expensesRead, section: "Records" },
   { href: "/documents", label: "Documents", icon: "file", permission: PERMISSIONS.documentsRead, section: "Records" },

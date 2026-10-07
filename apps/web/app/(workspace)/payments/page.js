@@ -34,7 +34,7 @@ export default function PaymentsPage() {
         { label: "Scheduled", value: String(upcoming.length), hint: "Unpaid" },
         { label: "Amount", value: money(upcoming.reduce((sum, item) => sum + Number(item.amount || 0), 0)), hint: "Does not send a payment" },
         { label: "Posted costs", value: money(posted.reduce((sum, item) => sum + Number(item.amount || 0), 0)), hint: "Approved onto the books" },
-        { label: "Entities", value: "2", hint: "Investment and construction" },
+        { label: "Entities", value: String(new Set(items.map((item) => item.entity).filter(Boolean)).size), hint: "Paying entities on these rows" },
         { label: "Window", value: "30d", hint: "Upcoming book" },
       ]}
       columns={[

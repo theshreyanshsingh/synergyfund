@@ -155,6 +155,10 @@ const PROPERTY_FIELDS = [
   ["marketRent", ["market rent"], "number"],
   ["ownerEntity", ["owner entity", "owner"], "text"],
   ["dealSource", ["deal source", "source"], "text"],
+  ["nextAction", ["next action", "next step"], "text"],
+  ["rentStatus", ["rent status"], "text"],
+  ["rentMarket", ["rent market"], "text"],
+  ["accessInfo", ["access info", "access"], "text"],
 ]
 
 const LOAN_FIELDS = [
@@ -229,10 +233,13 @@ documentsRouter.post(
       return
     }
     const file = await DocumentFile.findById(job.fileId)
+    const rows = await portfolioRows(file, job)
+    job.rows = rows
+    job.markModified("rows")
     let created = 0
     let updated = 0
     let skipped = 0
-    for (const source of job.rows) {
+    for (const source of rows) {
       const mapped = source.mapped || mapPortfolioRow(source.cells || source)
       const address = String(mapped.address || "").trim()
       const sourceRef = { file: file?.name, sheet: source.sheet || job.sheet, row: source.row }
@@ -259,6 +266,10 @@ documentsRouter.post(
           marketRent: mapped.marketRent,
           ownerEntity: mapped.ownerEntity || "",
           dealSource: mapped.dealSource || "",
+          nextAction: mapped.nextAction || "",
+          rentStatus: mapped.rentStatus || "",
+          rentMarket: mapped.rentMarket || "",
+          accessInfo: mapped.accessInfo || "",
           importSource: sourceRef,
           updatedBy: req.user.name,
         })
@@ -289,6 +300,23 @@ documentsRouter.post(
   }),
 )
 
+async function portfolioRows(file, job) {
+  if (!file) return job.rows || []
+  const stored = await materializeStoredFile(file)
+  try {
+    const tables = readWorkbook(stored.path, PORTFOLIO_ALIASES)
+    if (!tables.length) return job.rows || []
+    return tables.flatMap((table) => table.rows.map((source) => ({
+      sheet: source.sheet,
+      row: source.row,
+      cells: sanitizeKeys(source.cells),
+      mapped: mapPortfolioRow(source.cells),
+    })))
+  } finally {
+    await stored.cleanup()
+  }
+}
+
 function mapPortfolioRow(cells = {}) {
   return Object.fromEntries([...PROPERTY_FIELDS, ...LOAN_FIELDS].map(([key, , kind]) => [key, readCell(cells, key, kind)]))
 }
@@ -318,7 +346,7 @@ function fillProperty(property, mapped) {
     property.stage = mapped.stage
     changed = true
   }
-  for (const key of ["city", "strategy", "purchasePrice", "purchaseDate", "arv", "rehabBudget", "actualRent", "marketRent", "ownerEntity", "dealSource"]) {
+  for (const key of ["city", "strategy", "purchasePrice", "purchaseDate", "arv", "rehabBudget", "actualRent", "marketRent", "ownerEntity", "dealSource", "nextAction", "rentStatus", "rentMarket", "accessInfo"]) {
     if (fillBlank(property, key, mapped[key])) changed = true
   }
   return changed

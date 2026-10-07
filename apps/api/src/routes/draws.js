@@ -225,8 +225,12 @@ drawsRouter.post(
       return
     }
     const [properties, draws] = await loadDrawContext(req.user)
+    const fileForRows = await DocumentFile.findById(job.fileId)
+    const rows = await drawRows(fileForRows, job)
+    job.rows = rows.map((row) => ({ sheet: row.sheet, row: row.row, cells: row.cells }))
+    job.markModified("rows")
     const result = await appendNewDrawRows({
-      rows: job.rows,
+      rows,
       properties,
       draws,
       Draw,
@@ -371,6 +375,18 @@ function presentImport(job, file) {
       const marked = marks.get(`${row.sheet}:${row.row}`) || {}
       return { sheet: row.sheet, row: row.row, cells: row.cells || {}, status: marked.status || "skipped", reason: marked.reason || "" }
     }),
+  }
+}
+
+async function drawRows(file, job) {
+  if (!file) return job.rows || []
+  const stored = await materializeStoredFile(file)
+  try {
+    const tables = readWorkbook(stored.path, DRAW_FIELD_ALIASES.flatMap((entry) => entry[1]))
+    if (!tables.length) return job.rows || []
+    return tables.flatMap((table) => table.rows)
+  } finally {
+    await stored.cleanup()
   }
 }
 
