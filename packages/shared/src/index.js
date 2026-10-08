@@ -125,6 +125,10 @@ export const EXPENSE_STATUSES = ["Draft", "Submitted", "Needs information", "Nee
 
 export const PAYING_ENTITIES = ["Investment company", "Construction company"]
 
+export const PAYMENT_CATEGORIES = ["Mortgage", "Insurance", "Property taxes", "Utilities", "HOA", "Contractor", "Materials", "Loan payoff", "Other"]
+
+export const PAYMENT_RECURRENCES = ["One time", "Weekly", "Every 2 weeks", "Monthly", "Quarterly", "Yearly"]
+
 export const APPROVAL_THRESHOLD = 5000
 
 export const PERMISSION_CATALOG = [

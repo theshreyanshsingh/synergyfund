@@ -4,7 +4,7 @@ import { presentProperty } from "../../lib/serialize.js"
 import { propertyFilter } from "../access.js"
 import { presentContractorDraw, presentDraw } from "../../routes/draws.js"
 import { matchScore, rank } from "./match.js"
-import { loanPaymentDates } from "../schedule.js"
+import { loanPaymentDates, paymentDates } from "../schedule.js"
 
 const MODEL_RESULT_LIMIT = 12000
 const OPEN_REQUEST_STATUSES = ["Submitted", "Needs information", "Needs second approval"]
@@ -481,8 +481,17 @@ export const TOOLS = [
         Task.find({ done: false, labels: { $in: PAYMENT_TASK_LABELS }, $or: [{ propertyId: { $in: ids } }, { propertyId: null }] }),
       ])
       const dueBills = bills
-        .filter((bill) => dateKey(bill.due) && dateKey(bill.due) <= until)
-        .map((bill) => ({ title: bill.title, property: place(bill.propertyId), amount: bill.amount ?? null, due: dateKey(bill.due), overdue: dateKey(bill.due) < today, recurrence: bill.recurrence }))
+        .filter((bill) => dateKey(bill.due))
+        .flatMap((bill) => paymentDates(bill, dateKey(bill.due), until).map((due, index) => ({
+          title: bill.title,
+          property: place(bill.propertyId),
+          amount: bill.amount ?? null,
+          due,
+          overdue: index === 0 && due < today,
+          type: bill.category,
+          recurrence: bill.recurrence,
+          payee: bill.vendor || "",
+        })))
         .sort((left, right) => left.due.localeCompare(right.due))
       const mortgages = loans.filter((loan) => loan.payment).map((loan) => ({
         property: place(loan.propertyId),

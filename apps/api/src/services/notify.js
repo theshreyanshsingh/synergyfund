@@ -176,7 +176,7 @@ function shown(value, money) {
   if (value == null || value === "") return "blank"
   if (Array.isArray(value)) return value.length ? value.join(", ") : "none"
   if (typeof value === "boolean") return value ? "yes" : "no"
-  if (typeof value === "number") return money ? `$${value.toLocaleString("en-US")}` : value.toLocaleString("en-US")
+  if (typeof value === "number") return money ? `$${value.toLocaleString("en-US", { minimumFractionDigits: value % 1 ? 2 : 0, maximumFractionDigits: 2 })}` : value.toLocaleString("en-US")
   const text = String(value)
   return text.length > 60 ? `${text.slice(0, 60)}…` : text
 }

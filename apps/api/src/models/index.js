@@ -289,6 +289,7 @@ export const Bill = register(
       category: { type: String, default: "Other" },
       entity: { type: String, default: "Investment company" },
       due: String,
+      startDue: String,
       recurrence: { type: String, default: "One time" },
       status: { type: String, default: "Active" },
       vendor: String,

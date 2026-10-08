@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { can, ensureTaskPermissions, isRole, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
+import { can, ensureTaskPermissions, isRole, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
 import {
   Activity,
   AgentThread,
@@ -22,7 +22,7 @@ import { asyncHandler, requireAnyPermission, requirePermission, sendError } from
 import { publicUser } from "../lib/serialize.js"
 import { propertyFilter } from "../services/access.js"
 import { presentDraw, refreshRehabRemaining } from "./draws.js"
-import { loanPaymentDates } from "../services/schedule.js"
+import { loanPaymentDates, nextPaymentDate, paymentDates } from "../services/schedule.js"
 import { saveUploadedFile, upload } from "../services/files.js"
 import { ensureLenders, lenderForName, presentLender } from "../services/lenders.js"
 import { changeSummary, notify, notifyPropertyAccess, recordActivity } from "../services/notify.js"
@@ -44,7 +44,9 @@ const LOAN_FIELDS = [
 ]
 
 function money(value) {
-  return value == null ? "" : `$${Number(value).toLocaleString("en-US")}`
+  if (value == null) return ""
+  const number = Number(value)
+  return `$${number.toLocaleString("en-US", { minimumFractionDigits: number % 1 ? 2 : 0, maximumFractionDigits: 2 })}`
 }
 
 workspaceRouter.get(
@@ -252,12 +254,86 @@ workspaceRouter.delete(
   }),
 )
 
+const BILL_FIELDS = [
+  ["title", "Name"],
+  ["amount", "Amount", true],
+  ["due", "Due"],
+  ["recurrence", "Repeats"],
+  ["category", "Type"],
+  ["entity", "Paid by"],
+  ["vendor", "Payee"],
+]
+
+const EXPENSE_FOR_PAYMENT = {
+  Mortgage: "Financing",
+  "Loan payoff": "Financing",
+  Insurance: "Insurance & taxes",
+  "Property taxes": "Insurance & taxes",
+  Utilities: "Utilities",
+  Contractor: "Contractor",
+  Materials: "Materials",
+}
+
+async function readBill(req, res, existing) {
+  const body = req.body || {}
+  const next = {}
+  if (!existing || "title" in body) {
+    const title = String(body.title || "").trim()
+    if (!title) {
+      sendError(res, 400, "Name the payment, for example Kiavi mortgage or County property tax.")
+      return null
+    }
+    next.title = title.slice(0, 160)
+  }
+  if (!existing || "amount" in body) {
+    const amount = Number(String(body.amount ?? "").replace(/[$,\s]/g, ""))
+    if (!Number.isFinite(amount) || amount <= 0) {
+      sendError(res, 400, "Enter an amount above zero.")
+      return null
+    }
+    next.amount = Math.round(amount * 100) / 100
+  }
+  if (!existing || "due" in body) {
+    const due = String(body.due || "").slice(0, 10)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(due) || Number.isNaN(new Date(`${due}T00:00:00`).getTime())) {
+      sendError(res, 400, "Choose the date the payment is due.")
+      return null
+    }
+    next.due = due
+  }
+  if (!existing || "recurrence" in body) next.recurrence = PAYMENT_RECURRENCES.includes(body.recurrence) ? body.recurrence : "One time"
+  if (!existing || "category" in body) next.category = PAYMENT_CATEGORIES.includes(body.category) ? body.category : "Other"
+  if (!existing || "entity" in body) next.entity = PAYING_ENTITIES.includes(body.entity) ? body.entity : PAYING_ENTITIES[0]
+  if (!existing || "vendor" in body) next.vendor = String(body.vendor || "").trim().slice(0, 120)
+  if (!existing || "propertyId" in body) {
+    const id = String(body.propertyId || "").trim()
+    if (!id) next.propertyId = null
+    else {
+      const property = /^[a-f\d]{24}$/i.test(id) ? await Property.findOne({ _id: id, ...propertyFilter(req.user) }).select("_id") : null
+      if (!property) {
+        sendError(res, 400, "Choose a property from the list, or leave it company-wide.")
+        return null
+      }
+      next.propertyId = property._id
+    }
+  }
+  return next
+}
+
+async function billScope(user) {
+  if (user.role !== "contractor") return {}
+  const properties = await Property.find(propertyFilter(user)).select("_id")
+  return { propertyId: { $in: properties.map((property) => property._id) } }
+}
+
 workspaceRouter.get(
   "/bills",
   requirePermission("expenses.read"),
   asyncHandler(async (req, res) => {
-    const items = await Bill.find().sort({ due: 1 })
-    res.json({ items: items.map(presentBill) })
+    const items = await Bill.find(await billScope(req.user)).sort({ due: 1 })
+    const properties = await Property.find({ _id: { $in: items.map((bill) => bill.propertyId).filter(Boolean) } }).select("address")
+    const names = new Map(properties.map((property) => [String(property._id), property.address]))
+    res.json({ items: items.map((bill) => ({ ...presentBill(bill), property: names.get(String(bill.propertyId || "")) || "" })) })
   }),
 )
 
@@ -265,23 +341,55 @@ workspaceRouter.post(
   "/bills",
   requirePermission("expenses.approve"),
   asyncHandler(async (req, res) => {
-    const bill = await Bill.create({
-      title: req.body.title,
-      amount: Number(req.body.amount) || 0,
-      category: req.body.category || "Other",
-      entity: req.body.entity || "Investment company",
-      due: req.body.due,
-      propertyId: req.body.propertyId || undefined,
-      vendor: req.body.vendor || "",
-      recurrence: req.body.recurrence || "One time",
-    })
+    const fields = await readBill(req, res)
+    if (!fields) return
+    const bill = await Bill.create({ ...fields, propertyId: fields.propertyId || undefined, startDue: fields.due, status: "Active" })
     await recordActivity({
       user: req.user,
       title: "Payment scheduled",
-      detail: [bill.title, money(bill.amount), bill.due ? `Due ${bill.due}` : "", bill.recurrence].filter(Boolean).join(" · "),
+      detail: [bill.title, money(bill.amount), `Due ${bill.due}`, bill.recurrence !== "One time" ? `Repeats ${bill.recurrence.toLowerCase()}` : ""].filter(Boolean).join(" · "),
       propertyId: bill.propertyId,
     })
     res.status(201).json({ bill: presentBill(bill) })
+  }),
+)
+
+workspaceRouter.patch(
+  "/bills/:id",
+  requirePermission("expenses.approve"),
+  asyncHandler(async (req, res) => {
+    const bill = await Bill.findOne({ _id: req.params.id, ...(await billScope(req.user)) }).catch(() => null)
+    if (!bill) {
+      sendError(res, 404, "That payment was not found.")
+      return
+    }
+    if (bill.status === "Paid") {
+      sendError(res, 400, "That payment is already paid. Add a new payment instead.")
+      return
+    }
+    const fields = await readBill(req, res, bill)
+    if (!fields) return
+    const before = bill.toObject()
+    Object.assign(bill, fields)
+    if (bill.due !== before.due || bill.recurrence !== before.recurrence || !bill.startDue) bill.startDue = bill.due
+    await bill.save()
+    await recordActivity({ user: req.user, title: "Payment updated", detail: [bill.title, changeSummary(before, bill.toObject(), BILL_FIELDS)].filter(Boolean).join(" · "), propertyId: bill.propertyId })
+    res.json({ bill: presentBill(bill) })
+  }),
+)
+
+workspaceRouter.delete(
+  "/bills/:id",
+  requirePermission("expenses.approve"),
+  asyncHandler(async (req, res) => {
+    const bill = await Bill.findOne({ _id: req.params.id, ...(await billScope(req.user)) }).catch(() => null)
+    if (!bill) {
+      sendError(res, 404, "That payment was not found.")
+      return
+    }
+    await bill.deleteOne()
+    await recordActivity({ user: req.user, title: "Payment deleted", detail: [bill.title, money(bill.amount), bill.due ? `Due ${bill.due}` : ""].filter(Boolean).join(" · "), propertyId: bill.propertyId })
+    res.json({ ok: true })
   }),
 )
 
@@ -289,12 +397,16 @@ workspaceRouter.post(
   "/bills/:id/pay",
   requirePermission("expenses.approve"),
   asyncHandler(async (req, res) => {
-    const bill = await Bill.findById(req.params.id)
+    const bill = await Bill.findOne({ _id: req.params.id, ...(await billScope(req.user)) }).catch(() => null)
     if (!bill) {
       sendError(res, 404, "That payment was not found.")
       return
     }
-    const paidOn = new Date().toISOString().slice(0, 10)
+    if (bill.status === "Paid") {
+      sendError(res, 400, "That payment is already marked paid.")
+      return
+    }
+    const paidOn = todayKey()
     bill.paidOn = paidOn
     bill.status = "Paid"
     await bill.save()
@@ -302,16 +414,36 @@ workspaceRouter.post(
       propertyId: bill.propertyId,
       title: bill.title,
       amount: bill.amount,
-      category: bill.category === "Mortgage" ? "Financing" : "Other",
+      category: EXPENSE_FOR_PAYMENT[bill.category] || "Other",
       vendor: bill.vendor,
       date: paidOn,
       entity: bill.entity,
       costTreatment: "Exclude from construction margin",
       postedBy: req.user._id,
     })
+    const nextDue = nextPaymentDate(bill)
+    const next = nextDue
+      ? await Bill.create({
+        propertyId: bill.propertyId,
+        title: bill.title,
+        amount: bill.amount,
+        category: bill.category,
+        entity: bill.entity,
+        vendor: bill.vendor,
+        recurrence: bill.recurrence,
+        startDue: bill.startDue || bill.due,
+        due: nextDue,
+        status: "Active",
+      })
+      : null
     await refreshRehabRemaining(bill.propertyId)
-    await recordActivity({ user: req.user, title: "Payment marked paid", detail: [bill.title, money(bill.amount), `Paid ${paidOn}`].filter(Boolean).join(" · "), propertyId: bill.propertyId })
-    res.json({ bill: presentBill(bill) })
+    await recordActivity({
+      user: req.user,
+      title: "Payment marked paid",
+      detail: [bill.title, money(bill.amount), `Paid ${paidOn}`, next ? `Next due ${next.due}` : ""].filter(Boolean).join(" · "),
+      propertyId: bill.propertyId,
+    })
+    res.json({ bill: presentBill(bill), next: next ? presentBill(next) : null })
   }),
 )
 
@@ -819,7 +951,7 @@ workspaceRouter.get(
     const taskFilter = { done: false, $or: [{ propertyId: { $in: propertyIds } }, { propertyId: null }] }
     if (!allTasks) taskFilter.assigneeId = req.user._id
     const [bills, tasks, expenses, loans, draws] = await Promise.all([
-      Bill.find({ $or: [{ propertyId: { $in: propertyIds } }, { propertyId: null }] }),
+      Bill.find(req.user.role === "contractor" ? { propertyId: { $in: propertyIds } } : { $or: [{ propertyId: { $in: propertyIds } }, { propertyId: null }] }),
       Task.find(taskFilter),
       Expense.find({
         costTreatment: { $ne: "Exclude from construction margin" },
@@ -833,23 +965,26 @@ workspaceRouter.get(
     const monthOut = shiftKey(today, 30)
     const lender = (loan) => (loan.lender && loan.lender !== "Not provided" ? loan.lender : "Loan")
     const events = [
-      ...bills.filter((bill) => bill.due).map((bill) => {
-        const date = dateKey(bill.due)
+      ...bills.filter((bill) => bill.due).flatMap((bill) => {
         const paid = bill.status === "Paid"
-        const overdue = !paid && date < today
-        const dueSoon = !paid && !overdue && date <= soon
-        return {
-          id: `bill-${bill._id}`,
-          kind: "bill",
-          title: bill.title,
-          date,
-          amount: bill.amount ?? null,
-          status: bill.status,
-          property: names.get(String(bill.propertyId || "")) || "",
-          urgent: overdue || dueSoon,
-          tone: overdue ? "bad" : dueSoon ? "warn" : paid ? "good" : "neutral",
-          detail: overdue ? "Overdue" : dueSoon ? "Due this week" : paid ? "Paid" : "Scheduled",
-        }
+        const dates = paid ? [dateKey(bill.due)].filter(Boolean) : paymentDates(bill, dateKey(bill.due) < shiftKey(today, -60) ? dateKey(bill.due) : shiftKey(today, -60), shiftKey(today, 365))
+        return dates.map((date, index) => {
+          const current = index === 0
+          const overdue = !paid && current && date < today
+          const dueSoon = !paid && current && !overdue && date <= soon
+          return {
+            id: `bill-${bill._id}-${date}`,
+            kind: "bill",
+            title: bill.title,
+            date,
+            amount: bill.amount ?? null,
+            status: paid ? "Paid" : current ? bill.status : "Scheduled",
+            property: names.get(String(bill.propertyId || "")) || "",
+            urgent: overdue || dueSoon,
+            tone: overdue ? "bad" : dueSoon ? "warn" : paid ? "good" : "neutral",
+            detail: overdue ? "Overdue" : dueSoon ? "Due this week" : paid ? "Paid" : current ? "Scheduled" : `Repeats ${String(bill.recurrence).toLowerCase()}`,
+          }
+        })
       }),
       ...loans.filter((loan) => loan.maturity).map((loan) => {
         const date = dateKey(loan.maturity)
@@ -1236,7 +1371,7 @@ function addBusinessDays(key, count) {
 }
 
 function presentBill(bill) {
-  return { id: String(bill._id), title: bill.title, amount: bill.amount, category: bill.category, entity: bill.entity, due: bill.due || "", status: bill.status, vendor: bill.vendor || "", paidOn: bill.paidOn || "", propertyId: bill.propertyId ? String(bill.propertyId) : "" }
+  return { id: String(bill._id), title: bill.title, amount: bill.amount, category: bill.category, entity: bill.entity, due: bill.due || "", recurrence: bill.recurrence || "One time", status: bill.status, vendor: bill.vendor || "", paidOn: bill.paidOn || "", propertyId: bill.propertyId ? String(bill.propertyId) : "" }
 }
 
 function sum(items, key) {
