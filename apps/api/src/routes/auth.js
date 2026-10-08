@@ -2,6 +2,8 @@ import { Router } from "express"
 import bcrypt from "bcryptjs"
 import { z } from "zod"
 import { User } from "../models/index.js"
+import jwt from "jsonwebtoken"
+import { recordActivity } from "../services/notify.js"
 import { asyncHandler, sendError } from "../lib/http.js"
 import { publicUser } from "../lib/serialize.js"
 import { requireAuth, setSessionCookie, signSession } from "../middleware/auth.js"
@@ -38,6 +40,7 @@ authRouter.post(
       role,
       title: role === "admin" ? "Signed in · Private workspace" : "Member",
     })
+    await recordActivity({ user, title: "Workspace created", detail: `${user.name} became the first admin` })
     setSessionCookie(res, signSession(user._id))
     res.status(201).json({ user: publicUser(user) })
   }),
@@ -57,14 +60,26 @@ authRouter.post(
       return
     }
     setSessionCookie(res, signSession(user._id))
+    await recordActivity({ user, title: "Signed in", detail: user.email })
     res.json({ user: publicUser(user) })
   }),
 )
 
-authRouter.post("/logout", (req, res) => {
-  res.clearCookie("sf_session", { path: "/" })
-  res.json({ ok: true })
-})
+authRouter.post(
+  "/logout",
+  asyncHandler(async (req, res) => {
+    const token = req.cookies?.sf_session
+    if (token) {
+      try {
+        const payload = jwt.verify(token, process.env.JWT_SECRET)
+        const user = await User.findById(payload.sub)
+        if (user) await recordActivity({ user, title: "Signed out", detail: user.email })
+      } catch {}
+    }
+    res.clearCookie("sf_session", { path: "/" })
+    res.json({ ok: true })
+  }),
+)
 
 authRouter.get(
   "/me",
@@ -90,6 +105,7 @@ authRouter.post(
     }
     req.user.passwordHash = await bcrypt.hash(nextPassword, 10)
     await req.user.save()
+    await recordActivity({ user: req.user, title: "Password changed", detail: "Changed their own password" })
     res.json({ user: publicUser(req.user) })
   }),
 )

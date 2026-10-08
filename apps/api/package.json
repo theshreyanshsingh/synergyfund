@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/index.js",
+    "dev": "node --watch-path=src --watch-path=../../packages/shared/src --watch-path=../../.env src/index.js",
     "start": "node src/index.js"
   },
   "dependencies": {

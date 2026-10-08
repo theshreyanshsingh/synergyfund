@@ -187,6 +187,7 @@ documentsRouter.post(
       return
     }
     const saved = await saveUploadedFile(req.file, req.user, { kind: "import" })
+    await recordActivity({ user: req.user, title: "Property workbook uploaded", detail: `${saved.name} · waiting for review` })
     const stored = await materializeStoredFile(saved)
     let tables = []
     try {

@@ -12,7 +12,9 @@ import { drawsRouter } from "./routes/draws.js"
 import { documentsRouter } from "./routes/documents.js"
 import { workspaceRouter } from "./routes/workspace.js"
 import { pushRouter } from "./routes/push.js"
+import { agentRouter } from "./routes/agent.js"
 import { requireAuth } from "./middleware/auth.js"
+import { trackActivity } from "./middleware/activity.js"
 import { seedIfEmpty } from "./services/seed.js"
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../..")
@@ -28,11 +30,13 @@ app.use("/auth", authRouter)
 
 const api = express.Router()
 api.use(requireAuth)
+api.use(trackActivity)
 api.use("/properties", propertiesRouter)
 api.use("/expenses", expensesRouter)
 api.use("/draws", drawsRouter)
 api.use("/documents", documentsRouter)
 api.use("/push", pushRouter)
+api.use("/agent", agentRouter)
 api.use(workspaceRouter)
 app.use(api)
 

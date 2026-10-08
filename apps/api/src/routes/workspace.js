@@ -1,11 +1,10 @@
 import { Router } from "express"
-import { can, ensureTaskPermissions, isRole, permissionOverrides, permissionsFor, PERMISSIONS } from "@synergifund/shared"
+import { can, ensureTaskPermissions, isRole, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
 import {
   Activity,
   AgentThread,
   Bill,
   ConstructionProject,
-  DocumentFile,
   Draw,
   DrawBudget,
   Expense,
@@ -22,13 +21,31 @@ import {
 import { asyncHandler, requireAnyPermission, requirePermission, sendError } from "../lib/http.js"
 import { publicUser } from "../lib/serialize.js"
 import { propertyFilter } from "../services/access.js"
-import { refreshRehabRemaining } from "./draws.js"
-import { answerQuestion } from "../services/agent.js"
+import { presentDraw, refreshRehabRemaining } from "./draws.js"
+import { loanPaymentDates } from "../services/schedule.js"
 import { saveUploadedFile, upload } from "../services/files.js"
 import { ensureLenders, lenderForName, presentLender } from "../services/lenders.js"
-import { notify, recordActivity } from "../services/notify.js"
+import { changeSummary, notify, notifyPropertyAccess, recordActivity } from "../services/notify.js"
 
 export const workspaceRouter = Router()
+
+const TASK_FIELDS = [["title", "Task"], ["due", "Due"], ["priority", "Priority"], ["labels", "Labels"], ["owner", "Assignee"], ["notes", "Note"]]
+const LOAN_FIELDS = [
+  ["lender", "Lender"],
+  ["label", "Nature"],
+  ["loanNumber", "Loan number"],
+  ["balance", "Balance", true],
+  ["payment", "Monthly payment", true],
+  ["paymentDay", "Payment day"],
+  ["originalAmount", "Original amount", true],
+  ["maturity", "Maturity"],
+  ["termsStatus", "Terms"],
+  ["terms", "Property terms"],
+]
+
+function money(value) {
+  return value == null ? "" : `$${Number(value).toLocaleString("en-US")}`
+}
 
 workspaceRouter.get(
   "/overview",
@@ -121,6 +138,7 @@ workspaceRouter.patch(
     const order = cleanOverviewOrder(req.body.order)
     req.user.overviewOrder = order
     await req.user.save()
+    await recordActivity({ user: req.user, title: "Overview rearranged", detail: "Changed the order of the overview cards" })
     res.json({ order })
   }),
 )
@@ -168,6 +186,12 @@ workspaceRouter.post(
       notes: req.body.notes || "",
     })
     const mail = await mailAssignee({ user: req.user, task, assignee: assignee.assignee })
+    await recordActivity({
+      user: req.user,
+      title: "Task created",
+      detail: [task.title, task.owner ? `Assigned to ${task.owner}` : "Unassigned", task.due ? `Due ${task.due}` : ""].filter(Boolean).join(" · "),
+      propertyId: task.propertyId,
+    })
     res.status(201).json({ task: presentTask(task, assignee.assignee, true), mail })
   }),
 )
@@ -187,6 +211,7 @@ workspaceRouter.patch(
       return
     }
     const previousAssignee = String(task.assigneeId || "")
+    const before = task.toObject()
     let assignee = null
     if ("assigneeId" in req.body) {
       const next = await readAssignee(req, res)
@@ -204,6 +229,10 @@ workspaceRouter.patch(
     await task.save()
     const changedAssignee = "assigneeId" in req.body && String(task.assigneeId || "") !== previousAssignee
     const mail = changedAssignee ? await mailAssignee({ user: req.user, task, assignee }) : "Skipped"
+    const after = task.toObject()
+    const title = before.done !== after.done ? (after.done ? "Task completed" : "Task reopened") : changedAssignee ? "Task assigned" : "Task updated"
+    const changes = changeSummary(before, after, TASK_FIELDS.filter(([key]) => key !== "title"))
+    await recordActivity({ user: req.user, title, detail: [task.title, changes].filter(Boolean).join(" · "), propertyId: task.propertyId })
     res.json({ task: presentTask(task, assignee, req.permissions.includes(PERMISSIONS.tasksAssign)), mail })
   }),
 )
@@ -218,6 +247,7 @@ workspaceRouter.delete(
       return
     }
     await task.deleteOne()
+    await recordActivity({ user: req.user, title: "Task deleted", detail: task.title, propertyId: task.propertyId })
     res.json({ ok: true })
   }),
 )
@@ -244,6 +274,12 @@ workspaceRouter.post(
       propertyId: req.body.propertyId || undefined,
       vendor: req.body.vendor || "",
       recurrence: req.body.recurrence || "One time",
+    })
+    await recordActivity({
+      user: req.user,
+      title: "Payment scheduled",
+      detail: [bill.title, money(bill.amount), bill.due ? `Due ${bill.due}` : "", bill.recurrence].filter(Boolean).join(" · "),
+      propertyId: bill.propertyId,
     })
     res.status(201).json({ bill: presentBill(bill) })
   }),
@@ -274,6 +310,7 @@ workspaceRouter.post(
       postedBy: req.user._id,
     })
     await refreshRehabRemaining(bill.propertyId)
+    await recordActivity({ user: req.user, title: "Payment marked paid", detail: [bill.title, money(bill.amount), `Paid ${paidOn}`].filter(Boolean).join(" · "), propertyId: bill.propertyId })
     res.json({ bill: presentBill(bill) })
   }),
 )
@@ -380,6 +417,7 @@ workspaceRouter.post(
       loanNumber: String(req.body.loanNumber || "").trim(),
       balance: optionalNumber(req.body.balance),
       payment: optionalNumber(req.body.payment),
+      paymentDay: dayOfMonth(req.body.paymentDay),
       originalAmount: optionalNumber(req.body.originalAmount),
       maturity: String(req.body.maturity || ""),
       termsStatus: req.body.termsStatus === "Verified" ? "Verified" : "Needs verification",
@@ -403,6 +441,7 @@ workspaceRouter.patch(
       sendError(res, 404, "That property is not available.")
       return
     }
+    const before = loan.toObject()
     if (req.body.lenderId) {
       const lender = await Lender.findById(req.body.lenderId)
       if (!lender) {
@@ -417,6 +456,7 @@ workspaceRouter.patch(
     if ("loanNumber" in req.body) loan.loanNumber = String(req.body.loanNumber || "").trim()
     if ("balance" in req.body) loan.balance = optionalNumber(req.body.balance)
     if ("payment" in req.body) loan.payment = optionalNumber(req.body.payment)
+    if ("paymentDay" in req.body) loan.paymentDay = dayOfMonth(req.body.paymentDay)
     if ("originalAmount" in req.body) loan.originalAmount = optionalNumber(req.body.originalAmount)
     if ("maturity" in req.body) loan.maturity = String(req.body.maturity || "")
     if ("termsStatus" in req.body) loan.termsStatus = req.body.termsStatus === "Verified" ? "Verified" : "Needs verification"
@@ -431,6 +471,13 @@ workspaceRouter.patch(
     await loan.save()
     const lender = loan.lenderId ? await Lender.findById(loan.lenderId) : null
     const current = await Property.findById(loan.propertyId).select("address city labels")
+    const moved = String(before.propertyId) !== String(loan.propertyId) ? `Moved from ${property.address} to ${current.address}` : ""
+    await recordActivity({
+      user: req.user,
+      title: "Loan updated",
+      detail: [`${loan.lender || "Loan"}${loan.loanNumber ? ` #${loan.loanNumber}` : ""}`, changeSummary(before, loan.toObject(), LOAN_FIELDS), moved].filter(Boolean).join(" · "),
+      propertyId: loan.propertyId,
+    })
     res.json({ loan: presentLoan(loan, new Map([[String(current._id), current]]), lender ? [lender] : []) })
   }),
 )
@@ -488,7 +535,12 @@ workspaceRouter.get(
   "/activity",
   requirePermission("activity.read"),
   asyncHandler(async (req, res) => {
-    const items = await Activity.find().sort({ createdAt: -1 }).limit(100)
+    const properties = await Property.find(propertyFilter(req.user)).select("_id address")
+    const names = new Map(properties.map((property) => [String(property._id), property.address]))
+    const filter = req.user.role === "contractor"
+      ? { $or: [{ actorId: req.user._id }, { propertyId: { $in: properties.map((property) => property._id) } }] }
+      : {}
+    const items = await Activity.find(filter).sort({ createdAt: -1 }).limit(300)
     res.json({
       items: items.map((item) => ({
         id: String(item._id),
@@ -496,6 +548,7 @@ workspaceRouter.get(
         detail: item.detail || "",
         actorName: item.actorName || "",
         propertyId: item.propertyId ? String(item.propertyId) : "",
+        property: item.propertyId ? names.get(String(item.propertyId)) || "Removed property" : "",
         createdAt: item.createdAt,
       })),
     })
@@ -522,7 +575,8 @@ workspaceRouter.post(
   "/notifications/read",
   requirePermission("activity.read"),
   asyncHandler(async (req, res) => {
-    await Notification.updateMany({ userId: req.user._id, read: false }, { read: true })
+    const result = await Notification.updateMany({ userId: req.user._id, read: false }, { read: true })
+    await recordActivity({ user: req.user, title: "Notifications read", detail: `${result.modifiedCount || 0} marked read` })
     res.json({ ok: true })
   }),
 )
@@ -563,16 +617,24 @@ workspaceRouter.post(
       extraPermissions: access.extraPermissions,
       deniedPermissions: access.deniedPermissions,
     })
-    if (access.role === "contractor") await syncAssignments(user, req.body.propertyIds)
-    await notify({
+    const assigned = access.role === "contractor" ? await syncAssignments(user, req.body.propertyIds) : []
+    const roleName = ROLES.find((item) => item.id === user.role)?.label || user.role
+    const mail = await notify({
       userIds: [user._id],
       title: "You're invited to SynergiFund",
-      body: `${req.user.name} created your account. Sign in with ${email} and this password: ${password}. You can change it later in Settings.`,
+      body: `${req.user.name} created your SynergiFund account. Sign in with the details below, then change your password in Settings.`,
+      details: [
+        ["Sign-in email", email],
+        ["Temporary password", password],
+        ["Role", roleName],
+        ["Properties", assigned.map((property) => property.address).join(", ")],
+        ["Invited by", req.user.name],
+      ],
       href: "/login",
       event: "member.invited",
     })
-    await recordActivity({ user: req.user, title: "Member invited", detail: `${user.name} · ${user.role}` })
-    res.status(201).json({ user: publicUser(user) })
+    await recordActivity({ user: req.user, title: "Member invited", detail: `${user.name} · ${roleName} · invitation email ${mail.status === "Sent" ? "sent" : "not sent"}` })
+    res.status(201).json({ user: publicUser(user), mail })
   }),
 )
 
@@ -607,9 +669,13 @@ workspaceRouter.patch(
     user.deniedPermissions = access.deniedPermissions
     if (typeof req.body.title === "string") user.title = req.body.title.trim()
     await user.save()
-    if ("propertyIds" in req.body || access.role !== "contractor") await syncAssignments(user, access.role === "contractor" ? req.body.propertyIds : [])
+    let mail = { status: "Skipped" }
+    if ("propertyIds" in req.body || access.role !== "contractor") {
+      const added = await syncAssignments(user, access.role === "contractor" ? req.body.propertyIds : [])
+      if (added.length) mail = await notifyPropertyAccess({ actor: req.user, person: user, properties: added })
+    }
     await recordActivity({ user: req.user, title: "Member access updated", detail: user.name })
-    res.json({ user: publicUser(user) })
+    res.json({ user: publicUser(user), mail })
   }),
 )
 
@@ -634,15 +700,16 @@ workspaceRouter.post(
     }
     user.passwordHash = await bcrypt.default.hash(password, 10)
     await user.save()
-    await notify({
+    const mail = await notify({
       userIds: [user._id],
       title: "Your SynergiFund password was reset",
-      body: `${req.user.name} set a new password for ${user.email}: ${password}. Sign in with it, then change it in Settings.`,
-      href: "/settings",
+      body: `${req.user.name} set a new password for your account. Sign in with it, then change it in Settings.`,
+      details: [["Sign-in email", user.email], ["New password", password], ["Reset by", req.user.name]],
+      href: "/login",
       event: "member.password",
     })
     await recordActivity({ user: req.user, title: "Member password set", detail: user.name })
-    res.json({ user: publicUser(user) })
+    res.json({ user: publicUser(user), mail })
   }),
 )
 
@@ -678,13 +745,15 @@ workspaceRouter.delete(
 )
 
 async function syncAssignments(user, propertyIds) {
+  const before = new Set((await Property.find({ assignedUserIds: user._id }).select("_id")).map((property) => String(property._id)))
   const requested = [...new Set((Array.isArray(propertyIds) ? propertyIds : []).map(String).filter(Boolean))]
-  const valid = requested.length ? await Property.find({ _id: { $in: requested } }).select("_id") : []
+  const valid = requested.length ? await Property.find({ _id: { $in: requested } }).select("_id address") : []
   const keep = valid.map((property) => property._id)
   user.propertyIds = keep
   await user.save()
   await Property.updateMany({ assignedUserIds: user._id }, { $pull: { assignedUserIds: user._id } })
   if (keep.length) await Property.updateMany({ _id: { $in: keep } }, { $addToSet: { assignedUserIds: user._id } })
+  return valid.filter((property) => !before.has(String(property._id)))
 }
 
 function readAccess(req, res) {
@@ -707,56 +776,6 @@ function readAccess(req, res) {
   }
   return { role, ...permissionOverrides(role, selected) }
 }
-
-workspaceRouter.get(
-  "/threads",
-  requirePermission("agent.ask"),
-  asyncHandler(async (req, res) => {
-    const items = await AgentThread.find({ userId: req.user._id }).sort({ updatedAt: -1 })
-    res.json({
-      items: items.map((thread) => ({
-        id: String(thread._id),
-        title: thread.title || "Conversation",
-        messages: thread.messages.map((message) => ({ role: message.role, content: message.content, sources: message.sources || [] })),
-      })),
-    })
-  }),
-)
-
-workspaceRouter.post(
-  "/threads",
-  requirePermission("agent.ask"),
-  asyncHandler(async (req, res) => {
-    const question = String(req.body.question || "").trim()
-    if (!question) {
-      sendError(res, 400, "Ask a question about the records you can see.")
-      return
-    }
-    const properties = await Property.find(propertyFilter(req.user))
-    const documents = await DocumentFile.find().select("name propertyId")
-    const answer = answerQuestion(question, properties, documents)
-    const thread = await AgentThread.create({
-      userId: req.user._id,
-      title: question.slice(0, 80),
-      messages: [
-        { role: "user", content: question, sources: [] },
-        { role: "assistant", content: answer.content, sources: answer.sources },
-      ],
-    })
-    if (can({ role: req.user.role, extraPermissions: req.user.extraPermissions, deniedPermissions: req.user.deniedPermissions }, "internal.pricing") === false && /housebought|assignment/i.test(question)) {
-      thread.messages[1].content = "That figure is internal and is not included in this answer."
-      thread.messages[1].sources = []
-      await thread.save()
-    }
-    res.status(201).json({
-      thread: {
-        id: String(thread._id),
-        title: thread.title,
-        messages: thread.messages,
-      },
-    })
-  }),
-)
 
 workspaceRouter.post(
   "/photo-sets",
@@ -795,18 +814,24 @@ workspaceRouter.get(
     const properties = await Property.find(propertyFilter(req.user)).select("_id address")
     const propertyIds = properties.map((property) => property._id)
     const names = new Map(properties.map((property) => [String(property._id), property.address]))
-    const [bills, tasks, expenses, loans] = await Promise.all([
+    const canSeeAllTasks = req.permissions.includes(PERMISSIONS.tasksAssign) || req.permissions.includes(PERMISSIONS.tasksManage)
+    const allTasks = canSeeAllTasks && req.query.tasks === "all"
+    const taskFilter = { done: false, $or: [{ propertyId: { $in: propertyIds } }, { propertyId: null }] }
+    if (!allTasks) taskFilter.assigneeId = req.user._id
+    const [bills, tasks, expenses, loans, draws] = await Promise.all([
       Bill.find({ $or: [{ propertyId: { $in: propertyIds } }, { propertyId: null }] }),
-      Task.find({ done: false, $or: [{ propertyId: { $in: propertyIds } }, { propertyId: null }] }),
+      Task.find(taskFilter),
       Expense.find({
         costTreatment: { $ne: "Exclude from construction margin" },
         $or: [{ propertyId: { $in: propertyIds } }, { propertyId: null }],
       }),
       Loan.find({ propertyId: { $in: propertyIds } }),
+      req.permissions.includes("draws.read") ? Draw.find({ propertyId: { $in: propertyIds } }) : [],
     ])
     const today = todayKey()
     const soon = shiftKey(today, 7)
     const monthOut = shiftKey(today, 30)
+    const lender = (loan) => (loan.lender && loan.lender !== "Not provided" ? loan.lender : "Loan")
     const events = [
       ...bills.filter((bill) => bill.due).map((bill) => {
         const date = dateKey(bill.due)
@@ -833,7 +858,7 @@ workspaceRouter.get(
         return {
           id: `loan-${loan._id}`,
           kind: "loan",
-          title: loan.lender && loan.lender !== "Not provided" ? `${loan.lender} maturity` : "Loan maturity",
+          title: `${lender(loan)} maturity`,
           date,
           amount: loan.balance ?? null,
           payment: loan.payment ?? null,
@@ -843,6 +868,48 @@ workspaceRouter.get(
           tone: passed ? "bad" : dueSoon ? "warn" : "neutral",
           detail: passed ? "Maturity passed" : dueSoon ? "Matures within 30 days" : "Maturity",
         }
+      }),
+      ...loans.flatMap((loan) => loanPaymentDates(loan, shiftKey(today, -60), shiftKey(today, 365)).map((date) => {
+        const dueSoon = date >= today && date <= soon
+        return {
+          id: `loan-payment-${loan._id}-${date}`,
+          kind: "loan",
+          title: `${lender(loan)} payment`,
+          date,
+          amount: loan.payment ?? null,
+          status: "Scheduled",
+          property: names.get(String(loan.propertyId || "")) || "",
+          urgent: dueSoon,
+          tone: dueSoon ? "warn" : "neutral",
+          detail: date < today ? "Monthly payment, past" : dueSoon ? "Monthly payment due this week" : "Monthly payment",
+        }
+      })),
+      ...draws.flatMap((item) => {
+        const draw = presentDraw(item)
+        const property = names.get(String(item.propertyId || "")) || ""
+        const rows = []
+        const funded = dateKey(draw.fundedDate)
+        if (funded && draw.pulled > 0) {
+          rows.push({ id: `draw-funded-${draw.id}`, kind: "draw", title: `${draw.title} received`, date: funded, amount: draw.pulled, status: draw.status, property, urgent: false, tone: "good", detail: "Lender cash received" })
+        }
+        const forecast = dateKey(draw.requestedDate)
+        if (forecast && draw.status !== "Funded") {
+          const late = forecast < today
+          const dueSoon = !late && forecast <= soon
+          rows.push({
+            id: `draw-forecast-${draw.id}`,
+            kind: "draw",
+            title: `${draw.title} forecast`,
+            date: forecast,
+            amount: draw.remaining ?? draw.amount,
+            status: draw.status,
+            property,
+            urgent: late || dueSoon,
+            tone: late ? "bad" : dueSoon ? "warn" : "info",
+            detail: late ? "Forecast date passed, not received" : dueSoon ? "Expected this week" : "Expected draw",
+          })
+        }
+        return rows
       }),
       ...tasks.filter((task) => task.due).map((task) => {
         const date = dateKey(task.due)
@@ -875,7 +942,7 @@ workspaceRouter.get(
       })),
     ].filter((event) => event.date)
     events.sort((left, right) => left.date.localeCompare(right.date) || Number(right.urgent) - Number(left.urgent))
-    res.json({ today, events })
+    res.json({ today, events, canSeeAllTasks, taskScope: allTasks ? "all" : "mine" })
   }),
 )
 
@@ -925,6 +992,7 @@ function presentLoan(loan, names, lenders = []) {
     loanNumber: loan.loanNumber || "",
     balance: loan.balance ?? null,
     payment: loan.payment ?? null,
+    paymentDay: loan.paymentDay ?? null,
     originalAmount: loan.originalAmount ?? null,
     maturity: loan.maturity || "",
     termsStatus: loan.termsStatus,
@@ -935,6 +1003,11 @@ function presentLoan(loan, names, lenders = []) {
 function cleanLoanLabel(value) {
   const label = String(value || "").trim().replace(/\s+/g, " ").slice(0, 40)
   return label || "Financed"
+}
+
+function dayOfMonth(value) {
+  const day = Number(value)
+  return Number.isInteger(day) && day >= 1 && day <= 31 ? day : null
 }
 
 function optionalNumber(value) {
@@ -990,13 +1063,19 @@ async function readAssignee(req, res) {
 async function mailAssignee({ user, task, assignee }) {
   if (!assignee) return { status: "Skipped" }
   if (!assignee.email) return { status: "Failed", error: "The assignee has no email address." }
-  const due = task.due ? ` Due ${task.due}.` : ""
-  const labels = task.labels?.length ? ` Labels: ${task.labels.join(", ")}.` : ""
-  const notes = task.notes ? ` Note: ${task.notes}` : ""
+  const property = task.propertyId ? await Property.findById(task.propertyId).select("address").catch(() => null) : null
   return notify({
     userIds: [assignee._id],
     title: `Task assigned: ${task.title}`,
-    body: `${user.name} assigned you “${task.title}”.${due}${labels}${notes}`,
+    body: String(assignee._id) === String(user._id) ? `You assigned yourself “${task.title}”.` : `${user.name} assigned you “${task.title}”.`,
+    details: [
+      ["Property", property?.address || ""],
+      ["Due", task.due || "No due date"],
+      ["Priority", task.priority || ""],
+      ["Labels", (task.labels || []).join(", ")],
+      ["Note", task.notes || ""],
+      ["Assigned by", user.name],
+    ],
     href: "/tasks",
     event: "task.assigned",
   })

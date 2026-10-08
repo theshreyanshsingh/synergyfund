@@ -7,10 +7,30 @@ import { presentProperty } from "../lib/serialize.js"
 import { propertyFilter, ownsProperty } from "../services/access.js"
 import { deleteStoredFile, publicFileUrl, saveUploadedFile, upload, withProofUrls } from "../services/files.js"
 import { ensureLenders } from "../services/lenders.js"
-import { recordActivity } from "../services/notify.js"
+import { changeSummary, notifyPropertyAccess, recordActivity } from "../services/notify.js"
 import { presentContractorDraw, presentDraw } from "./draws.js"
 
 export const propertiesRouter = Router()
+
+const PROPERTY_FIELDS = [
+  ["address", "Address"],
+  ["city", "City"],
+  ["stage", "Status"],
+  ["strategy", "Goal"],
+  ["nextAction", "Next step"],
+  ["deadline", "Deadline"],
+  ["ownerEntity", "Owner"],
+  ["purchasePrice", "Purchase price", true],
+  ["purchaseDate", "Purchase date"],
+  ["arv", "ARV", true],
+  ["rehabBudget", "Rehab budget", true],
+  ["marketRent", "Market rent", true],
+  ["actualRent", "Actual rent", true],
+  ["rentStatus", "Rent status"],
+  ["accessInfo", "Access info"],
+  ["customerTerms", "Customer terms"],
+  ["labels", "Labels"],
+]
 
 const writable = z.object({
   address: z.string().min(3),
@@ -148,6 +168,7 @@ propertiesRouter.post(
         person.propertyIds = [...current]
         await person.save()
       }
+      for (const person of people) await notifyPropertyAccess({ actor: req.user, person, properties: [property] })
     }
     const photos = []
     for (const file of req.files || []) {
@@ -182,6 +203,7 @@ propertiesRouter.patch(
       return
     }
     if (!req.permissions.includes("internal.pricing")) delete parsed.data.houseBoughtPrice
+    const before = property.toObject()
     Object.assign(property, parsed.data, { updatedBy: req.user.name })
     if ("labels" in req.body) property.labels = cleanLabelList(parseList(req.body.labels))
     if ("scopeLines" in req.body) {
@@ -191,7 +213,13 @@ propertiesRouter.patch(
       })
     }
     await property.save()
-    await recordActivity({ user: req.user, title: "Property updated", detail: property.address, propertyId: property._id })
+    const after = property.toObject()
+    const changes = [
+      changeSummary(before, after, PROPERTY_FIELDS),
+      before.houseBoughtPrice !== after.houseBoughtPrice ? "Internal pricing changed" : "",
+      "scopeLines" in req.body ? `Scope of work now ${after.scopeLines.length} lines` : "",
+    ].filter(Boolean).join(" · ")
+    await recordActivity({ user: req.user, title: "Property updated", detail: changes || "Saved with no changes", propertyId: property._id })
     res.json({ property: presentProperty(property, req.user) })
   }),
 )

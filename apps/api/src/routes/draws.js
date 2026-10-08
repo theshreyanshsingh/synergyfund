@@ -6,7 +6,7 @@ import { propertyFilter } from "../services/access.js"
 import { comparePhotosForDraw } from "../services/agent.js"
 import { DRAW_FIELD_ALIASES, appendNewDrawRows, classifyDrawRows, importPortfolioRecords, parsePortfolioWorkbook, readWorkbook } from "../services/drawImport.js"
 import { materializeStoredFile, receiveFile, saveUploadedFile } from "../services/files.js"
-import { notify, recordActivity } from "../services/notify.js"
+import { changeSummary, notify, recordActivity } from "../services/notify.js"
 
 export const drawsRouter = Router()
 
@@ -24,6 +24,15 @@ function presentBudget(item) {
     borrower: item.borrower || "",
     notes: item.notes || "",
   }
+}
+
+const DRAW_FIELDS = [["title", "Name"], ["amount", "Amount", true], ["fundedAmount", "Pulled", true], ["status", "Status"], ["requestedDate", "Forecast"], ["fundedDate", "Funded date"]]
+const BUDGET_FIELDS = [["budget", "Budget", true], ["fundingLimit", "Lender funding", true], ["fundingPercent", "Funding percent"]]
+
+async function addressOf(propertyId) {
+  if (!propertyId) return ""
+  const property = await Property.findById(propertyId).select("address").catch(() => null)
+  return property?.address || ""
 }
 
 export function presentDraw(item) {
@@ -194,6 +203,7 @@ drawsRouter.post(
       return
     }
     const saved = await saveUploadedFile(req.file, req.user, { kind: "import" })
+    await recordActivity({ user: req.user, title: "Draw workbook uploaded", detail: `${saved.name} · waiting for review` })
     const portfolio = await portfolioFromFile(saved)
     if (portfolio) {
       const job = await ImportJob.create({
@@ -313,6 +323,12 @@ drawsRouter.post(
       borrower: req.body.borrower || "",
       notes: req.body.notes || "",
     })
+    await recordActivity({
+      user: req.user,
+      title: "Draw budget set",
+      detail: [await addressOf(budget.propertyId), budget.budget != null ? `Budget $${budget.budget.toLocaleString("en-US")}` : "", budget.fundingLimit != null ? `Lender funding $${budget.fundingLimit.toLocaleString("en-US")}` : ""].filter(Boolean).join(" · "),
+      propertyId: budget.propertyId,
+    })
     res.status(201).json({ budget: presentBudget(budget) })
   }),
 )
@@ -326,6 +342,7 @@ drawsRouter.patch(
       sendError(res, 404, "That draw budget was not found.")
       return
     }
+    const before = budget.toObject()
     for (const field of ["budget", "fundingLimit", "fundingPercent"]) {
       if (!(field in req.body)) continue
       const value = numberOrUndefined(req.body[field])
@@ -336,6 +353,8 @@ drawsRouter.patch(
       budget[field] = value
     }
     await budget.save()
+    const changes = changeSummary(before, budget.toObject(), BUDGET_FIELDS)
+    await recordActivity({ user: req.user, title: "Draw budget updated", detail: [await addressOf(budget.propertyId), changes].filter(Boolean).join(" · "), propertyId: budget.propertyId })
     res.json({ budget: presentBudget(budget) })
   }),
 )
@@ -429,6 +448,7 @@ drawsRouter.patch(
       sendError(res, 404, "That draw was not found.")
       return
     }
+    const before = draw.toObject()
     if ("requestedDate" in req.body) draw.requestedDate = req.body.requestedDate || ""
     if ("title" in req.body && req.body.title) draw.title = req.body.title
     if ("amount" in req.body) draw.amount = numberOrUndefined(req.body.amount)
@@ -457,6 +477,9 @@ drawsRouter.patch(
       }
     }
     await draw.save()
+    const changes = changeSummary(before, draw.toObject(), DRAW_FIELDS)
+    const lineNote = "lines" in req.body ? `${draw.lines.length} scope lines` : ""
+    await recordActivity({ user: req.user, title: "Draw updated", detail: [await addressOf(draw.propertyId), draw.title, changes || lineNote].filter(Boolean).join(" · "), propertyId: draw.propertyId })
     res.json({ draw: presentDraw(draw) })
   }),
 )

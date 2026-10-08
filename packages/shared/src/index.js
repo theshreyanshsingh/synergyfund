@@ -223,7 +223,7 @@ export const NAV = [
   { href: "/overview", label: "Overview", icon: "grid", permission: PERMISSIONS.propertiesRead, section: "Plan your day" },
   { href: "/tasks", label: "To-do list", icon: "check", permission: PERMISSIONS.propertiesRead, section: "Plan your day" },
   { href: "/payments", label: "Upcoming payments", icon: "card", permission: PERMISSIONS.expensesRead, section: "Plan your day" },
-  { href: "/calendar", label: "Payment calendar", icon: "calendar", permission: PERMISSIONS.expensesRead, section: "Plan your day" },
+  { href: "/calendar", label: "Calendar", icon: "calendar", permission: PERMISSIONS.expensesRead, section: "Plan your day" },
   { href: "/properties", label: "Properties", icon: "building", permission: PERMISSIONS.propertiesRead, section: "Projects" },
   { href: "/construction", label: "Construction intelligence", icon: "chart", permission: PERMISSIONS.drawsRead, section: "Projects", badge: "Soon" },
   { href: "/loans", label: "Loans & lenders", icon: "bank", permission: PERMISSIONS.propertiesRead, section: "Projects" },
@@ -243,4 +243,16 @@ export function navFor(user) {
 
 export function homeFor(user) {
   return user?.role === "contractor" ? "/properties" : "/overview"
+}
+
+export const AGENT_DEFAULTS = {
+  taskModel: "moonshotai/kimi-k3",
+  decisionModel: "anthropic/claude-sonnet-5.5",
+}
+
+export function chatTitleFromPrompt(prompt = "") {
+  const text = String(prompt).replace(/\s+/g, " ").trim()
+  if (!text) return "New chat"
+  const short = text.length > 60 ? `${text.slice(0, 60).replace(/\s+\S*$/, "")}…` : text
+  return short.charAt(0).toUpperCase() + short.slice(1)
 }

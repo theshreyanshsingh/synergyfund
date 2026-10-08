@@ -26,6 +26,7 @@ export default function MembersPage() {
   const [error, setError] = useState("")
   const [pending, setPending] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [notice, setNotice] = useState(null)
 
   function openInvite(role = "member") {
     setError("")
@@ -68,17 +69,23 @@ export default function MembersPage() {
     setPending(true)
     setError("")
     try {
+      setNotice(null)
       if (draft.mode === "invite") {
-        await api("/members", { method: "POST", body: draft })
-        setIssued({ name: draft.name, email: draft.email, password: draft.password })
+        const created = await api("/members", { method: "POST", body: draft })
+        setIssued({ name: draft.name, email: draft.email, password: draft.password, mail: created.mail, kind: "invite" })
       } else {
-        await api(`/members/${draft.id}`, {
+        const updated = await api(`/members/${draft.id}`, {
           method: "PATCH",
-          body: { role: draft.role, title: draft.title, permissions: draft.permissions },
+          body: { role: draft.role, title: draft.title, permissions: draft.permissions, ...(draft.role === "contractor" ? { propertyIds: draft.propertyIds || [] } : {}) },
         })
+        if (updated.mail && updated.mail.status !== "Skipped") {
+          setNotice(updated.mail.status === "Sent"
+            ? { ok: true, text: `${draft.name} was emailed about the properties they were added to.` }
+            : { ok: false, text: `Access saved, but the email to ${draft.name} did not send. ${updated.mail.error || ""}`.trim() })
+        }
         if (draft.nextPassword) {
-          await api(`/members/${draft.id}/password`, { method: "POST", body: { password: draft.nextPassword } })
-          setIssued({ name: draft.name, email: draft.email, password: draft.nextPassword })
+          const reset = await api(`/members/${draft.id}/password`, { method: "POST", body: { password: draft.nextPassword } })
+          setIssued({ name: draft.name, email: draft.email, password: draft.nextPassword, mail: reset.mail, kind: "password" })
         }
       }
       setDraft(null)
@@ -119,6 +126,7 @@ export default function MembersPage() {
         views={false}
         loading={!list.data && !list.error}
         title="Members"
+        lead={notice ? <p className={notice.ok ? "settings-note members-notice" : "banner members-notice"}>{notice.text}</p> : null}
         secondary={{ label: "Add contractor", onClick: () => openInvite("contractor") }}
         action={{ label: "Invite member", onClick: () => openInvite("member") }}
         stats={[
@@ -277,7 +285,11 @@ export default function MembersPage() {
               <div>
                 <p>Ready to share</p>
                 <h2>{issued.name} can sign in</h2>
-                <span>Send these details. They replace the password later in Settings.</span>
+                <span>
+                  {issued.mail?.status === "Sent"
+                    ? `We emailed ${issued.kind === "invite" ? "the invitation" : "the new password"} to ${issued.email}. You can also share these details yourself.`
+                    : `The email to ${issued.email} did not send${issued.mail?.error ? `: ${issued.mail.error}` : ""}. Share these details with them yourself.`}
+                </span>
               </div>
               <button type="button" className="icon-btn" onClick={() => setIssued(null)} aria-label="Close">×</button>
             </header>

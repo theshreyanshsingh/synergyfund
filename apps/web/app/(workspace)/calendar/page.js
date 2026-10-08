@@ -8,15 +8,18 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const KINDS = [
   { id: "bill", label: "Bills" },
   { id: "loan", label: "Loans" },
+  { id: "draw", label: "Draws" },
   { id: "task", label: "To-dos" },
   { id: "expense", label: "Posted costs" },
 ]
 
 export default function CalendarPage() {
-  const data = useApi("/calendar")
+  const [taskScope, setTaskScope] = useState("mine")
+  const data = useApi(taskScope === "all" ? "/calendar?tasks=all" : "/calendar")
   const [cursor, setCursor] = useState(() => new Date())
   const [selected, setSelected] = useState("")
-  const [kinds, setKinds] = useState({ bill: true, loan: true, task: true, expense: true })
+  const [kinds, setKinds] = useState({ bill: true, loan: true, draw: true, task: true, expense: true })
+  const canSeeAllTasks = Boolean(data.data?.canSeeAllTasks)
   const events = (data.data?.events || []).filter((event) => kinds[event.kind])
   const today = data.data?.today || iso(new Date())
   const cells = useMemo(() => monthCells(cursor), [cursor])
@@ -42,11 +45,19 @@ export default function CalendarPage() {
           <div className="paycal-group">
             <h2>Show</h2>
             {KINDS.map((kind) => (
-              <label key={kind.id}>
-                <input type="checkbox" checked={kinds[kind.id]} onChange={() => setKinds((current) => ({ ...current, [kind.id]: !current[kind.id] }))} />
-                <i className={`tone-${kindTone(kind.id)}`} />
-                {kind.label}
-              </label>
+              <div key={kind.id}>
+                <label>
+                  <input type="checkbox" checked={kinds[kind.id]} onChange={() => setKinds((current) => ({ ...current, [kind.id]: !current[kind.id] }))} />
+                  <i className={`tone-${kindTone(kind.id)}`} />
+                  {kind.id === "task" && taskScope === "mine" ? "My to-dos" : kind.label}
+                </label>
+                {kind.id === "task" && canSeeAllTasks && (
+                  <div className="paycal-scope" role="group" aria-label="Whose to-dos">
+                    <button type="button" className={taskScope === "mine" ? "is-on" : undefined} onClick={() => setTaskScope("mine")}>Mine</button>
+                    <button type="button" className={taskScope === "all" ? "is-on" : undefined} onClick={() => setTaskScope("all")}>Everyone</button>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
           <div className="paycal-group">
@@ -149,6 +160,7 @@ function kindLabel(kind) {
 function kindTone(kind) {
   if (kind === "bill") return "warn"
   if (kind === "loan") return "bad"
+  if (kind === "draw") return "info"
   if (kind === "task") return "neutral"
   return "good"
 }

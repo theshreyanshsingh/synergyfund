@@ -39,6 +39,7 @@ export default function LenderPage({ params }) {
           loanNumber: form.get(`loanNumber-${item.id}`),
           balance: form.get(`balance-${item.id}`),
           payment: form.get(`payment-${item.id}`),
+          paymentDay: form.get(`paymentDay-${item.id}`),
           originalAmount: form.get(`originalAmount-${item.id}`),
           maturity: form.get(`maturity-${item.id}`),
           termsStatus: form.get(`termsStatus-${item.id}`),
@@ -114,6 +115,7 @@ export default function LenderPage({ params }) {
                   <label className="field"><span>Loan number</span><input name={`loanNumber-${item.id}`} defaultValue={item.loanNumber || ""} /></label>
                   <label className="field"><span>Balance</span><input name={`balance-${item.id}`} inputMode="decimal" defaultValue={item.balance ?? ""} /></label>
                   <label className="field"><span>Monthly payment</span><input name={`payment-${item.id}`} inputMode="decimal" defaultValue={item.payment ?? ""} /></label>
+                  <label className="field"><span>Payment day of month</span><input name={`paymentDay-${item.id}`} type="number" min="1" max="31" inputMode="numeric" placeholder="1 to 31" defaultValue={item.paymentDay ?? ""} /></label>
                   <label className="field"><span>Original amount</span><input name={`originalAmount-${item.id}`} inputMode="decimal" defaultValue={item.originalAmount ?? ""} /></label>
                   <label className="field"><span>Maturity</span><input name={`maturity-${item.id}`} type="date" defaultValue={item.maturity || ""} /></label>
                   <label className="field"><span>Terms status</span>

@@ -148,6 +148,7 @@ export function LoanFields({ lenders, properties, loan }) {
       <label className="field"><span>Loan number</span><input name="loanNumber" defaultValue={loan?.loanNumber || ""} /></label>
       <label className="field"><span>Balance</span><input name="balance" inputMode="decimal" defaultValue={loan?.balance ?? ""} /></label>
       <label className="field"><span>Monthly payment</span><input name="payment" inputMode="decimal" defaultValue={loan?.payment ?? ""} /></label>
+      <label className="field"><span>Payment day of month</span><input name="paymentDay" type="number" min="1" max="31" inputMode="numeric" placeholder="1 to 31" defaultValue={loan?.paymentDay ?? ""} /></label>
       <label className="field"><span>Original amount</span><input name="originalAmount" inputMode="decimal" defaultValue={loan?.originalAmount ?? ""} /></label>
       <label className="field"><span>Maturity</span><input name="maturity" type="date" defaultValue={loan?.maturity || ""} /></label>
       <label className="field"><span>Terms status</span>
