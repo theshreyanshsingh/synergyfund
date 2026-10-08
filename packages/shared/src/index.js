@@ -95,7 +95,7 @@ export const ROLE_PERMISSIONS = {
   ],
 }
 
-export const STAGES = ["Under contract", "Lender search", "Renovation", "Exit", "Complete"]
+export const STAGES = ["Under contract", "Lender search", "Renovation", "For rent", "Rented", "For sale", "Sold", "Exit", "Complete"]
 
 export const STRATEGIES = [
   "Fix & flip",

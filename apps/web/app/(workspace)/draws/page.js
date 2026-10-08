@@ -1,11 +1,13 @@
 "use client"
 
 import Link from "next/link"
-import { useMemo, useRef, useState } from "react"
+import { Fragment, useMemo, useRef, useState } from "react"
 import { can } from "@synergifund/shared"
 import { DrawImport } from "../../../components/draws/DrawImport"
 import { FormSheet, InfoSheet } from "../../../components/ui/FormSheet"
+import { HeaderActions } from "../../../components/ui/HeaderActions"
 import { Icon } from "../../../components/ui/Icon"
+import { PageSpinner } from "../../../components/ui/Spinner"
 import { StatusPill } from "../../../components/ui/StatusPill"
 import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
@@ -108,7 +110,14 @@ export default function DrawsPage() {
   }
 
   if (data.loading && !data.data) {
-    return <div className="draws"><h1 className="page-title">Draws</h1><p className="draws-empty">Loading draws…</p></div>
+    return (
+      <div className="draws workspace">
+        <div className="workspace-top">
+          <div className="page-heading"><h1 className="page-title">Draws</h1></div>
+        </div>
+        <PageSpinner />
+      </div>
+    )
   }
 
   return (
@@ -117,7 +126,7 @@ export default function DrawsPage() {
         <div className="page-heading">
           <h1 className="page-title">Draws</h1>
         </div>
-        <div className="draws-actions">
+        <HeaderActions>
           <a className="import-button" href="/api/draws/export">Export Excel</a>
           {canImport && (
             <button type="button" className="import-button" onClick={() => importInput.current?.click()}>Import Excel</button>
@@ -128,7 +137,7 @@ export default function DrawsPage() {
               Add draw
             </button>
           )}
-        </div>
+        </HeaderActions>
       </div>
 
       <div className="stats">
@@ -224,7 +233,7 @@ export default function DrawsPage() {
 function DrawSheet({ projects, writable, canDelete, onSave, onRemove }) {
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [hidden, setHidden] = useState([])
-  const drawCount = Math.max(10, ...projects.flatMap((project) => project.lines.map((line) => drawIndex(line.title))).filter(Boolean))
+  const [openId, setOpenId] = useState("")
   const columns = [
     { id: "property", label: "Property" },
     { id: "budget", label: "Total Budget" },
@@ -233,12 +242,11 @@ function DrawSheet({ projects, writable, canDelete, onSave, onRemove }) {
     { id: "pulled", label: "Cash Received" },
     { id: "remaining", label: "Remaining" },
     { id: "status", label: "Status" },
-    ...Array.from({ length: drawCount }, (_, index) => ({ id: `draw:${index + 1}`, label: `Draw ${index + 1}` })),
+    { id: "draws", label: "Draws" },
   ]
   const shown = columns.filter((column) => !hidden.includes(column.id))
-  const scheduled = (project) => project.lines.filter((line) => drawIndex(line.title))
   const value = (project, column) => {
-    const draws = scheduled(project)
+    const draws = scheduledDraws(project)
     if (column.id === "property") return project.address || project.name || "Untitled property"
     if (column.id === "budget") return cash(project.totalBudget)
     if (column.id === "funding") return cash(project.lenderFunding)
@@ -248,13 +256,32 @@ function DrawSheet({ projects, writable, canDelete, onSave, onRemove }) {
     }
     if (column.id === "remaining") return cash(Math.max(0, (Number(project.totalBudget) || 0) - draws.reduce((sum, line) => sum + (Number(line.amount) || 0), 0)))
     if (column.id === "status") return project.nextAction || project.stage || "Active"
-    const draw = draws.find((line) => drawIndex(line.title) === Number(column.id.slice(5)))
-    return draw?.amount ? cash(draw.amount) : ""
+    return ""
   }
+  const cell = (project, column) => {
+    if (column.id === "draws") return <DrawsToggle project={project} open={openId === project.id} onToggle={() => setOpenId(openId === project.id ? "" : project.id)} />
+    const editable = writable && (column.id === "budget" || column.id === "funding")
+    if (!editable) return value(project, column)
+    return (
+      <SheetMoneyCell
+        value={column.id === "budget" ? project.totalBudget : project.lenderFunding}
+        label={`${project.address} ${column.label}`}
+        onSave={(next) => onSave({ project, column: column.id, value: next })}
+      />
+    )
+  }
+  const details = shown.filter((column) => !["property", "remaining", "draws"].includes(column.id) && (column.id !== "budget" || writable))
+  const schedule = (project) => (
+    <DrawSchedule
+      project={project}
+      writable={writable}
+      onSave={(number, draw, next) => onSave({ project, column: number, draw, value: next })}
+    />
+  )
   return (
     <section className="draw-sheet panel">
       <div className="sheet-tools">
-        <p><b>{projects.length}</b> properties · <b>{projects.reduce((sum, project) => sum + project.lines.filter((line) => drawIndex(line.title)).length, 0)}</b> draws{writable ? " · Click a budget or draw amount to edit" : ""}</p>
+        <p><b>{projects.length}</b> properties · <b>{projects.reduce((sum, project) => sum + scheduledDraws(project).length, 0)}</b> draws{writable ? <span className="sheet-hint"> · Click a budget to edit it, or open Draws to change a draw</span> : ""}</p>
         <div className="column-picker">
           <button type="button" className="import-button" onClick={() => setColumnsOpen((current) => !current)}>Columns · {shown.length}</button>
           {columnsOpen && (
@@ -278,44 +305,219 @@ function DrawSheet({ projects, writable, canDelete, onSave, onRemove }) {
           <thead><tr><th className="row-number">#</th>{shown.map((column) => <th key={column.id} className={column.id === "property" ? "pin-col" : undefined}>{column.label}</th>)}</tr></thead>
           <tbody>
             {projects.map((project, index) => (
-              <tr key={project.id}>
-                <th className="row-number">{index + 1}</th>
-                {shown.map((column) => {
-                  const drawNumber = column.id.startsWith("draw:") ? Number(column.id.slice(5)) : 0
-                  const draw = drawNumber ? scheduled(project).find((line) => drawIndex(line.title) === drawNumber) : null
-                  const editable = writable && (column.id === "budget" || column.id === "funding" || drawNumber)
-                  const rawValue = column.id === "budget"
-                    ? project.totalBudget
-                    : column.id === "funding"
-                      ? project.lenderFunding
-                      : drawNumber
-                        ? draw?.amount
-                        : null
-                  return (
-                    <td key={column.id} className={column.id === "property" ? "pin-col" : column.id === "status" ? undefined : "num"}>
+              <Fragment key={project.id}>
+                <tr className={openId === project.id ? "is-open" : undefined}>
+                  <th className="row-number">{index + 1}</th>
+                  {shown.map((column) => (
+                    <td key={column.id} className={column.id === "property" ? "pin-col" : column.id === "status" || column.id === "draws" ? undefined : "num"}>
                       {column.id === "property" ? (
                         <span className="sheet-property">
                           <Link href={`/properties/${project.id}`}>{value(project, column)}</Link>
                           {canDelete && <button type="button" className="sheet-remove" onClick={() => onRemove(project)}>Remove</button>}
                         </span>
-                      ) : editable ? (
-                        <SheetMoneyCell
-                          value={rawValue}
-                          label={`${project.address} ${column.label}`}
-                          onSave={(next) => onSave({ project, column: drawNumber || column.id, draw, value: next })}
-                        />
-                      ) : value(project, column)}
+                      ) : cell(project, column)}
                     </td>
-                  )
-                })}
-              </tr>
+                  ))}
+                </tr>
+                {openId === project.id && (
+                  <tr className="sheet-expand">
+                    <td colSpan={shown.length + 1}>{schedule(project)}</td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
         {!projects.length && <p className="draws-empty">No draw data yet. Import a workbook to add it.</p>}
       </div>
+      <div className="sheet-list">
+        {projects.map((project) => (
+          <SheetListItem
+            key={project.id}
+            project={project}
+            name={value(project, columns[0])}
+            budget={value(project, columns[1])}
+            remaining={value(project, columns[5])}
+            fields={details}
+            cell={cell}
+            schedule={schedule}
+            canDelete={canDelete}
+            onRemove={onRemove}
+          />
+        ))}
+        {!projects.length && <p className="draws-empty">No draw data yet. Import a workbook to add it.</p>}
+      </div>
     </section>
   )
+}
+
+function SheetListItem({ project, name, budget, remaining, fields, cell, schedule, canDelete, onRemove }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <article className={open ? "sheet-item is-open" : "sheet-item"}>
+      <button type="button" className="sheet-item-head" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <b>{name}</b>
+        <span><small>Budget</small>{budget}</span>
+        <span><small>Remaining</small>{remaining}</span>
+        <i aria-hidden="true"><Icon name="chevron" size={16} /></i>
+      </button>
+      {open && (
+        <div className="sheet-item-body">
+          {fields.length > 0 && (
+            <dl>
+              {fields.map((column) => (
+                <div key={column.id}>
+                  <dt>{column.label}</dt>
+                  <dd>{cell(project, column) || "—"}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          {schedule(project)}
+          <div className="sheet-item-actions">
+            <Link href={`/properties/${project.id}`}>Open property</Link>
+            {canDelete && <button type="button" className="sheet-remove" onClick={() => onRemove(project)}>Remove</button>}
+          </div>
+        </div>
+      )}
+    </article>
+  )
+}
+
+function DrawsToggle({ project, open, onToggle }) {
+  const draws = scheduledDraws(project)
+  return (
+    <button type="button" className="draws-toggle" aria-expanded={open} onClick={onToggle}>
+      <span>{draws.length ? `${draws.length} ${draws.length === 1 ? "draw" : "draws"}` : "No draws"}</span>
+      <DrawMeter project={project} draws={draws} />
+      <i aria-hidden="true"><Icon name="chevron" size={14} /></i>
+    </button>
+  )
+}
+
+function DrawMeter({ project, draws }) {
+  const drawn = draws.reduce((sum, line) => sum + (Number(line.amount) || 0), 0)
+  const scale = Math.max(Number(project.totalBudget) || 0, drawn)
+  return (
+    <span className="draw-meter" aria-hidden="true">
+      {scale > 0 && draws.map((line) => (
+        <i key={line.id} className={drawState(line)} style={{ width: `${((Number(line.amount) || 0) / scale) * 100}%` }} />
+      ))}
+    </span>
+  )
+}
+
+function DrawSchedule({ project, writable, onSave }) {
+  const [adding, setAdding] = useState(false)
+  const [error, setError] = useState("")
+  const draws = scheduledDraws(project)
+  const drawn = draws.reduce((sum, line) => sum + (Number(line.amount) || 0), 0)
+  const received = draws.reduce((sum, line) => sum + (Number(line.pulled) || 0), 0)
+  const budget = Number(project.totalBudget) || 0
+  const next = draws.reduce((max, line) => Math.max(max, drawIndex(line.title)), 0) + 1
+
+  async function add(event) {
+    const text = event.currentTarget.value.trim()
+    setAdding(false)
+    if (!text) return
+    setError("")
+    try {
+      await onSave(next, null, text)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function remove(line) {
+    if (!window.confirm(`Remove ${line.title} from ${project.address}?`)) return
+    setError("")
+    try {
+      await onSave(drawIndex(line.title), line, "")
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  return (
+    <div className="draw-schedule">
+      <div className="draw-schedule-head">
+        <span><b>{draws.length} {draws.length === 1 ? "draw" : "draws"}</b> · {cash(drawn)}{budget ? ` of ${cash(budget)}` : ""} drawn</span>
+        <span>{cash(received)} received{budget ? ` · ${cash(Math.max(0, budget - drawn))} left` : ""}</span>
+      </div>
+      <DrawMeter project={project} draws={draws} />
+      {draws.length === 0 && !adding && <p className="draws-empty">No draws on this property yet.</p>}
+      <ol className="draw-steps">
+        {draws.map((line) => (
+          <li key={line.id} className={drawState(line)}>
+            <span className="draw-step-no">{drawIndex(line.title)}</span>
+            <span className="draw-step-copy">
+              <b>{line.title}</b>
+              <small>{drawNote(line)}</small>
+            </span>
+            <span className="draw-step-amount">
+              {writable ? (
+                <SheetMoneyCell value={line.amount} label={`${project.address} ${line.title}`} onSave={(text) => onSave(drawIndex(line.title), line, text)} />
+              ) : cash(line.amount)}
+            </span>
+            {writable && (
+              <button type="button" className="draw-step-remove" aria-label={`Remove ${line.title}`} onClick={() => remove(line)}>
+                <Icon name="close" size={14} />
+              </button>
+            )}
+          </li>
+        ))}
+        {adding && (
+          <li className="is-new">
+            <span className="draw-step-no">{next}</span>
+            <span className="draw-step-copy"><b>Draw {next}</b><small>Enter the gross amount</small></span>
+            <span className="draw-step-amount">
+              <input
+                className="sheet-money-input"
+                autoFocus
+                inputMode="decimal"
+                aria-label={`Draw ${next} amount`}
+                onBlur={add}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur()
+                  if (event.key === "Escape") setAdding(false)
+                }}
+              />
+            </span>
+          </li>
+        )}
+      </ol>
+      {error && <p className="draw-schedule-error">{error}</p>}
+      {writable && !adding && (
+        <button type="button" className="draw-step-add" onClick={() => setAdding(true)}>
+          <Icon name="plus" size={14} />
+          Add draw {next}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function scheduledDraws(project) {
+  return project.lines
+    .filter((line) => drawIndex(line.title))
+    .sort((a, b) => drawIndex(a.title) - drawIndex(b.title))
+}
+
+function drawState(line) {
+  const amount = Number(line.amount) || 0
+  const pulled = Number(line.pulled) || 0
+  if (pulled > 0 && pulled >= amount) return "is-received"
+  if (pulled > 0) return "is-partial"
+  return "is-open"
+}
+
+function drawNote(line) {
+  const pulled = Number(line.pulled) || 0
+  const amount = Number(line.amount) || 0
+  if (pulled > 0 && pulled >= amount) return `Received${line.fundedDate ? ` ${shortDate(line.fundedDate)}` : ""}`
+  if (pulled > 0) return `${cash(pulled)} received`
+  if (line.requestedDate) return `Forecast ${shortDate(line.requestedDate)}`
+  return "Not received"
 }
 
 function SheetMoneyCell({ value, label, onSave }) {

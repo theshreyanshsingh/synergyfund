@@ -2,11 +2,12 @@
 
 import { Suspense, useEffect, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Loader } from "../../../components/ui/Loader"
+import { PageSpinner } from "../../../components/ui/Spinner"
 import { PROPERTY_LABELS, can, STAGES, STRATEGIES } from "@synergifund/shared"
 import { DrawImport } from "../../../components/draws/DrawImport"
 import { FormSheet } from "../../../components/ui/FormSheet"
 import { StatusPill } from "../../../components/ui/StatusPill"
+import { RowMenu } from "../../../components/ui/RowMenu"
 import { WorkspacePage } from "../../../components/ui/WorkspacePage"
 import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
@@ -63,6 +64,8 @@ function PropertiesScreen() {
     <>
       <WorkspacePage
         views={false}
+        loading={!list.data && !list.error}
+        customize={false}
         title="Properties"
         secondary={canImport ? { label: "Import Excel", onClick: () => importInput.current?.click() } : null}
         action={writable ? { label: "New property", onClick: () => setOpen(true) } : null}
@@ -75,19 +78,31 @@ function PropertiesScreen() {
             onReload={list.reload}
           />
         ) : null}
+        selectable={false}
+        compact
+        filters={[
+          { key: "stage", label: "Status", options: STAGES, value: (row) => row.stage },
+          { key: "strategy", label: "Goal", options: STRATEGIES, value: (row) => row.strategy },
+        ]}
         columns={[
-          { key: "address", label: "Name", avatar: (row) => row.address, render: (row) => <span className="person-copy"><strong>{row.address}</strong><small>{row.city || "Location not entered"}</small></span> },
+          { key: "address", label: "Name", render: (row) => <span className="person-copy"><strong>{row.address}</strong><small>{row.city || "Location not entered"}</small></span> },
           ...(contractor ? [] : [
             { key: "rehabBudget", label: "Rehab budget", render: (row) => row.rehabBudget == null ? "—" : money(row.rehabBudget) },
-            { key: "nextAction", label: "Next step", render: (row) => row.nextAction || "Set the next action" },
           ]),
           { key: "stage", label: "Status", render: (row) => <StatusPill>{row.stage}</StatusPill> },
-          { key: "open", label: "", pin: "right", render: (row) => (
-            <span className="row-actions">
-              <button type="button" onClick={(event) => { event.stopPropagation(); router.push(`/properties/${row.id}`) }}>Open</button>
-              {writable && <button type="button" onClick={(event) => { event.stopPropagation(); router.push(`/properties/${row.id}?edit=1`) }}>Modify</button>}
-              {writable && <button type="button" className="danger" onClick={async (event) => { event.stopPropagation(); if (!window.confirm(`Delete ${row.address}?`)) return; await api(`/properties/${row.id}`, { method: "DELETE" }); list.reload() }}>Delete</button>}
-            </span>
+          ...(contractor ? [] : [
+            { key: "nextAction", label: "Next step", render: (row) => row.nextAction || "Set the next action" },
+            { key: "strategy", label: "Goal", render: (row) => row.strategy || "Not set" },
+          ]),
+          { key: "actions", label: "", pin: "right", className: "menu-col", render: (row) => (
+            <RowMenu
+              label={`Actions for ${row.address}`}
+              items={[
+                { label: "Open", onClick: () => router.push(`/properties/${row.id}`) },
+                writable && { label: "Modify", onClick: () => router.push(`/properties/${row.id}?edit=1`) },
+                writable && { label: "Delete", danger: true, onClick: async () => { if (!window.confirm(`Delete ${row.address}?`)) return; await api(`/properties/${row.id}`, { method: "DELETE" }); list.reload() } },
+              ]}
+            />
           ) },
         ]}
         rows={list.data?.items || []}
@@ -100,7 +115,7 @@ function PropertiesScreen() {
           <div className="form-grid">
             <label className="field wide"><span>Address</span><input name="address" value={form.address} onChange={set("address")} required /></label>
             <label className="field"><span>City</span><input name="city" value={form.city} onChange={set("city")} /></label>
-            <label className="field"><span>Stage</span><select name="stage" value={form.stage} onChange={set("stage")}>{STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
+            <label className="field"><span>Status</span><select name="stage" value={form.stage} onChange={set("stage")}>{STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
             <label className="field"><span>Strategy</span><select name="strategy" value={form.strategy} onChange={set("strategy")}>{STRATEGIES.map((item) => <option key={item}>{item}</option>)}</select></label>
             <label className="field"><span>Purchase price</span><input name="purchasePrice" value={form.purchasePrice} onChange={set("purchasePrice")} /></label>
             <label className="field"><span>ARV</span><input name="arv" value={form.arv} onChange={set("arv")} /></label>
@@ -144,7 +159,7 @@ function PropertiesScreen() {
 
 export default function PropertiesPage() {
   return (
-    <Suspense fallback={<Loader label="Opening properties" />}>
+    <Suspense fallback={<PageSpinner />}>
       <PropertiesScreen />
     </Suspense>
   )

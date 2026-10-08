@@ -8,6 +8,7 @@ import { CSS } from "@dnd-kit/utilities"
 import { can } from "@synergifund/shared"
 import { Icon } from "../../../components/ui/Icon"
 import { Modal } from "../../../components/ui/Modal"
+import { PageSpinner } from "../../../components/ui/Spinner"
 import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
 import { useApi } from "../../../lib/useApi"
@@ -59,10 +60,10 @@ export default function OverviewPage() {
           )}
         </div>
       </div>
-      <Attention items={attention} onOpen={(href) => router.push(href)} />
+      {!overview.data && !overview.error && <PageSpinner />}
+      {overview.data && <Attention items={attention} onOpen={(href) => router.push(href)} />}
       {projection && <Projection days={projection.days} projection={projection} />}
       {overview.error && <p className="draws-empty">{overview.error}</p>}
-      {overview.loading && !cards.length && <p className="draws-empty">Loading the portfolio…</p>}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={async (event) => {
         const { active, over } = event
         if (!over || active.id === over.id) return

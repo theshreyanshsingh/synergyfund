@@ -1,5 +1,5 @@
-import { Loader } from "../../components/ui/Loader"
+import { PageSpinner } from "../../components/ui/Spinner"
 
 export default function WorkspaceLoading() {
-  return <Loader />
+  return <PageSpinner />
 }

@@ -5,7 +5,7 @@ import Link from "next/link"
 import { LOAN_LABELS, can } from "@synergifund/shared"
 import { FormSheet } from "../../../../../components/ui/FormSheet"
 import { StatusPill } from "../../../../../components/ui/StatusPill"
-import { Loader } from "../../../../../components/ui/Loader"
+import { PageSpinner } from "../../../../../components/ui/Spinner"
 import { DetailFrame } from "../../../../../components/ui/DetailFrame"
 import { useSession } from "../../../../../components/shell/Providers"
 import { api } from "../../../../../lib/api"
@@ -23,7 +23,7 @@ export default function LenderPage({ params }) {
   const lender = detail.data?.lender
   const loans = detail.data?.loans || []
   const writable = session?.user && can(session.user, "properties.write")
-  if (!lender) return detail.error ? <div className="boot"><p className="banner">{detail.error}</p></div> : <Loader label="Opening lender" />
+  if (!lender) return detail.error ? <div className="boot"><p className="banner">{detail.error}</p></div> : <PageSpinner />
 
   async function save(event) {
     event.preventDefault()

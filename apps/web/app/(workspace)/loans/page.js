@@ -68,6 +68,7 @@ export default function LoansPage() {
       {section === "loans" ? (
         <WorkspacePage
           views={false}
+          loading={!list.data && !list.error}
           title="Loans & lenders"
           underTitle={switcher}
           action={writable ? { label: "Add loan", onClick: () => { setError(""); setOpen("loan") } } : null}
@@ -93,6 +94,7 @@ export default function LoansPage() {
       ) : (
         <WorkspacePage
           views={false}
+          loading={!list.data && !list.error}
           title="Loans & lenders"
           underTitle={switcher}
           action={writable ? { label: "Add lender", onClick: () => { setError(""); setOpen("lender") } } : null}

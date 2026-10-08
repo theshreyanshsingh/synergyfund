@@ -10,7 +10,7 @@ import { api } from "../../../../lib/api"
 import { useApi } from "../../../../lib/useApi"
 import { useSession } from "../../../../components/shell/Providers"
 import { StatusPill } from "../../../../components/ui/StatusPill"
-import { Loader } from "../../../../components/ui/Loader"
+import { PageSpinner } from "../../../../components/ui/Spinner"
 import { DetailFrame } from "../../../../components/ui/DetailFrame"
 import { CameraCapture } from "../../../../components/photos/CameraCapture"
 
@@ -41,7 +41,7 @@ export default function PropertyDetailPage({ params }) {
       setEditing(propertyForm(property))
     }
   }, [property, search, session])
-  if (!property) return detail.error ? <div className="boot"><p className="banner">{detail.error}</p></div> : <Loader label="Opening property" />
+  if (!property) return detail.error ? <div className="boot"><p className="banner">{detail.error}</p></div> : <PageSpinner />
 
   const internal = session?.user?.role !== "contractor"
   const canWrite = session?.user && can(session.user, "properties.write")
@@ -68,7 +68,7 @@ export default function PropertyDetailPage({ params }) {
 
   if (!internal) {
     return (
-      <DetailFrame backHref="/properties" backLabel="Properties" title={property.address} meta={property.city || ""} actions={<StatusPill>{property.stage}</StatusPill>}>
+      <DetailFrame backHref="/properties" backLabel="Properties" title={property.address} meta={property.city || ""} status={<StatusPill>{property.stage}</StatusPill>}>
         {property.accessInfo && (
           <section className="panel property-card">
             <h2>Access</h2>
@@ -133,11 +133,11 @@ export default function PropertyDetailPage({ params }) {
       backLabel="Properties"
       title={property.address}
       meta={[property.city, property.stage, property.strategy].filter(Boolean).join(" · ")}
-      actions={<>
-        {canWrite && <button type="button" className="danger" onClick={() => removeProperty(id, property.address, router)}>Delete</button>}
-        {canWrite && <button type="button" className="primary" onClick={() => { setEditError(""); setEditing(propertyForm(property)) }}>Modify</button>}
-        <StatusPill>{property.stage}</StatusPill>
-      </>}
+      status={<StatusPill>{property.stage}</StatusPill>}
+      actions={canWrite ? [
+        <button key="delete" type="button" className="danger" onClick={() => removeProperty(id, property.address, router)}>Delete</button>,
+        <button key="modify" type="button" className="primary" onClick={() => { setEditError(""); setEditing(propertyForm(property)) }}>Modify</button>,
+      ] : null}
     >
       <div className="property-switch" role="tablist" aria-label="Property sections">
         {tabs.map((tab) => (
@@ -345,7 +345,7 @@ export default function PropertyDetailPage({ params }) {
             <label className="field wide"><span>Address</span><input value={editing.address} onChange={(event) => setEditing({ ...editing, address: event.target.value })} required /></label>
             <LabelField labels={editing.labels} onChange={(labels) => setEditing({ ...editing, labels })} />
             <label className="field"><span>City</span><input value={editing.city} onChange={(event) => setEditing({ ...editing, city: event.target.value })} /></label>
-            <label className="field"><span>Stage</span><select value={editing.stage} onChange={(event) => setEditing({ ...editing, stage: event.target.value })}>{STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
+            <label className="field"><span>Status</span><select value={editing.stage} onChange={(event) => setEditing({ ...editing, stage: event.target.value })}>{STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
             <label className="field"><span>Strategy</span><select value={editing.strategy} onChange={(event) => setEditing({ ...editing, strategy: event.target.value })}><option value="">Not set</option>{STRATEGIES.map((item) => <option key={item}>{item}</option>)}</select></label>
             <label className="field"><span>Purchase price</span><input value={editing.purchasePrice} onChange={(event) => setEditing({ ...editing, purchasePrice: event.target.value })} /></label>
             <label className="field"><span>ARV</span><input value={editing.arv} onChange={(event) => setEditing({ ...editing, arv: event.target.value })} /></label>

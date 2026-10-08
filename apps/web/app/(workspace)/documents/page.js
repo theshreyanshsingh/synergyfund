@@ -76,6 +76,7 @@ export default function DocumentsPage() {
     <>
       <WorkspacePage
         views={false}
+        loading={!list.data && !list.error}
         title="Documents"
         action={writable ? { label: "Upload", onClick: () => setOpen(true) } : null}
         stats={[
@@ -112,7 +113,7 @@ export default function DocumentsPage() {
         ]}
         rows={files}
         onRow={(row) => router.push(`/documents/${row.id}`)}
-        empty={list.loading ? "Loading documents…" : "Upload a Word file, Excel workbook, photo, or PDF."}
+        empty="Upload a Word file, Excel workbook, photo, or PDF."
       />
       {open && (
         <div className="sheet-backdrop" onMouseDown={closeUpload}>

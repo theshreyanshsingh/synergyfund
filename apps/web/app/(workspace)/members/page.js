@@ -117,6 +117,7 @@ export default function MembersPage() {
     <>
       <WorkspacePage
         views={false}
+        loading={!list.data && !list.error}
         title="Members"
         secondary={{ label: "Add contractor", onClick: () => openInvite("contractor") }}
         action={{ label: "Invite member", onClick: () => openInvite("member") }}
@@ -162,7 +163,7 @@ export default function MembersPage() {
         rows={people}
         important={(row) => (row.extraPermissions || []).length > 0 || (row.deniedPermissions || []).length > 0}
         onRow={openMember}
-        empty={list.loading ? "Loading people…" : "Invite the first person and choose what they can do."}
+        empty="Invite the first person and choose what they can do."
       />
       {draft && (
         <div className="sheet-backdrop" onMouseDown={() => setDraft(null)}>

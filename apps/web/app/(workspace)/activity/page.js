@@ -9,6 +9,7 @@ export default function ActivityPage() {
   return (
     <WorkspacePage
       views={false}
+      loading={!list.data && !list.error}
       title="Team activity"
       columns={[
         { key: "title", label: "Name", avatar: (row) => row.actorName || row.title, render: (row) => <span className="person-copy"><strong>{row.title}</strong><small>{row.actorName || "Someone"}</small></span> },
@@ -16,7 +17,6 @@ export default function ActivityPage() {
         { key: "createdAt", label: "When", render: (row) => when(row.createdAt) },
       ]}
       rows={list.data?.items || []}
-      important={() => true}
       empty="No activity yet."
     />
   )

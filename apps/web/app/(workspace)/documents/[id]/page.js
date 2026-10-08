@@ -2,7 +2,7 @@
 
 import { use, useState } from "react"
 import { DetailFrame } from "../../../../components/ui/DetailFrame"
-import { Loader } from "../../../../components/ui/Loader"
+import { PageSpinner } from "../../../../components/ui/Spinner"
 import { when } from "../../../../lib/format"
 import { useApi } from "../../../../lib/useApi"
 
@@ -18,7 +18,7 @@ export default function DocumentViewerPage({ params }) {
   const preview = useApi(`/documents/${id}/preview`)
   const [sheet, setSheet] = useState(0)
   const data = preview.data
-  if (!data) return preview.error ? <div className="boot"><p className="banner">{preview.error}</p></div> : <Loader label="Opening file" />
+  if (!data) return preview.error ? <div className="boot"><p className="banner">{preview.error}</p></div> : <PageSpinner />
   const current = data.sheets?.[sheet] || data.sheets?.[0]
   const header = current?.rows?.[0] || []
   const body = current?.rows?.slice(1) || []

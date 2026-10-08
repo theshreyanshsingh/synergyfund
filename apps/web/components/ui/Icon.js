@@ -35,6 +35,7 @@ function Help() { return <><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.5 2
 function Sun() { return <><circle cx="12" cy="12" r="4" /><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4" /></> }
 function Moon() { return <path d="M20 14.5A8 8 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z" /> }
 function Menu() { return <><path d="M4 7h16M4 12h16M4 17h16" /></> }
+function More() { return <><circle cx="5" cy="12" r="1.4" fill="currentColor" /><circle cx="12" cy="12" r="1.4" fill="currentColor" /><circle cx="19" cy="12" r="1.4" fill="currentColor" /></> }
 function Close() { return <path d="M6 6l12 12M18 6 6 18" /> }
 
-const icons = { search: Search, spark: Spark, bell: Bell, home: Home, chat: Chat, grid: Grid, check: Check, card: Card, calendar: Calendar, building: Building, layers: Layers, chart: Chart, bank: Bank, receipt: Receipt, file: File, pulse: Pulse, alert: Alert, users: Users, chevron: Chevron, plus: Plus, filter: Filter, sliders: Sliders, logout: Logout, settings: Settings, help: Help, sun: Sun, moon: Moon, menu: Menu, close: Close }
+const icons = { search: Search, spark: Spark, bell: Bell, home: Home, chat: Chat, grid: Grid, check: Check, card: Card, calendar: Calendar, building: Building, layers: Layers, chart: Chart, bank: Bank, receipt: Receipt, file: File, pulse: Pulse, alert: Alert, users: Users, chevron: Chevron, plus: Plus, filter: Filter, sliders: Sliders, logout: Logout, settings: Settings, help: Help, sun: Sun, moon: Moon, menu: Menu, more: More, close: Close }

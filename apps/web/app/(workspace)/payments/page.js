@@ -29,6 +29,7 @@ export default function PaymentsPage() {
   return (
     <WorkspacePage
       views={false}
+      loading={(!list.data && !list.error) || (!expenses.data && !expenses.error)}
       title="Upcoming payments"
       stats={[
         { label: "Scheduled", value: String(upcoming.length), hint: "Unpaid" },

@@ -19,6 +19,7 @@ export default function NotificationsPage() {
   return (
     <WorkspacePage
       views={false}
+      loading={!list.data && !list.error}
       title="Notifications"
       columns={[
         { key: "title", label: "Name", avatar: (row) => row.title || "Notice", render: (row) => row.title },

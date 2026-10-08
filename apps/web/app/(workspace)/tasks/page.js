@@ -111,6 +111,7 @@ export default function TasksPage() {
       {notice && <div className="banner">{notice}</div>}
       <WorkspacePage
         views={false}
+        loading={!list.data && !list.error}
         title="To-do list"
         action={canManage ? { label: "Add task", onClick: startCreate } : null}
         columns={[

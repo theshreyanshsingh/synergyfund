@@ -83,6 +83,7 @@ export default function ExpensesPage() {
     <>
       <WorkspacePage
         views={false}
+        loading={!list.data && !list.error}
         title="Expenses"
         action={canSubmit ? { label: "Add expense", onClick: () => setOpen(true) } : null}
         stats={camera ? [
