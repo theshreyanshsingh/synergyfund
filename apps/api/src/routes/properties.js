@@ -1,11 +1,11 @@
 import { Router } from "express"
 import { z } from "zod"
 import { STAGES } from "@synergifund/shared"
-import { Bill, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, User } from "../models/index.js"
+import { Activity, Bill, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
 import { propertyFilter, ownsProperty } from "../services/access.js"
-import { publicFileUrl, saveUploadedFile, upload, withProofUrls } from "../services/files.js"
+import { deleteStoredFile, publicFileUrl, saveUploadedFile, upload, withProofUrls } from "../services/files.js"
 import { ensureLenders } from "../services/lenders.js"
 import { recordActivity } from "../services/notify.js"
 import { presentContractorDraw, presentDraw } from "./draws.js"
@@ -193,6 +193,37 @@ propertiesRouter.patch(
     await property.save()
     await recordActivity({ user: req.user, title: "Property updated", detail: property.address, propertyId: property._id })
     res.json({ property: presentProperty(property, req.user) })
+  }),
+)
+
+propertiesRouter.delete(
+  "/:id",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const property = await Property.findById(req.params.id)
+    if (!property || !ownsProperty(req.user, property)) {
+      sendError(res, 404, "That property is not available.")
+      return
+    }
+    const files = await DocumentFile.find({ propertyId: property._id })
+    await Promise.all(files.map((file) => deleteStoredFile(file).catch(() => {})))
+    await Promise.all([
+      Loan.deleteMany({ propertyId: property._id }),
+      Draw.deleteMany({ propertyId: property._id }),
+      DrawBudget.deleteMany({ propertyId: property._id }),
+      Expense.deleteMany({ propertyId: property._id }),
+      ExpenseRequest.deleteMany({ propertyId: property._id }),
+      Task.deleteMany({ propertyId: property._id }),
+      Bill.deleteMany({ propertyId: property._id }),
+      ReviewItem.deleteMany({ propertyId: property._id }),
+      PhotoSet.deleteMany({ propertyId: property._id }),
+      DocumentFile.deleteMany({ propertyId: property._id }),
+      Activity.deleteMany({ propertyId: property._id }),
+      ConstructionProject.deleteMany({ propertyId: property._id }),
+    ])
+    await property.deleteOne()
+    await recordActivity({ user: req.user, title: "Property deleted", detail: property.address })
+    res.json({ ok: true })
   }),
 )
 

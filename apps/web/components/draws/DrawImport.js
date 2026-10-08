@@ -11,7 +11,7 @@ const LABELS = {
   skipped: "Skipped",
 }
 
-export function DrawImport({ job, imports, onOpen, onChange, onReload, inputRef }) {
+export function DrawImport({ job, onOpen, onChange, onReload, inputRef }) {
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
 
@@ -40,7 +40,8 @@ export function DrawImport({ job, imports, onOpen, onChange, onReload, inputRef 
     try {
       const result = await api(`/draws/import/${job.id}/confirm`, { method: "POST", body: {} })
       onChange(result.import)
-      onReload()
+      await onReload()
+      onOpen(null)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -56,26 +57,29 @@ export function DrawImport({ job, imports, onOpen, onChange, onReload, inputRef 
         <section className="panel import-panel">
           <div className="import-head">
             <div>
-              <h2>{job.name}</h2>
+              <h2>Review imported data</h2>
               <p>
-                {count(job, "added") || count(job, "pending")} to append
-                {" · "}
-                {count(job, "duplicate")} duplicates left as they are
-                {" · "}
-                {count(job, "skipped")} skipped
+                {job.format === "sheet"
+                  ? `${job.properties?.length || 0} properties · ${count(job, "added") || count(job, "pending")} draws ready to save`
+                  : `${count(job, "added") || count(job, "pending")} to append · ${count(job, "duplicate")} duplicates left as they are · ${count(job, "skipped")} skipped`}
               </p>
             </div>
             <div className="import-actions">
               {job.status === "Draft" && (
                 <button type="button" className="primary" disabled={busy || !count(job, "pending")} onClick={confirm}>
-                  {count(job, "pending") ? "Append new rows" : "Nothing new to add"}
+                  {count(job, "pending") ? (job.format === "sheet" ? "Save properties and draws" : "Append new rows") : "Nothing new to add"}
                 </button>
               )}
               <button type="button" className="import-button" onClick={() => onOpen(null)}>Close</button>
             </div>
           </div>
           {error && <p className="draws-empty">{error}</p>}
+          {job.format === "sheet" ? (
+            <SheetPreview job={job} />
+          ) : (
+            <>
           <p className="import-note">Duplicate rows stay marked and are not saved again. Draws and budgets already on file are not replaced.</p>
+          {job.truncated && <p className="import-note">Showing the first {job.rows.length} of {job.totalRows} rows. Append still saves every new row.</p>}
           <div className="import-rows">
             {(job.rows || []).map((row) => {
               const filled = (job.headers || []).filter((header) => String(row.cells?.[header] || "").trim())
@@ -100,23 +104,65 @@ export function DrawImport({ job, imports, onOpen, onChange, onReload, inputRef 
               )
             })}
           </div>
+            </>
+          )}
         </section>
-      )}
-      {!job && imports.length > 0 && (
-        <div className="import-history">
-          {imports.map((item) => (
-            <button key={item.id} type="button" onClick={async () => {
-              const result = await api(`/draws/imports/${item.id}`)
-              onOpen(result.import)
-            }}>
-              {item.name}
-              <span>{item.status === "Confirmed" ? `${item.counts?.added || 0} added` : "Not added yet"}</span>
-            </button>
-          ))}
-        </div>
       )}
     </>
   )
+}
+
+function SheetPreview({ job }) {
+  const [columnsOpen, setColumnsOpen] = useState(false)
+  const [hidden, setHidden] = useState([])
+  const columns = (job.columns || []).map((label, index) => ({ id: String(index), label: label || `Column ${index + 1}`, index }))
+  const shown = columns.filter((column) => !hidden.includes(column.id))
+  return (
+    <>
+      <div className="sheet-tools">
+        <p>Review the workbook below. Saving creates the properties and their draws in MongoDB.</p>
+        <div className="column-picker">
+          <button type="button" className="import-button" onClick={() => setColumnsOpen((value) => !value)}>Columns · {shown.length}</button>
+          {columnsOpen && (
+            <div className="column-menu">
+              {columns.map((column) => (
+                <label key={column.id}>
+                  <input
+                    type="checkbox"
+                    checked={!hidden.includes(column.id)}
+                    onChange={() => setHidden((current) => current.includes(column.id) ? current.filter((id) => id !== column.id) : [...current, column.id])}
+                  />
+                  {column.label}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="excel-wrap">
+        <table className="excel-sheet">
+          <thead>
+            <tr><th className="row-number">#</th>{shown.map((column) => <th key={column.id}>{column.label}</th>)}</tr>
+          </thead>
+          <tbody>
+            {(job.grid || []).map((line, rowIndex) => (
+              <tr key={rowIndex}>
+                <th className="row-number">{rowIndex + 1}</th>
+                {shown.map((column) => {
+                  const cell = line[column.index] || ""
+                  return <td key={column.id} className={isMoney(cell) ? "num" : undefined}>{cell}</td>
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  )
+}
+
+function isMoney(value) {
+  return /^[$%-]/.test(String(value || "").trim()) || /%$/.test(String(value || "").trim())
 }
 
 function count(job, key) {

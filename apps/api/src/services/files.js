@@ -6,6 +6,7 @@ import { pipeline } from "node:stream/promises"
 import { fileURLToPath } from "node:url"
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3"
 import multer from "multer"
+import { sendError } from "../lib/http.js"
 
 const uploadDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../uploads")
 fs.mkdirSync(uploadDir, { recursive: true })
@@ -71,11 +72,21 @@ export const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 },
 })
 
+export function receiveFile(field) {
+  return (req, res, next) => {
+    upload.single(field)(req, res, (error) => {
+      if (!error) {
+        next()
+        return
+      }
+      const tooBig = error.code === "LIMIT_FILE_SIZE"
+      sendError(res, 400, tooBig ? "That file is larger than 20 MB. Split the workbook and try again." : "The upload could not be read.")
+    })
+  }
+}
+
 export async function saveUploadedFile(file, user, extra = {}) {
   const config = storageConfig()
-  if (config.partial) {
-    throw new Error("S3 storage is incomplete. Set AWS_REGION, AWS_S3_BUCKET, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY together.")
-  }
   const safeName = (file.originalname || "upload").replace(/[^\w.\- ]+/g, "") || "upload"
   const { DocumentFile } = await import("../models/index.js")
   let storage = "local"

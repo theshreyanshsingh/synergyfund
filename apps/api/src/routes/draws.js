@@ -1,10 +1,11 @@
 import { Router } from "express"
+import xlsx from "xlsx"
 import { DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, ImportJob, PhotoReport, Property } from "../models/index.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { propertyFilter } from "../services/access.js"
 import { comparePhotosForDraw } from "../services/agent.js"
-import { DRAW_FIELD_ALIASES, appendNewDrawRows, classifyDrawRows, readWorkbook } from "../services/drawImport.js"
-import { materializeStoredFile, saveUploadedFile, upload } from "../services/files.js"
+import { DRAW_FIELD_ALIASES, appendNewDrawRows, classifyDrawRows, importPortfolioRecords, parsePortfolioWorkbook, readWorkbook } from "../services/drawImport.js"
+import { materializeStoredFile, receiveFile, saveUploadedFile } from "../services/files.js"
 import { notify, recordActivity } from "../services/notify.js"
 
 export const drawsRouter = Router()
@@ -32,8 +33,8 @@ export function presentDraw(item) {
     description: line.description || "",
     amount: line.amount ?? null,
   }))
-  const figured = lines.some((line) => line.amount != null)
-  const amount = figured ? lines.reduce((total, line) => total + Number(line.amount || 0), 0) : item.amount ?? null
+  const lineTotal = lines.reduce((total, line) => total + Number(line.amount || 0), 0)
+  const amount = item.amount != null ? Number(item.amount) : lines.length ? lineTotal : null
   const pulled = item.fundedAmount != null ? Number(item.fundedAmount) : item.status === "Funded" && amount != null ? Number(amount) : 0
   return {
     id: String(item._id),
@@ -167,7 +168,13 @@ drawsRouter.get(
       return
     }
     const file = await DocumentFile.findById(job.fileId)
-    res.json({ import: presentImport(job, file) })
+    const portfolio = await portfolioFromFile(file)
+    if (portfolio) {
+      res.json({ import: sheetImport(job, file, portfolio) })
+      return
+    }
+    const liveRows = await drawRows(file, job)
+    res.json({ import: presentImport(job, file, liveRows) })
   }),
 )
 
@@ -175,7 +182,7 @@ drawsRouter.post(
   "/import",
   requirePermission("imports.run"),
   requirePermission("draws.write"),
-  upload.single("file"),
+  receiveFile("file"),
   asyncHandler(async (req, res) => {
     if (!req.file) {
       sendError(res, 400, "Choose an Excel workbook.")
@@ -187,12 +194,26 @@ drawsRouter.post(
       return
     }
     const saved = await saveUploadedFile(req.file, req.user, { kind: "import" })
-    const stored = await materializeStoredFile(saved)
+    const portfolio = await portfolioFromFile(saved)
+    if (portfolio) {
+      const job = await ImportJob.create({
+        fileId: saved._id,
+        type: "draws",
+        sheet: "Dashboard",
+        headers: portfolio.columns,
+        rows: [],
+        counts: portfolio.counts,
+        createdBy: req.user._id,
+      })
+      res.status(201).json({ import: sheetImport(job, saved, portfolio) })
+      return
+    }
     let tables
     try {
-      tables = readWorkbook(stored.path, DRAW_FIELD_ALIASES.flatMap((entry) => entry[1]))
-    } finally {
-      await stored.cleanup()
+      tables = await tablesFromFile(saved)
+    } catch {
+      sendError(res, 400, "That workbook could not be read. Use an .xls or .xlsx file.")
+      return
     }
     if (!tables.length) {
       sendError(res, 400, "That workbook has no rows to read.")
@@ -205,12 +226,12 @@ drawsRouter.post(
       type: "draws",
       sheet: tables.map((table) => table.sheet).join(", "),
       headers: classified.headers,
-      rows: classified.rows.map((row) => ({ sheet: row.sheet, row: row.row, cells: row.cells })),
+      rows: [],
       marks: classified.rows.map((row) => ({ sheet: row.sheet, row: row.row, status: row.status, reason: row.reason })),
       counts: classified.counts,
       createdBy: req.user._id,
     })
-    res.status(201).json({ import: presentImport(job, saved) })
+    res.status(201).json({ import: presentImport(job, saved, classified.rows) })
   }),
 )
 
@@ -226,9 +247,30 @@ drawsRouter.post(
     }
     const [properties, draws] = await loadDrawContext(req.user)
     const fileForRows = await DocumentFile.findById(job.fileId)
+    const portfolio = await portfolioFromFile(fileForRows)
+    if (portfolio) {
+      const result = await importPortfolioRecords({
+        records: portfolio.records,
+        properties,
+        draws,
+        Draw,
+        DrawBudget,
+        Property,
+        userName: req.user.name,
+      })
+      job.marks = result.marks
+      job.counts = result.counts
+      job.status = "Confirmed"
+      await job.save()
+      await recordActivity({
+        user: req.user,
+        title: "Draw workbook appended",
+        detail: `${result.counts.added} draws added, ${result.counts.duplicate} already on file`,
+      })
+      res.json({ import: sheetImport(job, fileForRows, portfolio) })
+      return
+    }
     const rows = await drawRows(fileForRows, job)
-    job.rows = rows.map((row) => ({ sheet: row.sheet, row: row.row, cells: row.cells }))
-    job.markModified("rows")
     const result = await appendNewDrawRows({
       rows,
       properties,
@@ -251,8 +293,7 @@ drawsRouter.post(
       title: "Draw workbook appended",
       detail: `${result.counts.added} added, ${result.counts.duplicate} duplicates left unchanged, ${result.counts.skipped} skipped`,
     })
-    const file = await DocumentFile.findById(job.fileId)
-    res.json({ import: presentImport(job, file) })
+    res.json({ import: presentImport(job, fileForRows, rows) })
   }),
 )
 
@@ -273,6 +314,29 @@ drawsRouter.post(
       notes: req.body.notes || "",
     })
     res.status(201).json({ budget: presentBudget(budget) })
+  }),
+)
+
+drawsRouter.patch(
+  "/budgets/:id",
+  requirePermission("draws.write"),
+  asyncHandler(async (req, res) => {
+    const budget = await DrawBudget.findById(req.params.id)
+    if (!budget) {
+      sendError(res, 404, "That draw budget was not found.")
+      return
+    }
+    for (const field of ["budget", "fundingLimit", "fundingPercent"]) {
+      if (!(field in req.body)) continue
+      const value = numberOrUndefined(req.body[field])
+      if (value == null || value < 0) {
+        sendError(res, 400, `${field} needs to be zero or more.`)
+        return
+      }
+      budget[field] = value
+    }
+    await budget.save()
+    res.json({ budget: presentBudget(budget) })
   }),
 )
 
@@ -305,6 +369,57 @@ drawsRouter.post(
   }),
 )
 
+drawsRouter.get(
+  "/export",
+  requirePermission("draws.read"),
+  asyncHandler(async (req, res) => {
+    const allowed = await Property.find(propertyFilter(req.user)).select("address city")
+    const allowedIds = new Set(allowed.map((property) => String(property._id)))
+    let properties = allowed
+    if (req.query.propertyId) {
+      properties = allowed.filter((property) => String(property._id) === String(req.query.propertyId))
+      if (!properties.length) {
+        sendError(res, 404, "That property is not available.")
+        return
+      }
+    }
+    const draws = await Draw.find({ propertyId: { $in: properties.map((property) => property._id) } }).sort({ createdAt: 1 })
+    const names = new Map(properties.map((property) => [String(property._id), property]))
+    const header = ["Property", "City", "Draw", "Status", "Line item", "Description", "Line amount", "Draw amount", "Pulled", "Remaining", "Forecast finish", "Funded date"]
+    const rows = [header]
+    for (const draw of draws) {
+      if (!allowedIds.has(String(draw.propertyId))) continue
+      const view = presentDraw(draw)
+      const property = names.get(String(draw.propertyId))
+      const lines = view.lines.length ? view.lines : [{ title: "", description: "", amount: "" }]
+      for (const line of lines) {
+        rows.push([
+          property?.address || "",
+          property?.city || "",
+          view.title,
+          view.status,
+          line.title || "",
+          line.description || "",
+          line.amount ?? "",
+          view.amount ?? "",
+          view.pulled ?? "",
+          view.remaining ?? "",
+          view.requestedDate || "",
+          view.fundedDate || "",
+        ])
+      }
+    }
+    if (rows.length === 1) rows.push(header.map(() => ""))
+    const book = xlsx.utils.book_new()
+    xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet(rows), "Draws")
+    const buffer = xlsx.write(book, { type: "buffer", bookType: "xlsx" })
+    const filename = properties.length === 1 ? `${fileSlug(properties[0].address)}-draws.xlsx` : "draws.xlsx"
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`)
+    res.send(buffer)
+  }),
+)
+
 drawsRouter.patch(
   "/:id",
   requirePermission("draws.write"),
@@ -323,8 +438,41 @@ drawsRouter.patch(
         draw.amount = draw.lines.reduce((total, line) => total + Number(line.amount || 0), 0)
       }
     }
+    if ("fundedAmount" in req.body) {
+      const pulled = moneyOrZero(req.body.fundedAmount)
+      if (pulled == null) {
+        sendError(res, 400, "Pulled needs to be zero or more.")
+        return
+      }
+      draw.fundedAmount = pulled
+      const amount = Number(draw.amount)
+      if (Number.isFinite(amount) && amount > 0 && pulled >= amount) {
+        draw.status = "Funded"
+        draw.fundedDate = draw.fundedDate || new Date().toISOString().slice(0, 10)
+      } else if (pulled > 0) {
+        draw.status = "Partial"
+      } else if (draw.status === "Funded" || draw.status === "Partial") {
+        draw.status = "Requested"
+        draw.fundedDate = ""
+      }
+    }
     await draw.save()
     res.json({ draw: presentDraw(draw) })
+  }),
+)
+
+drawsRouter.delete(
+  "/:id",
+  requirePermission("draws.write"),
+  asyncHandler(async (req, res) => {
+    const draw = await Draw.findById(req.params.id)
+    if (!draw) {
+      sendError(res, 404, "That draw was not found.")
+      return
+    }
+    await draw.deleteOne()
+    await recordActivity({ user: req.user, title: "Draw removed", detail: draw.title, propertyId: draw.propertyId })
+    res.json({ ok: true })
   }),
 )
 
@@ -362,8 +510,55 @@ drawsRouter.post(
   }),
 )
 
-function presentImport(job, file) {
+const PREVIEW_ROWS = 400
+
+function sheetImport(job, file, portfolio) {
+  return {
+    id: String(job._id),
+    name: file?.name || "Workbook",
+    status: job.status,
+    counts: job.status === "Confirmed" ? (job.counts || portfolio.counts) : portfolio.counts,
+    format: "sheet",
+    columns: portfolio.columns,
+    grid: portfolio.grid,
+    properties: portfolio.records.map((record) => ({
+      address: record.address,
+      city: record.city,
+      budget: record.rehabBudget,
+      draws: record.draws.length,
+    })),
+    createdAt: job.createdAt,
+    totalRows: portfolio.grid.length,
+    truncated: false,
+    rows: [],
+  }
+}
+
+async function portfolioFromFile(file) {
+  if (!file) return null
+  const stored = await materializeStoredFile(file)
+  try {
+    return parsePortfolioWorkbook(stored.path)
+  } catch {
+    return null
+  } finally {
+    await stored.cleanup()
+  }
+}
+
+function presentImport(job, file, liveRows) {
   const marks = new Map((job.marks || []).map((item) => [`${item.sheet}:${item.row}`, item]))
+  const source = liveRows || job.rows || []
+  const rows = source.map((row) => {
+    const marked = marks.get(`${row.sheet}:${row.row}`) || {}
+    return {
+      sheet: row.sheet,
+      row: row.row,
+      cells: row.cells || {},
+      status: marked.status || row.status || "skipped",
+      reason: marked.reason || row.reason || "",
+    }
+  })
   return {
     id: String(job._id),
     name: file?.name || "Workbook",
@@ -371,29 +566,48 @@ function presentImport(job, file) {
     counts: job.counts || {},
     headers: job.headers || [],
     createdAt: job.createdAt,
-    rows: (job.rows || []).map((row) => {
-      const marked = marks.get(`${row.sheet}:${row.row}`) || {}
-      return { sheet: row.sheet, row: row.row, cells: row.cells || {}, status: marked.status || "skipped", reason: marked.reason || "" }
-    }),
+    totalRows: rows.length,
+    truncated: rows.length > PREVIEW_ROWS,
+    rows: rows.slice(0, PREVIEW_ROWS),
+  }
+}
+
+async function tablesFromFile(file) {
+  if (!file) return []
+  const stored = await materializeStoredFile(file)
+  try {
+    return readWorkbook(stored.path, DRAW_FIELD_ALIASES.flatMap((entry) => entry[1]))
+  } finally {
+    await stored.cleanup()
   }
 }
 
 async function drawRows(file, job) {
-  if (!file) return job.rows || []
-  const stored = await materializeStoredFile(file)
   try {
-    const tables = readWorkbook(stored.path, DRAW_FIELD_ALIASES.flatMap((entry) => entry[1]))
-    if (!tables.length) return job.rows || []
-    return tables.flatMap((table) => table.rows)
-  } finally {
-    await stored.cleanup()
+    const tables = await tablesFromFile(file)
+    if (tables.length) return tables.flatMap((table) => table.rows)
+  } catch {
+    return job.rows || []
   }
+  return job.rows || []
 }
 
 async function loadDrawContext(user) {
   const properties = await Property.find(propertyFilter(user))
   const draws = await Draw.find({ propertyId: { $in: properties.map((property) => property._id) } })
   return [properties, draws]
+}
+
+function fileSlug(value) {
+  const slug = String(value || "draws").replace(/[^\w.-]+/g, "-").replace(/^-|-$/g, "").slice(0, 60)
+  return slug || "draws"
+}
+
+function moneyOrZero(value) {
+  if (value === "" || value == null) return 0
+  const number = Number(String(value).replace(/[$,]/g, ""))
+  if (!Number.isFinite(number) || number < 0) return null
+  return number
 }
 
 function sumFor(items, propertyId) {

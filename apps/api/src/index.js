@@ -11,8 +11,9 @@ import { expensesRouter } from "./routes/expenses.js"
 import { drawsRouter } from "./routes/draws.js"
 import { documentsRouter } from "./routes/documents.js"
 import { workspaceRouter } from "./routes/workspace.js"
+import { pushRouter } from "./routes/push.js"
 import { requireAuth } from "./middleware/auth.js"
-import { removeSeededPortfolio, seedIfEmpty } from "./services/seed.js"
+import { seedIfEmpty } from "./services/seed.js"
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../..")
 dotenv.config({ path: path.join(repoRoot, ".env"), quiet: true })
@@ -31,6 +32,7 @@ api.use("/properties", propertiesRouter)
 api.use("/expenses", expensesRouter)
 api.use("/draws", drawsRouter)
 api.use("/documents", documentsRouter)
+api.use("/push", pushRouter)
 api.use(workspaceRouter)
 app.use(api)
 
@@ -45,7 +47,6 @@ app.use((error, req, res, next) => {
 
 const port = Number(process.env.PORT || 4000)
 await mongoose.connect(process.env.MONGODB_URI)
-await removeSeededPortfolio()
 await seedIfEmpty()
 app.listen(port, () => {
   console.log(`SynergiFund API on ${port}`)

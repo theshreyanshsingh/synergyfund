@@ -51,6 +51,7 @@ export const Sidebar = memo(function Sidebar({ user, onSearch, onToggle, onNavig
               </span>
             </div>
             <ThemeButton />
+            <Link href="/settings" onClick={() => setOpen(false)}><Icon name="settings" size={15} /> Settings</Link>
             <button type="button" onClick={logout}><Icon name="logout" size={15} /> Logout</button>
           </div>
         )}

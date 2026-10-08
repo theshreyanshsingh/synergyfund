@@ -1,14 +1,16 @@
 "use client"
 
-import { Suspense, useEffect, useState } from "react"
+import { Suspense, useEffect, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Loader } from "../../../components/ui/Loader"
 import { PROPERTY_LABELS, can, STAGES, STRATEGIES } from "@synergifund/shared"
+import { DrawImport } from "../../../components/draws/DrawImport"
 import { FormSheet } from "../../../components/ui/FormSheet"
 import { StatusPill } from "../../../components/ui/StatusPill"
 import { WorkspacePage } from "../../../components/ui/WorkspacePage"
 import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
+import { money } from "../../../lib/format"
 import { useApi } from "../../../lib/useApi"
 
 function PropertiesScreen() {
@@ -23,7 +25,10 @@ function PropertiesScreen() {
   const [labelDraft, setLabelDraft] = useState("")
   const [assigned, setAssigned] = useState([])
   const [contractors, setContractors] = useState([])
+  const importInput = useRef(null)
+  const [workbook, setWorkbook] = useState(null)
   const writable = session?.user && can(session.user, "properties.write")
+  const canImport = session?.user && can(session.user, "imports.run") && can(session.user, "draws.write")
   const contractor = session?.user?.role === "contractor"
   const canMembers = session?.user && can(session.user, "members.manage")
 
@@ -59,12 +64,31 @@ function PropertiesScreen() {
       <WorkspacePage
         views={false}
         title="Properties"
+        secondary={canImport ? { label: "Import Excel", onClick: () => importInput.current?.click() } : null}
         action={writable ? { label: "New property", onClick: () => setOpen(true) } : null}
+        lead={canImport ? (
+          <DrawImport
+            job={workbook}
+            inputRef={importInput}
+            onOpen={setWorkbook}
+            onChange={setWorkbook}
+            onReload={list.reload}
+          />
+        ) : null}
         columns={[
           { key: "address", label: "Name", avatar: (row) => row.address, render: (row) => <span className="person-copy"><strong>{row.address}</strong><small>{row.city || "Location not entered"}</small></span> },
-          ...(contractor ? [] : [{ key: "nextAction", label: "Next step", render: (row) => row.nextAction || "Set the next action" }]),
+          ...(contractor ? [] : [
+            { key: "rehabBudget", label: "Rehab budget", render: (row) => row.rehabBudget == null ? "—" : money(row.rehabBudget) },
+            { key: "nextAction", label: "Next step", render: (row) => row.nextAction || "Set the next action" },
+          ]),
           { key: "stage", label: "Status", render: (row) => <StatusPill>{row.stage}</StatusPill> },
-          { key: "open", label: "", pin: "right", render: (row) => <span className="row-actions"><button type="button" onClick={(event) => { event.stopPropagation(); router.push(`/properties/${row.id}`) }}>Open</button></span> },
+          { key: "open", label: "", pin: "right", render: (row) => (
+            <span className="row-actions">
+              <button type="button" onClick={(event) => { event.stopPropagation(); router.push(`/properties/${row.id}`) }}>Open</button>
+              {writable && <button type="button" onClick={(event) => { event.stopPropagation(); router.push(`/properties/${row.id}?edit=1`) }}>Modify</button>}
+              {writable && <button type="button" className="danger" onClick={async (event) => { event.stopPropagation(); if (!window.confirm(`Delete ${row.address}?`)) return; await api(`/properties/${row.id}`, { method: "DELETE" }); list.reload() }}>Delete</button>}
+            </span>
+          ) },
         ]}
         rows={list.data?.items || []}
         important={contractor ? undefined : (row) => row.health === "Needs attention" || !row.purchasePrice}

@@ -1,7 +1,8 @@
 "use client"
 
-import { use, useState } from "react"
+import { use, useEffect, useRef, useState } from "react"
 import Link from "next/link"
+import { useRouter, useSearchParams } from "next/navigation"
 import { PROPERTY_LABELS, STAGES, STRATEGIES, can } from "@synergifund/shared"
 import { FormSheet } from "../../../../components/ui/FormSheet"
 import { money } from "../../../../lib/format"
@@ -15,6 +16,8 @@ import { CameraCapture } from "../../../../components/photos/CameraCapture"
 
 export default function PropertyDetailPage({ params }) {
   const { id } = use(params)
+  const router = useRouter()
+  const search = useSearchParams()
   const session = useSession()
   const detail = useApi(`/properties/${id}`)
   const [section, setSection] = useState("overview")
@@ -30,6 +33,14 @@ export default function PropertyDetailPage({ params }) {
   const [drawPending, setDrawPending] = useState(false)
   const [shots, setShots] = useState([])
   const property = detail.data?.property
+  const editOpened = useRef(false)
+  useEffect(() => {
+    if (editOpened.current || !property || search.get("edit") !== "1") return
+    if (session?.user && can(session.user, "properties.write")) {
+      editOpened.current = true
+      setEditing(propertyForm(property))
+    }
+  }, [property, search, session])
   if (!property) return detail.error ? <div className="boot"><p className="banner">{detail.error}</p></div> : <Loader label="Opening property" />
 
   const internal = session?.user?.role !== "contractor"
@@ -53,7 +64,7 @@ export default function PropertyDetailPage({ params }) {
   const tabs = [
     { id: "overview", label: "Overview" },
   ]
-  if (internal) tabs.push({ id: "financing", label: "Financing" }, { id: "draws", label: "Draws" })
+  if (internal) tabs.push({ id: "draws", label: "Draws" }, { id: "financing", label: "Financing" })
 
   if (!internal) {
     return (
@@ -123,6 +134,7 @@ export default function PropertyDetailPage({ params }) {
       title={property.address}
       meta={[property.city, property.stage, property.strategy].filter(Boolean).join(" · ")}
       actions={<>
+        {canWrite && <button type="button" className="danger" onClick={() => removeProperty(id, property.address, router)}>Delete</button>}
         {canWrite && <button type="button" className="primary" onClick={() => { setEditError(""); setEditing(propertyForm(property)) }}>Modify</button>}
         <StatusPill>{property.stage}</StatusPill>
       </>}
@@ -356,7 +368,10 @@ export default function PropertyDetailPage({ params }) {
               <h2>Draws</h2>
               <p className="property-missing">Open a draw to see its full scope and posted costs.</p>
             </div>
-            {canDraws && <button type="button" className="primary" onClick={() => { setDrawError(""); setDrawLines([blankDrawLine()]); setAddingDraw(true) }}>Add draw</button>}
+            <div className="row-actions">
+              <a className="tool" href={`/api/draws/export?propertyId=${id}`}>Export Excel</a>
+              {canDraws && <button type="button" className="primary" onClick={() => { setDrawError(""); setDrawLines([blankDrawLine()]); setAddingDraw(true) }}>Add draw</button>}
+            </div>
           </div>
           {draws?.undrawn != null && <p className="property-missing">{money(draws.undrawn)} still undrawn · {money(draws.received)} received</p>}
           {(draws?.items || []).length === 0 && <p className="property-missing">No draws recorded.</p>}
@@ -473,7 +488,7 @@ function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, onSav
         <FormSheet
           eyebrow={draw.title}
           title="Edit draw"
-          hint="The draw amount is calculated from the scope lines below."
+          hint="The draw amount comes from the scope lines. Pulled is the cash already taken, and remaining is the amount minus pulled."
           onClose={() => setEditing(false)}
           onSubmit={async (event) => {
             event.preventDefault()
@@ -486,6 +501,7 @@ function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, onSav
                 body: {
                   title: form.title,
                   requestedDate: form.requestedDate || "",
+                  fundedAmount: form.fundedAmount,
                   lines: cleanDrawLines(lines),
                 },
               })
@@ -503,6 +519,7 @@ function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, onSav
         >
           <div className="form-grid">
             <label className="field"><span>Draw name</span><input name="title" defaultValue={draw.title} required /></label>
+            <label className="field"><span>Pulled</span><input name="fundedAmount" inputMode="decimal" defaultValue={draw.pulled ?? 0} /></label>
             <label className="field"><span>Forecast finish</span><input name="requestedDate" type="date" defaultValue={draw.requestedDate || ""} /></label>
             <DrawLinesEditor lines={lines} onChange={setLines} />
           </div>
@@ -580,6 +597,12 @@ function DrawLinesEditor({ lines, onChange }) {
       <div className="draw-lines-total"><span>Draw total</span><strong>{money(lines.reduce((total, line) => total + (Number(line.amount) || 0), 0))}</strong></div>
     </div>
   )
+}
+
+async function removeProperty(id, address, router) {
+  if (!window.confirm(`Delete ${address}? Its draws, loans, costs, and photos will be removed.`)) return
+  await api(`/properties/${id}`, { method: "DELETE" })
+  router.push("/properties")
 }
 
 function blankDrawLine() {

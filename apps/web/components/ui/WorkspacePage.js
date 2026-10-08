@@ -16,6 +16,7 @@ export function WorkspacePage({
   views = true,
   title,
   underTitle,
+  lead,
   important,
   empty,
   children,
@@ -68,6 +69,7 @@ export function WorkspacePage({
           </div>
         )}
       </div>
+      {lead}
       {stats.length > 0 && (
         <div className="stats">
           {stats.map((stat) => (

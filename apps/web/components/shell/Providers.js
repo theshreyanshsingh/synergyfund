@@ -18,6 +18,10 @@ export function Providers({ children }) {
   const router = useRouter()
 
   useEffect(() => {
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {})
+  }, [])
+
+  useEffect(() => {
     api("/auth/me")
       .then((data) => setUser(data.user))
       .catch(() => setUser(null))

@@ -6,7 +6,7 @@ import { lenderForName } from "../services/lenders.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { propertyFilter } from "../services/access.js"
 import { readWorkbook } from "../services/drawImport.js"
-import { deleteStoredFile, materializeStoredFile, publicFileUrl, saveUploadedFile, sendStoredFile, upload } from "../services/files.js"
+import { deleteStoredFile, materializeStoredFile, publicFileUrl, receiveFile, saveUploadedFile, sendStoredFile, upload } from "../services/files.js"
 import { recordActivity } from "../services/notify.js"
 
 export const documentsRouter = Router()
@@ -175,7 +175,7 @@ const PORTFOLIO_ALIASES = [...PROPERTY_FIELDS, ...LOAN_FIELDS].flatMap((entry) =
 documentsRouter.post(
   "/import",
   requirePermission("imports.run"),
-  upload.single("file"),
+  receiveFile("file"),
   asyncHandler(async (req, res) => {
     if (!req.file) {
       sendError(res, 400, "Upload an Excel workbook.")
@@ -188,9 +188,12 @@ documentsRouter.post(
     }
     const saved = await saveUploadedFile(req.file, req.user, { kind: "import" })
     const stored = await materializeStoredFile(saved)
-    let tables
+    let tables = []
     try {
       tables = readWorkbook(stored.path, PORTFOLIO_ALIASES)
+    } catch {
+      sendError(res, 400, "That workbook could not be read. Use an .xls or .xlsx file.")
+      return
     } finally {
       await stored.cleanup()
     }
@@ -209,7 +212,7 @@ documentsRouter.post(
       type: req.body.type || "portfolio",
       sheet: tables.map((table) => table.sheet).join(", "),
       headers: [...new Set(tables.flatMap((table) => table.headers))],
-      rows,
+      rows: [],
       createdBy: req.user._id,
     })
     res.status(201).json({
@@ -234,8 +237,6 @@ documentsRouter.post(
     }
     const file = await DocumentFile.findById(job.fileId)
     const rows = await portfolioRows(file, job)
-    job.rows = rows
-    job.markModified("rows")
     let created = 0
     let updated = 0
     let skipped = 0

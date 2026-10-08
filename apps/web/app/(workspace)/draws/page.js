@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useMemo, useRef, useState } from "react"
 import { can } from "@synergifund/shared"
 import { DrawImport } from "../../../components/draws/DrawImport"
@@ -16,11 +17,11 @@ export default function DrawsPage() {
   const session = useSession()
   const data = useApi("/draws")
   const writable = session?.user && can(session.user, "draws.write")
+  const canDeleteProperty = session?.user && can(session.user, "properties.write")
   const canImport = writable && can(session.user, "imports.run")
-  const imports = useApi("/draws/imports")
   const importInput = useRef(null)
   const [workbook, setWorkbook] = useState(null)
-  const [view, setView] = useState("properties")
+  const [view, setView] = useState("sheet")
   const [moneyView, setMoneyView] = useState("calendar")
   const [sort, setSort] = useState("forecast")
   const [openId, setOpenId] = useState("")
@@ -56,6 +57,50 @@ export default function DrawsPage() {
     data.reload()
   }
 
+  async function savePulled(id, fundedAmount) {
+    await api(`/draws/${id}`, { method: "PATCH", body: { fundedAmount } })
+    data.reload()
+  }
+
+  async function removeProperty(project) {
+    if (!window.confirm(`Delete ${project.address}? This removes the property, its draws, and its records.`)) return
+    await api(`/properties/${project.id}`, { method: "DELETE" })
+    data.reload()
+  }
+
+  async function saveSheetValue({ project, column, draw, value }) {
+    const text = String(value ?? "").trim()
+    if (!text) {
+      if (column === "budget") await api(`/properties/${project.id}`, { method: "PATCH", body: { rehabBudget: null } })
+      else if (column === "funding" && project.budgetId) await api(`/draws/budgets/${project.budgetId}`, { method: "PATCH", body: { fundingLimit: 0 } })
+      else if (draw) await api(`/draws/${draw.id}`, { method: "DELETE" })
+      await data.reload()
+      return
+    }
+    const amount = Number(text.replace(/[$,\s]/g, ""))
+    if (!Number.isFinite(amount) || amount < 0) throw new Error("Enter a valid amount.")
+    if (column === "budget") {
+      await api(`/properties/${project.id}`, { method: "PATCH", body: { rehabBudget: amount } })
+    } else if (column === "funding") {
+      if (project.budgetId) {
+        await api(`/draws/budgets/${project.budgetId}`, { method: "PATCH", body: { fundingLimit: amount } })
+      } else {
+        await api("/draws/budgets", {
+          method: "POST",
+          body: { propertyId: project.id, title: "Lender funding", budget: project.totalBudget, fundingLimit: amount },
+        })
+      }
+    } else if (draw) {
+      await api(`/draws/${draw.id}`, { method: "PATCH", body: { amount } })
+    } else if (amount > 0) {
+      await api("/draws", {
+        method: "POST",
+        body: { propertyId: project.id, title: `Draw ${column}`, amount },
+      })
+    }
+    await data.reload()
+  }
+
   async function pull(id) {
     const result = await api(`/draws/${id}/pull`, { method: "POST", body: {} })
     setReport(result.report)
@@ -73,6 +118,7 @@ export default function DrawsPage() {
           <h1 className="page-title">Draws</h1>
         </div>
         <div className="draws-actions">
+          <a className="import-button" href="/api/draws/export">Export Excel</a>
           {canImport && (
             <button type="button" className="import-button" onClick={() => importInput.current?.click()}>Import Excel</button>
           )}
@@ -94,7 +140,8 @@ export default function DrawsPage() {
 
       <div className="panel draws-toolbar">
         <div className="seg">
-          <button type="button" className={view === "properties" ? "on" : ""} onClick={() => setView("properties")}>Properties</button>
+          <button type="button" className={view === "sheet" ? "on" : ""} onClick={() => setView("sheet")}>Sheet</button>
+          <button type="button" className={view === "properties" ? "on" : ""} onClick={() => setView("properties")}>Cards</button>
           <button type="button" className={view === "money" ? "on" : ""} onClick={() => setView("money")}>Money</button>
         </div>
         {view === "properties" ? (
@@ -103,26 +150,27 @@ export default function DrawsPage() {
             <option value="least">Least complete</option>
             <option value="most">Most complete</option>
           </select>
-        ) : (
+        ) : view === "money" ? (
           <div className="seg">
             <button type="button" className={moneyView === "calendar" ? "on" : ""} onClick={() => setMoneyView("calendar")}>Calendar</button>
             <button type="button" className={moneyView === "timeline" ? "on" : ""} onClick={() => setMoneyView("timeline")}>Timeline</button>
           </div>
-        )}
+        ) : <span />}
       </div>
 
       {canImport && (
         <DrawImport
           job={workbook}
-          imports={imports.data?.imports || []}
           inputRef={importInput}
           onOpen={setWorkbook}
           onChange={setWorkbook}
-          onReload={() => { data.reload(); imports.reload() }}
+          onReload={data.reload}
         />
       )}
 
       {data.error && <p className="draws-empty">{data.error}</p>}
+
+      {view === "sheet" && <DrawSheet projects={projects} writable={writable} canDelete={canDeleteProperty} onSave={saveSheetValue} onRemove={removeProperty} />}
 
       {view === "properties" && (
         <div className="draw-board">
@@ -135,6 +183,7 @@ export default function DrawsPage() {
               onToggle={() => setOpenId(openId === project.id ? "" : project.id)}
               onForecast={forecast}
               onPull={pull}
+              onPulled={savePulled}
             />
           ))}
           {!projects.length && !data.error && <p className="draws-empty">No properties yet.</p>}
@@ -142,7 +191,10 @@ export default function DrawsPage() {
       )}
 
       {view === "money" && moneyView === "calendar" && (
-        <MoneyCalendar projects={projects} month={month} onMonth={setMonth} />
+        <>
+          <ReceivedMoney projects={projects} />
+          <MoneyCalendar projects={projects} month={month} onMonth={setMonth} />
+        </>
       )}
       {view === "money" && moneyView === "timeline" && <MoneyTimeline projects={projects} />}
 
@@ -169,7 +221,155 @@ export default function DrawsPage() {
   )
 }
 
-function PropertyCard({ project, open, writable, onToggle, onForecast, onPull }) {
+function DrawSheet({ projects, writable, canDelete, onSave, onRemove }) {
+  const [columnsOpen, setColumnsOpen] = useState(false)
+  const [hidden, setHidden] = useState([])
+  const drawCount = Math.max(10, ...projects.flatMap((project) => project.lines.map((line) => drawIndex(line.title))).filter(Boolean))
+  const columns = [
+    { id: "property", label: "Property" },
+    { id: "budget", label: "Total Budget" },
+    { id: "funding", label: "Lender Funding" },
+    { id: "drawn", label: "Drawn to Date" },
+    { id: "pulled", label: "Cash Received" },
+    { id: "remaining", label: "Remaining" },
+    { id: "status", label: "Status" },
+    ...Array.from({ length: drawCount }, (_, index) => ({ id: `draw:${index + 1}`, label: `Draw ${index + 1}` })),
+  ]
+  const shown = columns.filter((column) => !hidden.includes(column.id))
+  const scheduled = (project) => project.lines.filter((line) => drawIndex(line.title))
+  const value = (project, column) => {
+    const draws = scheduled(project)
+    if (column.id === "property") return project.address || project.name || "Untitled property"
+    if (column.id === "budget") return cash(project.totalBudget)
+    if (column.id === "funding") return cash(project.lenderFunding)
+    if (column.id === "drawn" || column.id === "pulled") {
+      const total = draws.reduce((sum, line) => sum + Number(column.id === "drawn" ? line.amount : line.pulled) || 0, 0)
+      return total ? cash(total) : ""
+    }
+    if (column.id === "remaining") return cash(Math.max(0, (Number(project.totalBudget) || 0) - draws.reduce((sum, line) => sum + (Number(line.amount) || 0), 0)))
+    if (column.id === "status") return project.nextAction || project.stage || "Active"
+    const draw = draws.find((line) => drawIndex(line.title) === Number(column.id.slice(5)))
+    return draw?.amount ? cash(draw.amount) : ""
+  }
+  return (
+    <section className="draw-sheet panel">
+      <div className="sheet-tools">
+        <p><b>{projects.length}</b> properties · <b>{projects.reduce((sum, project) => sum + project.lines.filter((line) => drawIndex(line.title)).length, 0)}</b> draws{writable ? " · Click a budget or draw amount to edit" : ""}</p>
+        <div className="column-picker">
+          <button type="button" className="import-button" onClick={() => setColumnsOpen((current) => !current)}>Columns · {shown.length}</button>
+          {columnsOpen && (
+            <div className="column-menu">
+              {columns.map((column) => (
+                <label key={column.id}>
+                  <input
+                    type="checkbox"
+                    checked={!hidden.includes(column.id)}
+                    onChange={() => setHidden((current) => current.includes(column.id) ? current.filter((id) => id !== column.id) : [...current, column.id])}
+                  />
+                  {column.label}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="excel-wrap">
+        <table className="excel-sheet">
+          <thead><tr><th className="row-number">#</th>{shown.map((column) => <th key={column.id} className={column.id === "property" ? "pin-col" : undefined}>{column.label}</th>)}</tr></thead>
+          <tbody>
+            {projects.map((project, index) => (
+              <tr key={project.id}>
+                <th className="row-number">{index + 1}</th>
+                {shown.map((column) => {
+                  const drawNumber = column.id.startsWith("draw:") ? Number(column.id.slice(5)) : 0
+                  const draw = drawNumber ? scheduled(project).find((line) => drawIndex(line.title) === drawNumber) : null
+                  const editable = writable && (column.id === "budget" || column.id === "funding" || drawNumber)
+                  const rawValue = column.id === "budget"
+                    ? project.totalBudget
+                    : column.id === "funding"
+                      ? project.lenderFunding
+                      : drawNumber
+                        ? draw?.amount
+                        : null
+                  return (
+                    <td key={column.id} className={column.id === "property" ? "pin-col" : column.id === "status" ? undefined : "num"}>
+                      {column.id === "property" ? (
+                        <span className="sheet-property">
+                          <Link href={`/properties/${project.id}`}>{value(project, column)}</Link>
+                          {canDelete && <button type="button" className="sheet-remove" onClick={() => onRemove(project)}>Remove</button>}
+                        </span>
+                      ) : editable ? (
+                        <SheetMoneyCell
+                          value={rawValue}
+                          label={`${project.address} ${column.label}`}
+                          onSave={(next) => onSave({ project, column: drawNumber || column.id, draw, value: next })}
+                        />
+                      ) : value(project, column)}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!projects.length && <p className="draws-empty">No draw data yet. Import a workbook to add it.</p>}
+      </div>
+    </section>
+  )
+}
+
+function SheetMoneyCell({ value, label, onSave }) {
+  const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState("")
+  const original = value == null ? "" : String(value)
+
+  async function commit(event) {
+    const next = event.currentTarget.value.trim()
+    setEditing(false)
+    if (next === original) return
+    setBusy(true)
+    setMessage("")
+    try {
+      await onSave(next)
+    } catch (error) {
+      setMessage(error.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (editing) {
+    return (
+      <input
+        className="sheet-money-input"
+        autoFocus
+        defaultValue={original}
+        inputMode="decimal"
+        aria-label={label}
+        onFocus={(event) => event.currentTarget.select()}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur()
+          if (event.key === "Escape") setEditing(false)
+        }}
+      />
+    )
+  }
+  return (
+    <button
+      type="button"
+      className={message ? "sheet-money-value has-error" : "sheet-money-value"}
+      disabled={busy}
+      title={message || `Edit ${label}`}
+      onClick={() => setEditing(true)}
+    >
+      {busy ? "Saving…" : value == null ? "—" : cash(value)}
+    </button>
+  )
+}
+
+function PropertyCard({ project, open, writable, onToggle, onForecast, onPull, onPulled }) {
   const arrival = forecastWindow(project)
   const pct = project.schedule ? Math.round(project.pct * 100) : null
   return (
@@ -206,7 +406,7 @@ function PropertyCard({ project, open, writable, onToggle, onForecast, onPull })
           <h3>Draw lines</h3>
           {project.lines.length === 0 && <p className="draws-empty">No draw has been recorded. The schedule above is the figure already stored on the property.</p>}
           {project.lines.map((line) => (
-            <DrawRow key={line.id} line={line} writable={writable} onForecast={onForecast} onPull={onPull} />
+            <DrawRow key={line.id} line={line} writable={writable} onForecast={onForecast} onPull={onPull} onPulled={onPulled} />
           ))}
         </div>
       )}
@@ -214,7 +414,7 @@ function PropertyCard({ project, open, writable, onToggle, onForecast, onPull })
   )
 }
 
-function DrawRow({ line, writable, onForecast, onPull }) {
+function DrawRow({ line, writable, onForecast, onPull, onPulled }) {
   const [open, setOpen] = useState(false)
   const amount = line.amount
   const pulled = line.pulled ?? (line.status === "Funded" ? line.fundedAmount ?? line.amount : line.fundedAmount || 0)
@@ -239,13 +439,21 @@ function DrawRow({ line, writable, onForecast, onPull }) {
               ))}
             </tbody>
           </table>
-          {writable && line.status !== "Funded" && (
-            <div className="draw-line-actions">
-              <label>Forecast finish
-                <input type="date" defaultValue={line.requestedDate || ""} onChange={(event) => onForecast(line.id, event.target.value)} />
+          {writable && (
+            <form className="draw-line-actions" onSubmit={(event) => { event.preventDefault(); onPulled(line.id, new FormData(event.currentTarget).get("fundedAmount")) }}>
+              <label>Pulled
+                <input name="fundedAmount" inputMode="decimal" defaultValue={pulled ?? 0} />
               </label>
-              <button type="button" onClick={() => onPull(line.id)}>Pull draw</button>
-            </div>
+              <button type="submit">Save pulled</button>
+              {line.status !== "Funded" && (
+                <>
+                  <label>Forecast finish
+                    <input type="date" defaultValue={line.requestedDate || ""} onChange={(event) => onForecast(line.id, event.target.value)} />
+                  </label>
+                  <button type="button" onClick={() => onPull(line.id)}>Pull draw</button>
+                </>
+              )}
+            </form>
           )}
         </div>
       )}
@@ -253,11 +461,46 @@ function DrawRow({ line, writable, onForecast, onPull }) {
   )
 }
 
+function ReceivedMoney({ projects }) {
+  const rows = projects.flatMap((project) => {
+    const draws = project.lines.filter((line) => drawIndex(line.title) && Number(line.pulled) > 0)
+    if (!draws.length) return []
+    return [{
+      id: project.id,
+      address: project.address,
+      amount: draws.reduce((sum, line) => sum + Number(line.pulled || 0), 0),
+      draws,
+    }]
+  })
+  const total = rows.reduce((sum, row) => sum + row.amount, 0)
+  return (
+    <section className="draws-money money-received">
+      <div className="inc-head">
+        <span>Cash received</span>
+        <b>{cash(total)}</b>
+      </div>
+      {rows.map((row) => (
+        <div key={row.id} className="draw-week">
+          <div className="draw-week-h"><span>{row.address}</span><b>{cash(row.amount)}</b></div>
+          {row.draws.map((draw) => (
+            <div key={draw.id} className="draw-week-row">
+              <span>{draw.title}</span>
+              <span>{draw.fundedDate ? shortDate(draw.fundedDate) : "No date"}</span>
+              <b>{cash(draw.pulled)}</b>
+            </div>
+          ))}
+        </div>
+      ))}
+      {!rows.length && <p className="draws-empty">No cash has been received yet.</p>}
+    </section>
+  )
+}
+
 function MoneyCalendar({ projects, month, onMonth }) {
   const events = useMemo(() => collectEvents(projects), [projects])
   const cells = monthCells(month)
   const label = month.toLocaleDateString("en-US", { month: "long", year: "numeric" })
-  const selected = events.filter((event) => event.date.slice(0, 7) === iso(month).slice(0, 7))
+  const selected = events.filter((event) => event.date && event.date.slice(0, 7) === iso(month).slice(0, 7))
   return (
     <section className="draws-money">
       <div className="cal-head">
@@ -284,7 +527,7 @@ function MoneyCalendar({ projects, month, onMonth }) {
         {selected.map((event) => (
           <li key={event.id}>{shortDate(event.date)} · {event.address} · {event.title} · {event.kind === "forecast" ? "Forecast" : "Received"} {cash(event.amount)}</li>
         ))}
-        {!selected.length && <li>Nothing forecasted or received this month.</li>}
+        {!selected.length && <li>Nothing with a date falls in this month. Received cash without a date is listed above.</li>}
       </ul>
     </section>
   )
@@ -316,7 +559,7 @@ function MoneyTimeline({ projects }) {
         <b>{cash(receivedTotal)}</b>
       </div>
       {received.map((event) => (
-        <div key={event.id} className="draw-week-row"><span>{shortDate(event.date)} · {event.address}</span><span>{event.title}</span><b>{cash(event.amount)}</b></div>
+        <div key={event.id} className="draw-week-row"><span>{event.date ? `${shortDate(event.date)} · ` : ""}{event.address}</span><span>{event.title}</span><b>{cash(event.amount)}</b></div>
       ))}
       {!received.length && <p className="draws-empty">No draws received yet.</p>}
     </section>
@@ -347,6 +590,9 @@ function buildProjects(payload) {
       scopeLines: property.scopeLines || [],
       lines,
       schedule,
+      budgetId: budget?.id || "",
+      totalBudget: rehab ?? lender ?? (lineTotal || null),
+      lenderFunding: firstNumber(budget?.fundingLimit) ?? lender,
       scheduleLabel: lender != null ? "Draw schedule" : rehab != null ? "Rehab budget" : "Draw lines",
       received,
       undrawn: schedule == null ? null : Math.max(0, schedule - received),
@@ -393,8 +639,9 @@ function collectEvents(projects) {
     for (const line of project.lines) {
       const amount = Number(line.amount) || 0
       const funded = Number(line.fundedAmount) || 0
-      if (line.status === "Funded" && line.fundedDate) {
-        events.push({ id: `${line.id}-in`, kind: "received", date: line.fundedDate, amount: funded || amount, title: line.title, address: project.address })
+      const pulled = Number(line.pulled) || funded
+      if ((line.status === "Funded" || pulled > 0) && pulled > 0) {
+        events.push({ id: `${line.id}-in`, kind: "received", date: line.fundedDate || "", amount: pulled, title: line.title, address: project.address })
       } else if (line.requestedDate && amount > funded) {
         events.push({
           id: `${line.id}-fc`,
@@ -438,6 +685,11 @@ function forecastWindow(project) {
   if (!dates.length) return ""
   const start = dates.reduce((earliest, date) => (date < earliest ? date : earliest))
   return `${fmtDay(addBiz(start, FUND_WINDOW[0]))}–${fmtDay(addBiz(start, FUND_WINDOW[1]))}`
+}
+
+function drawIndex(title) {
+  const match = String(title || "").match(/^draw\s+(\d+)$/i)
+  return match ? Number(match[1]) : 0
 }
 
 function firstNumber(...values) {

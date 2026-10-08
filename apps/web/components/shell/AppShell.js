@@ -62,6 +62,7 @@ export function AppShell({ children }) {
             <span>SynergiFund</span>
           </Link>
           <Link href="/expenses" className={pathname === "/expenses" ? "contractor-link is-on" : "contractor-link"}>Expenses</Link>
+          <Link href="/settings" className={pathname === "/settings" ? "contractor-link is-on" : "contractor-link"}>Settings</Link>
           <span className="contractor-person">{session.user.name}</span>
           <ThemeToggle />
           <button type="button" className="tool" onClick={async () => { await api("/auth/logout", { method: "POST" }); router.replace("/login"); router.refresh() }}>Logout</button>
