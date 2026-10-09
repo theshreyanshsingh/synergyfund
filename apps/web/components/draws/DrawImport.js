@@ -41,7 +41,7 @@ export function DrawImport({ job, onOpen, onChange, onReload, inputRef }) {
       const result = await api(`/draws/import/${job.id}/confirm`, { method: "POST", body: {} })
       onChange(result.import)
       await onReload()
-      onOpen(null)
+      if (!result.import?.reconciliation) onOpen(null)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -60,7 +60,9 @@ export function DrawImport({ job, onOpen, onChange, onReload, inputRef }) {
               <h2>Review imported data</h2>
               <p>
                 {job.format === "sheet"
-                  ? `${job.properties?.length || 0} properties · ${count(job, "added") || count(job, "pending")} draws ready to save`
+                  ? job.status === "Confirmed"
+                    ? `Saved ${job.properties?.length || 0} properties · ${count(job, "added")} draws added, ${count(job, "duplicate")} updated${count(job, "removed") ? `, ${count(job, "removed")} removed` : ""} · ${count(job, "lines")} line items`
+                    : `${job.properties?.length || 0} properties · ${count(job, "pending")} draws · ${(job.properties || []).reduce((total, property) => total + (property.lines?.length || 0), 0)} line items ready to save`
                   : `${count(job, "added") || count(job, "pending")} to append · ${count(job, "duplicate")} duplicates left as they are · ${count(job, "skipped")} skipped`}
               </p>
             </div>
@@ -74,6 +76,7 @@ export function DrawImport({ job, onOpen, onChange, onReload, inputRef }) {
             </div>
           </div>
           {error && <p className="draws-empty">{error}</p>}
+          {job.reconciliation && <Reconciliation check={job.reconciliation} />}
           {job.format === "sheet" ? (
             <SheetPreview job={job} />
           ) : (
@@ -112,7 +115,117 @@ export function DrawImport({ job, onOpen, onChange, onReload, inputRef }) {
   )
 }
 
+const CHECKS = [
+  ["budget", "Total budget"],
+  ["drawn", "Drawn"],
+  ["received", "Cash received"],
+  ["pending", "Pending"],
+  ["available", "Available to withdraw"],
+  ["remaining", "Remaining budget"],
+]
+
+function Reconciliation({ check }) {
+  return (
+    <div className={check.matches ? "import-check is-match" : "import-check is-off"}>
+      <p>
+        <b>{check.matches ? "Every figure matches your workbook." : `${check.differences.length} figures differ from your workbook.`}</b>
+        {" "}Checked {check.properties} properties.
+      </p>
+      <dl>
+        {CHECKS.map(([key, label]) => (
+          <div key={key}>
+            <dt>{label}</dt>
+            <dd>{money(check.app?.[key])}{check.sheet && Math.abs((check.app?.[key] || 0) - (check.sheet[key] || 0)) > 1 ? <small> · sheet {money(check.sheet[key])}</small> : null}</dd>
+          </div>
+        ))}
+      </dl>
+      {check.differences.length > 0 && (
+        <ul>
+          {check.differences.slice(0, 20).map((item) => (
+            <li key={`${item.address}-${item.field}`}>{item.address} · {item.field}: app {money(item.app)}, sheet {money(item.sheet)}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function money(value) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(value) || 0)
+}
+
 function SheetPreview({ job }) {
+  const [tab, setTab] = useState("lines")
+  return (
+    <>
+      <div className="seg import-tabs">
+        <button type="button" className={tab === "lines" ? "on" : ""} onClick={() => setTab("lines")}>Line items</button>
+        <button type="button" className={tab === "sheet" ? "on" : ""} onClick={() => setTab("sheet")}>Dashboard sheet</button>
+      </div>
+      {tab === "lines" ? <LinePreview properties={job.properties || []} /> : <DashboardPreview job={job} />}
+    </>
+  )
+}
+
+function LinePreview({ properties }) {
+  const [open, setOpen] = useState("")
+  const missing = properties.filter((property) => !property.lines?.length)
+  const off = properties.filter((property) => property.lines?.length && Math.abs(lineBudget(property) - (Number(property.budget) || 0)) > 1)
+  return (
+    <div className="import-lines">
+      <p className={missing.length || off.length ? "import-lines-note is-warn" : "import-lines-note"}>
+        {missing.length || off.length
+          ? [missing.length ? `${missing.length} ${missing.length === 1 ? "property has" : "properties have"} no line items in its tab` : "", off.length ? `${off.length} where the lines don't add up to the budget` : ""].filter(Boolean).join(" · ")
+          : `Every property's line items add up to its budget.`}
+      </p>
+      {properties.map((property) => {
+        const total = lineBudget(property)
+        const matches = property.lines?.length && Math.abs(total - (Number(property.budget) || 0)) <= 1
+        const isOpen = open === property.address
+        return (
+          <div key={property.address} className={isOpen ? "import-line-card is-open" : "import-line-card"}>
+            <button type="button" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? "" : property.address)}>
+              <span className="import-line-name"><b>{property.address}</b><small>{property.city}</small></span>
+              <span><small>Line items</small>{property.lines?.length || 0}</span>
+              <span><small>Budget</small>{money(property.budget)}</span>
+              <span><small>Draws</small>{property.draws}{property.pending ? ` + ${property.pendingTitle} pending` : ""}</span>
+              <em className={matches ? "is-ok" : "is-warn"}>{!property.lines?.length ? "No lines" : matches ? "Adds up" : `Lines ${money(total)}`}</em>
+            </button>
+            {isOpen && (
+              <div className="excel-wrap import-line-table">
+                <table className="excel-sheet">
+                  <thead><tr><th className="row-number">#</th><th>Line item</th><th>Description</th><th className="num">Budget</th><th className="num">Drawn</th><th className="num">Pending</th><th className="num">Remaining</th></tr></thead>
+                  <tbody>
+                    {(property.lines || []).map((line, index) => {
+                      const remaining = line.budget == null ? null : line.budget - line.drawn - line.pending
+                      return (
+                        <tr key={`${line.title}-${index}`}>
+                          <th className="row-number">{index + 1}</th>
+                          <td>{line.title}</td>
+                          <td className="import-line-description">{line.description}</td>
+                          <td className="num">{line.budget == null ? "" : money(line.budget)}</td>
+                          <td className="num">{line.drawn ? money(line.drawn) : ""}</td>
+                          <td className="num">{line.pending ? money(line.pending) : ""}</td>
+                          <td className={remaining < -0.5 ? "num is-over" : "num"}>{remaining == null ? "" : money(remaining)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function lineBudget(property) {
+  return (property.lines || []).reduce((total, line) => total + (Number(line.budget) || 0), 0)
+}
+
+function DashboardPreview({ job }) {
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [hidden, setHidden] = useState([])
   const columns = (job.columns || []).map((label, index) => ({ id: String(index), label: label || `Column ${index + 1}`, index }))

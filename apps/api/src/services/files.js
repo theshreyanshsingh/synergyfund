@@ -125,9 +125,15 @@ export async function materializeStoredFile(file) {
   return { path: temp, cleanup: () => fs.promises.unlink(temp).catch(() => {}) }
 }
 
+const SAFE_INLINE = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/heic", "application/pdf", "text/plain"])
+
 export async function sendStoredFile(res, file, { download = false } = {}) {
-  res.setHeader("Content-Type", file.mime || "application/octet-stream")
-  res.setHeader("Content-Disposition", `${download ? "attachment" : "inline"}; filename="${safeHeaderName(file.name)}"`)
+  const mime = String(file.mime || "").toLowerCase().split(";")[0].trim()
+  const inline = !download && SAFE_INLINE.has(mime)
+  res.setHeader("Content-Type", inline ? mime : "application/octet-stream")
+  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${safeHeaderName(file.name)}"`)
+  res.setHeader("X-Content-Type-Options", "nosniff")
+  if (mime !== "application/pdf") res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'")
   const stream = await openStoredStream(file)
   stream.on("error", () => {
     if (!res.headersSent) res.status(404).end()

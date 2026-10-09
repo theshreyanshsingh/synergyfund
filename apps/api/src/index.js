@@ -1,6 +1,7 @@
 import dotenv from "dotenv"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import http from "node:http"
 import express from "express"
 import cookieParser from "cookie-parser"
 import cors from "cors"
@@ -13,6 +14,8 @@ import { documentsRouter } from "./routes/documents.js"
 import { workspaceRouter } from "./routes/workspace.js"
 import { pushRouter } from "./routes/push.js"
 import { agentRouter } from "./routes/agent.js"
+import { chatRouter } from "./routes/chat.js"
+import { allowedOrigins, attachChatSockets } from "./services/chatHub.js"
 import { requireAuth } from "./middleware/auth.js"
 import { trackActivity } from "./middleware/activity.js"
 import { seedIfEmpty } from "./services/seed.js"
@@ -21,7 +24,7 @@ const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../
 dotenv.config({ path: path.join(repoRoot, ".env"), quiet: true })
 
 const app = express()
-app.use(cors({ origin: process.env.WEB_ORIGIN || "http://localhost:3000", credentials: true }))
+app.use(cors({ origin: allowedOrigins(), credentials: true }))
 app.use(cookieParser())
 app.use(express.json({ limit: "2mb" }))
 
@@ -37,6 +40,7 @@ api.use("/draws", drawsRouter)
 api.use("/documents", documentsRouter)
 api.use("/push", pushRouter)
 api.use("/agent", agentRouter)
+api.use("/chat", chatRouter)
 api.use(workspaceRouter)
 app.use(api)
 
@@ -52,6 +56,8 @@ app.use((error, req, res, next) => {
 const port = Number(process.env.PORT || 4000)
 await mongoose.connect(process.env.MONGODB_URI)
 await seedIfEmpty()
-app.listen(port, () => {
+const server = http.createServer(app)
+attachChatSockets(server)
+server.listen(port, () => {
   console.log(`SynergiFund API on ${port}`)
 })

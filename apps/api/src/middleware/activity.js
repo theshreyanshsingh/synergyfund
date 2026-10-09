@@ -20,8 +20,8 @@ const RESOURCES = {
 }
 const VERBS = { POST: "changed", PUT: "updated", PATCH: "updated", DELETE: "removed" }
 
-function fallbackTitle(req) {
-  const resource = RESOURCES[req.path.split("/").filter(Boolean)[0]] || "Record"
+function fallbackTitle(req, path) {
+  const resource = RESOURCES[path.split("/").filter(Boolean)[0]] || "Record"
   return `${resource} ${VERBS[req.method] || "changed"}`
 }
 
@@ -36,9 +36,11 @@ export function trackActivity(req, res, next) {
     next()
     return
   }
+  const path = req.path
   res.on("finish", () => {
     if (res.statusCode >= 400 || !req.user || activityRecorded(req.user)) return
-    Activity.create({ actorId: req.user._id, actorName: req.user.name, title: fallbackTitle(req), detail: fallbackDetail(req) }).catch((error) => console.error("Activity log failed", error))
+    if (path.startsWith("/chat/")) return
+    Activity.create({ actorId: req.user._id, actorName: req.user.name, title: fallbackTitle(req, path), detail: fallbackDetail(req) }).catch((error) => console.error("Activity log failed", error))
   })
   next()
 }

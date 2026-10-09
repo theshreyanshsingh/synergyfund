@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
+import { can, PERMISSIONS } from "@synergifund/shared"
 import { useSession } from "./Providers"
 import { Sidebar } from "./Sidebar"
 import { CommandPalette } from "./CommandPalette"
@@ -28,7 +29,7 @@ export function AppShell({ children }) {
 
   useEffect(() => {
     if (session?.user?.role !== "contractor") return
-    const allowed = pathname === "/properties" || pathname.startsWith("/properties/") || pathname === "/expenses" || pathname === "/settings"
+    const allowed = pathname === "/properties" || pathname.startsWith("/properties/") || pathname === "/expenses" || pathname === "/settings" || pathname === "/chat"
     if (!allowed) router.replace("/properties")
   }, [pathname, session, router])
 
@@ -62,6 +63,7 @@ export function AppShell({ children }) {
             <span>SynergiFund</span>
           </Link>
           <Link href="/expenses" className={pathname === "/expenses" ? "contractor-link is-on" : "contractor-link"}>Expenses</Link>
+          {can(session.user, PERMISSIONS.chatUse) && <Link href="/chat" className={pathname === "/chat" ? "contractor-link is-on" : "contractor-link"}>Chat</Link>}
           <Link href="/settings" className={pathname === "/settings" ? "contractor-link is-on" : "contractor-link"}>Settings</Link>
           <span className="contractor-person">{session.user.name}</span>
           <ThemeToggle />

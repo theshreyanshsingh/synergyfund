@@ -29,7 +29,7 @@ documentsRouter.get(
   "/",
   requirePermission("documents.read"),
   asyncHandler(async (req, res) => {
-    const filter = {}
+    const filter = { kind: { $ne: "chat" } }
     if (req.user.role === "contractor") {
       const properties = await Property.find(propertyFilter(req.user)).select("_id")
       filter.propertyId = { $in: properties.map((property) => property._id) }
@@ -63,7 +63,7 @@ documentsRouter.get(
   requirePermission("documents.read"),
   asyncHandler(async (req, res) => {
     const file = await DocumentFile.findById(req.params.id)
-    if (!file) {
+    if (!file || file.kind === "chat") {
       sendError(res, 404, "That file is not available.")
       return
     }
@@ -76,7 +76,7 @@ documentsRouter.get(
   requirePermission("documents.read"),
   asyncHandler(async (req, res) => {
     const file = await DocumentFile.findById(req.params.id)
-    if (!file) {
+    if (!file || file.kind === "chat") {
       sendError(res, 404, "That file is not available.")
       return
     }
@@ -113,7 +113,7 @@ documentsRouter.get(
   requirePermission("documents.read"),
   asyncHandler(async (req, res) => {
     const file = await DocumentFile.findById(req.params.id)
-    if (!file) {
+    if (!file || file.kind === "chat") {
       sendError(res, 404, "That file is not available.")
       return
     }
@@ -131,7 +131,7 @@ documentsRouter.delete(
   requirePermission("documents.delete"),
   asyncHandler(async (req, res) => {
     const file = await DocumentFile.findById(req.params.id)
-    if (!file) {
+    if (!file || file.kind === "chat") {
       sendError(res, 404, "That file is not available.")
       return
     }

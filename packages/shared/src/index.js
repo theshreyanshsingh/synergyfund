@@ -30,6 +30,7 @@ export const PERMISSIONS = {
   tasksEdit: "tasks.edit",
   tasksAssign: "tasks.assign",
   tasksManage: "tasks.manage",
+  chatUse: "chat.use",
 }
 
 const all = Object.values(PERMISSIONS)
@@ -58,9 +59,11 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.agentAsk,
     PERMISSIONS.tasksEdit,
     PERMISSIONS.activityRead,
+    PERMISSIONS.chatUse,
   ],
   finance: [
     ...readBooks,
+    PERMISSIONS.chatUse,
     PERMISSIONS.internalPricing,
     PERMISSIONS.expensesApprove,
     PERMISSIONS.drawsWrite,
@@ -74,6 +77,7 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.agentAsk,
     PERMISSIONS.tasksEdit,
     PERMISSIONS.activityRead,
+    PERMISSIONS.chatUse,
   ],
   developer: [
     PERMISSIONS.propertiesRead,
@@ -84,14 +88,16 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.agentAsk,
     PERMISSIONS.activityRead,
     PERMISSIONS.drawsRead,
+    PERMISSIONS.chatUse,
   ],
-  investor: readBooks,
+  investor: [...readBooks, PERMISSIONS.chatUse],
   lender: [
     PERMISSIONS.propertiesRead,
     PERMISSIONS.drawsRead,
     PERMISSIONS.documentsRead,
     PERMISSIONS.photosRead,
     PERMISSIONS.agentAsk,
+    PERMISSIONS.chatUse,
   ],
 }
 
@@ -152,6 +158,7 @@ export const PERMISSION_CATALOG = [
   { group: "People", id: PERMISSIONS.membersManage, label: "Manage members", detail: "Invite people and set what they can do." },
   { group: "People", id: PERMISSIONS.superAdmin, label: "Super admin", detail: "Change or remove an admin, and grant every permission." },
   { group: "People", id: PERMISSIONS.activityRead, label: "See activity", detail: "Read the activity log and notifications." },
+  { group: "Chat", id: PERMISSIONS.chatUse, label: "Use chat", detail: "Read and send team chat, property rooms and direct messages. Turn off to hide Chat for this person." },
   { group: "Knowledge", id: PERMISSIONS.agentAsk, label: "Ask the knowledge base", detail: "Question records this person is allowed to see." },
 ]
 
@@ -222,6 +229,7 @@ export function initials(name = "") {
 
 export const NAV = [
   { href: "/knowledge", label: "Agent", icon: "spark", permission: PERMISSIONS.agentAsk, badge: "NEW", zone: "primary" },
+  { href: "/chat", label: "Chat", icon: "chat", permission: PERMISSIONS.chatUse, zone: "primary", countKey: "chat" },
   { href: "/notifications", label: "Notifications", icon: "bell", permission: PERMISSIONS.activityRead, zone: "primary", countKey: "notifications" },
   { href: "/draws", label: "Draws", icon: "layers", permission: PERMISSIONS.drawsRead, zone: "primary" },
   { href: "/overview", label: "Overview", icon: "grid", permission: PERMISSIONS.propertiesRead, section: "Plan your day" },
@@ -237,7 +245,7 @@ export const NAV = [
   { href: "/members", label: "Members", icon: "users", permission: PERMISSIONS.membersManage, section: "Team" },
 ]
 
-const CONTRACTOR_NAV = new Set(["/properties", "/expenses"])
+const CONTRACTOR_NAV = new Set(["/properties", "/expenses", "/chat"])
 
 export function navFor(user) {
   const items = NAV.filter((item) => !item.permission || can(user, item.permission))
@@ -259,4 +267,57 @@ export function chatTitleFromPrompt(prompt = "") {
   if (!text) return "New chat"
   const short = text.length > 60 ? `${text.slice(0, 60).replace(/\s+\S*$/, "")}…` : text
   return short.charAt(0).toUpperCase() + short.slice(1)
+}
+
+function amountOf(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : 0
+}
+
+const FUNDED_STATUSES = new Set(["funded", "partial", "received", "paid"])
+
+export function isPendingDraw(draw) {
+  if (!draw) return false
+  if (Number(draw.fundedAmount) > 0) return false
+  return !FUNDED_STATUSES.has(String(draw.status || "").trim().toLowerCase())
+}
+
+export function drawPulled(draw) {
+  if (isPendingDraw(draw)) return 0
+  if (draw?.fundedAmount != null) return amountOf(draw.fundedAmount)
+  return draw?.status === "Funded" ? amountOf(draw.amount) : 0
+}
+
+export function drawFigures({ budget, lenderFunding, fundedPercent, draws = [] }) {
+  const pendingDraws = draws.filter(isPendingDraw)
+  const drawnDraws = draws.filter((draw) => !isPendingDraw(draw))
+  const drawn = drawnDraws.reduce((sum, draw) => sum + amountOf(draw.amount), 0)
+  const received = drawnDraws.reduce((sum, draw) => sum + drawPulled(draw), 0)
+  const pending = pendingDraws.reduce((sum, draw) => sum + amountOf(draw.amount), 0)
+  const total = budget == null || budget === "" ? null : amountOf(budget)
+  const lender = lenderFunding == null || lenderFunding === "" ? total : amountOf(lenderFunding)
+  const share = fundedPercent != null && fundedPercent !== "" ? amountOf(fundedPercent) / 100 : drawn > 0 ? received / drawn : 1
+  const available = lender == null ? null : Math.max(0, lender - received)
+  return {
+    budget: total,
+    lenderFunding: lender,
+    drawn,
+    received,
+    pending,
+    available,
+    availableAfterPending: available == null ? null : Math.max(0, available - pending * share),
+    remaining: total == null ? null : Math.max(0, total - drawn - pending),
+    budgetUsed: total ? drawn / total : null,
+    fundsAvailable: lender ? (available ?? 0) / lender : null,
+    fundedShare: share,
+    drawCount: drawnDraws.length,
+    pendingCount: pendingDraws.length,
+  }
+}
+
+export function drawHealth(figures) {
+  if (figures.pending > 0) return "Pending draw"
+  if (!figures.drawn) return "Not started"
+  if (figures.fundsAvailable != null && figures.fundsAvailable < 0.15) return "Low funds"
+  return "In progress"
 }

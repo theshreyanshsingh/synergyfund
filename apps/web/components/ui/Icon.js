@@ -45,4 +45,12 @@ function Globe() { return <><circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h1
 function More() { return <><circle cx="5" cy="12" r="1.4" fill="currentColor" /><circle cx="12" cy="12" r="1.4" fill="currentColor" /><circle cx="19" cy="12" r="1.4" fill="currentColor" /></> }
 function Close() { return <path d="M6 6l12 12M18 6 6 18" /> }
 
-const icons = { search: Search, spark: Spark, bell: Bell, home: Home, chat: Chat, grid: Grid, check: Check, card: Card, calendar: Calendar, building: Building, layers: Layers, chart: Chart, bank: Bank, receipt: Receipt, file: File, pulse: Pulse, alert: Alert, users: Users, chevron: Chevron, plus: Plus, filter: Filter, sliders: Sliders, logout: Logout, settings: Settings, help: Help, sun: Sun, moon: Moon, menu: Menu, more: More, close: Close, mic: Mic, stop: Stop, arrowUp: ArrowUp, tick: Tick, history: History, trash: Trash, globe: Globe }
+function Hash() { return <path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16" /> }
+function Lock() { return <><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></> }
+function Paperclip() { return <path d="m20 11.5-7.8 7.8a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8" /> }
+function Smile() { return <><circle cx="12" cy="12" r="9" /><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01" /></> }
+function At() { return <><circle cx="12" cy="12" r="4" /><path d="M16 8v5a2.5 2.5 0 0 0 5 0v-1a9 9 0 1 0-3.5 7.1" /></> }
+function Reply() { return <path d="M5 6h14v9H9l-4 3V6zM9 10h6" /> }
+function Edit() { return <path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4" /> }
+function Back() { return <path d="M15 18l-6-6 6-6" /> }
+const icons = { hash: Hash, lock: Lock, paperclip: Paperclip, smile: Smile, at: At, reply: Reply, edit: Edit, back: Back, search: Search, spark: Spark, bell: Bell, home: Home, chat: Chat, grid: Grid, check: Check, card: Card, calendar: Calendar, building: Building, layers: Layers, chart: Chart, bank: Bank, receipt: Receipt, file: File, pulse: Pulse, alert: Alert, users: Users, chevron: Chevron, plus: Plus, filter: Filter, sliders: Sliders, logout: Logout, settings: Settings, help: Help, sun: Sun, moon: Moon, menu: Menu, more: More, close: Close, mic: Mic, stop: Stop, arrowUp: ArrowUp, tick: Tick, history: History, trash: Trash, globe: Globe }

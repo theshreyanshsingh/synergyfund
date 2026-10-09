@@ -27,6 +27,10 @@ export async function requireAuth(req, res, next) {
       return
     }
     const payload = jwt.verify(token, process.env.JWT_SECRET)
+    if (payload.purpose) {
+      sendError(res, 401, "Sign in to continue.")
+      return
+    }
     const user = await User.findById(payload.sub)
     if (!user) {
       sendError(res, 401, "Sign in to continue.")

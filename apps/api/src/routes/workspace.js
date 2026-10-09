@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { can, ensureTaskPermissions, isRole, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
+import { can, drawFigures, drawPulled, ensureTaskPermissions, isRole, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
 import {
   Activity,
   AgentThread,
@@ -26,6 +26,8 @@ import { loanPaymentDates, nextPaymentDate, paymentDates } from "../services/sch
 import { saveUploadedFile, upload } from "../services/files.js"
 import { ensureLenders, lenderForName, presentLender } from "../services/lenders.js"
 import { changeSummary, notify, notifyPropertyAccess, recordActivity } from "../services/notify.js"
+import { unreadTotal, usesChat } from "../services/chat.js"
+import { disconnectChat, refreshChat } from "../services/chatHub.js"
 
 export const workspaceRouter = Router()
 
@@ -67,12 +69,17 @@ workspaceRouter.get(
     const rehab = sum(properties, "rehabBudget")
     const rent = sum(properties, "actualRent")
     const monthlyMortgage = loans.reduce((total, loan) => total + Number(loan.payment || 0), 0)
-    const received = draws.filter((draw) => draw.status === "Funded").reduce((total, draw) => total + Number(draw.fundedAmount ?? draw.amount ?? 0), 0)
-    const undrawn = properties.reduce((total, property) => {
-      const schedule = drawSchedule(property, budgets, draws)
-      const funded = draws.filter((draw) => String(draw.propertyId) === String(property._id) && draw.status === "Funded").reduce((sum, draw) => sum + Number(draw.fundedAmount ?? draw.amount ?? 0), 0)
-      return schedule == null ? total : total + Math.max(0, schedule - funded)
-    }, 0)
+    const drawTotals = properties.reduce((total, property) => {
+      const budget = budgets.find((item) => String(item.propertyId) === String(property._id))
+      const figures = drawFigures({
+        budget: property.rehabBudget ?? budget?.budget,
+        lenderFunding: budget?.fundingLimit,
+        fundedPercent: budget?.fundingPercent,
+        draws: draws.filter((draw) => String(draw.propertyId) === String(property._id)),
+      })
+      return { received: total.received + figures.received, remaining: total.remaining + (figures.remaining || 0) }
+    }, { received: 0, remaining: 0 })
+    const received = drawTotals.received
     const rehabCosts = expenses.filter((expense) => expense.costTreatment !== "Exclude from construction margin")
     const spent = rehabCosts.reduce((total, expense) => total + Number(expense.amount || 0), 0)
     const stages = countBy(properties, (property) => property.stage || "Stage not set")
@@ -91,8 +98,8 @@ workspaceRouter.get(
       ]),
     ]
     if (req.permissions.includes("draws.read")) {
-      cards.push(lineCard("Draws", currency(received), "Lender cash received on the funded date", `${currency(undrawn)} still undrawn`, true, [
-        series("Received", draws.filter((draw) => draw.status === "Funded").map((draw) => ({ at: draw.fundedDate || draw.createdAt, amount: Number(draw.fundedAmount ?? draw.amount ?? 0) })), months, days),
+      cards.push(lineCard("Draws", currency(received), "Lender cash received on the funded date", `${currency(drawTotals.remaining)} budget remaining`, true, [
+        series("Received", draws.filter((draw) => drawPulled(draw) > 0).map((draw) => ({ at: draw.fundedDate || draw.createdAt, amount: drawPulled(draw) })), months, days),
       ]))
     }
     cards.push(lineCard("Rehab", currency(Math.max(0, rehab - spent)), "Rehab budget recorded against costs posted", `${currency(rehab)} budget · ${currency(spent)} posted`, true, [
@@ -749,7 +756,7 @@ workspaceRouter.post(
       extraPermissions: access.extraPermissions,
       deniedPermissions: access.deniedPermissions,
     })
-    const assigned = access.role === "contractor" ? await syncAssignments(user, req.body.propertyIds) : []
+    const assigned = access.role === "admin" ? [] : await syncAssignments(user, req.body.propertyIds)
     const roleName = ROLES.find((item) => item.id === user.role)?.label || user.role
     const mail = await notify({
       userIds: [user._id],
@@ -802,10 +809,12 @@ workspaceRouter.patch(
     if (typeof req.body.title === "string") user.title = req.body.title.trim()
     await user.save()
     let mail = { status: "Skipped" }
-    if ("propertyIds" in req.body || access.role !== "contractor") {
-      const added = await syncAssignments(user, access.role === "contractor" ? req.body.propertyIds : [])
+    if ("propertyIds" in req.body || access.role === "admin") {
+      const added = await syncAssignments(user, access.role === "admin" ? [] : req.body.propertyIds)
       if (added.length) mail = await notifyPropertyAccess({ actor: req.user, person: user, properties: added })
     }
+    if (usesChat(user)) refreshChat([user._id])
+    else disconnectChat([user._id])
     await recordActivity({ user: req.user, title: "Member access updated", detail: user.name })
     res.json({ user: publicUser(user), mail })
   }),
@@ -871,6 +880,7 @@ workspaceRouter.delete(
     }
     await Property.updateMany({ assignedUserIds: user._id }, { $pull: { assignedUserIds: user._id } })
     await user.deleteOne()
+    disconnectChat([user._id])
     await recordActivity({ user: req.user, title: "Member removed", detail: user.name })
     res.json({ ok: true })
   }),
@@ -1084,11 +1094,12 @@ workspaceRouter.get(
 workspaceRouter.get(
   "/counts",
   asyncHandler(async (req, res) => {
-    const [unread, conversations] = await Promise.all([
+    const [unread, conversations, chat] = await Promise.all([
       Notification.countDocuments({ userId: req.user._id, read: false }),
       AgentThread.countDocuments({ userId: req.user._id }),
+      unreadTotal(req.user).catch(() => 0),
     ])
-    res.json({ notifications: unread, conversations })
+    res.json({ notifications: unread, conversations, chat })
   }),
 )
 

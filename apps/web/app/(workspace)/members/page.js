@@ -54,7 +54,7 @@ export default function MembersPage() {
   }
 
   function chooseRole(role) {
-    setDraft((current) => ({ ...current, role, permissions: [...(ROLE_PERMISSIONS[role] || [])], propertyIds: role === "contractor" ? current.propertyIds || [] : [] }))
+    setDraft((current) => ({ ...current, role, permissions: [...(ROLE_PERMISSIONS[role] || [])], propertyIds: role === "admin" ? [] : current.propertyIds || [] }))
   }
 
   function toggleProperty(id) {
@@ -76,7 +76,7 @@ export default function MembersPage() {
       } else {
         const updated = await api(`/members/${draft.id}`, {
           method: "PATCH",
-          body: { role: draft.role, title: draft.title, permissions: draft.permissions, ...(draft.role === "contractor" ? { propertyIds: draft.propertyIds || [] } : {}) },
+          body: { role: draft.role, title: draft.title, permissions: draft.permissions, propertyIds: draft.role === "admin" ? [] : draft.propertyIds || [] },
         })
         if (updated.mail && updated.mail.status !== "Skipped") {
           setNotice(updated.mail.status === "Sent"
@@ -218,9 +218,14 @@ export default function MembersPage() {
                   ))}
                 </div>
               </div>
-              {draft.role === "contractor" && (
+              {draft.role !== "admin" && (
                 <div className="role-block">
                   <span>Assigned properties</span>
+                  <p className="muted assign-hint">
+                    {draft.role === "contractor"
+                      ? "They can only open the properties ticked here, and they join each one's chat room."
+                      : "They join the chat room for each property ticked here. Admins are in every property room."}
+                  </p>
                   <div className="assign-list">
                     {(properties.data?.items || []).map((property) => (
                       <label key={property.id}>

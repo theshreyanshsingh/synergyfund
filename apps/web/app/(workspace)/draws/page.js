@@ -1,14 +1,13 @@
 "use client"
 
 import Link from "next/link"
-import { Fragment, useMemo, useRef, useState } from "react"
-import { can } from "@synergifund/shared"
+import { useMemo, useRef, useState } from "react"
+import { can, drawFigures, drawHealth, drawPulled, isPendingDraw } from "@synergifund/shared"
 import { DrawImport } from "../../../components/draws/DrawImport"
 import { FormSheet, InfoSheet } from "../../../components/ui/FormSheet"
 import { HeaderActions } from "../../../components/ui/HeaderActions"
 import { Icon } from "../../../components/ui/Icon"
 import { PageSpinner } from "../../../components/ui/Spinner"
-import { StatusPill } from "../../../components/ui/StatusPill"
 import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
 import { useApi } from "../../../lib/useApi"
@@ -23,10 +22,14 @@ export default function DrawsPage() {
   const canImport = writable && can(session.user, "imports.run")
   const importInput = useRef(null)
   const [workbook, setWorkbook] = useState(null)
-  const [view, setView] = useState("sheet")
+  const [view, setView] = useState("properties")
   const [moneyView, setMoneyView] = useState("calendar")
-  const [sort, setSort] = useState("forecast")
-  const [openId, setOpenId] = useState("")
+  const [sort, setSort] = useState("pending")
+  const [query, setQuery] = useState("")
+  const [selecting, setSelecting] = useState(false)
+  const [selected, setSelected] = useState([])
+  const [bulkBusy, setBulkBusy] = useState("")
+  const [bulkNote, setBulkNote] = useState(null)
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState("")
   const [report, setReport] = useState(null)
@@ -36,8 +39,8 @@ export default function DrawsPage() {
   })
 
   const projects = useMemo(
-    () => sortProjects(buildProjects(data.data), sort),
-    [data.data, sort],
+    () => sortProjects(buildProjects(data.data), sort, query),
+    [data.data, sort, query],
   )
   const totals = useMemo(() => sumProjects(projects), [projects])
 
@@ -60,8 +63,63 @@ export default function DrawsPage() {
   }
 
   async function savePulled(id, fundedAmount) {
+    const draw = (data.data?.draws || []).find((item) => item.id === id)
+    const zero = !String(fundedAmount ?? "").replace(/[$,\s0.]/g, "")
+    if (zero && draw && (draw.status === "Funded" || draw.status === "Partial") && !window.confirm(`Set ${draw.title} to $0 received? It will move back to pending.`)) return
     await api(`/draws/${id}`, { method: "PATCH", body: { fundedAmount } })
     data.reload()
+  }
+
+  function toggleSelected(id) {
+    setSelected((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
+  }
+
+  function stopSelecting() {
+    setSelecting(false)
+    setSelected([])
+  }
+
+  async function clearSelected() {
+    const chosen = projects.filter((project) => selected.includes(project.id))
+    if (!chosen.length) return
+    const lines = chosen.reduce((total, project) => total + project.scopeLines.length, 0)
+    const draws = chosen.reduce((total, project) => total + project.draws.length, 0)
+    if (!window.confirm(`Clear draw data for ${chosen.length === 1 ? chosen[0].address : `${chosen.length} properties`}?\n\nThis deletes ${draws} draws and ${lines} line items. The properties, budgets and lender funding stay. You can import the workbook again afterwards.`)) return
+    setBulkBusy("clear")
+    setBulkNote(null)
+    try {
+      const result = await api("/draws/clear", { method: "POST", body: { propertyIds: chosen.map((project) => project.id) } })
+      setBulkNote({ ok: true, text: `Cleared ${result.draws} draws and ${result.lines} line items from ${result.properties} ${result.properties === 1 ? "property" : "properties"}.` })
+      stopSelecting()
+      await data.reload()
+    } catch (err) {
+      setBulkNote({ ok: false, text: err.message })
+    } finally {
+      setBulkBusy("")
+    }
+  }
+
+  async function deleteSelected() {
+    const chosen = projects.filter((project) => selected.includes(project.id))
+    if (!chosen.length) return
+    const names = chosen.slice(0, 5).map((project) => project.address).join("\n")
+    if (!window.confirm(`Delete ${chosen.length === 1 ? "this property" : `${chosen.length} properties`} for good?\n\n${names}${chosen.length > 5 ? `\n…and ${chosen.length - 5} more` : ""}\n\nThis removes each property with its draws, costs, documents links and chat room. It cannot be undone.`)) return
+    setBulkBusy("delete")
+    setBulkNote(null)
+    const failed = []
+    for (const project of chosen) {
+      try {
+        await api(`/properties/${project.id}`, { method: "DELETE" })
+      } catch (err) {
+        failed.push(`${project.address}: ${err.message}`)
+      }
+    }
+    setBulkBusy("")
+    setBulkNote(failed.length
+      ? { ok: false, text: `${chosen.length - failed.length} deleted. ${failed.length} failed — ${failed.join("; ")}` }
+      : { ok: true, text: `Deleted ${chosen.length} ${chosen.length === 1 ? "property" : "properties"}.` })
+    stopSelecting()
+    await data.reload()
   }
 
   async function removeProperty(project) {
@@ -74,8 +132,11 @@ export default function DrawsPage() {
     const text = String(value ?? "").trim()
     if (!text) {
       if (column === "budget") await api(`/properties/${project.id}`, { method: "PATCH", body: { rehabBudget: null } })
-      else if (column === "funding" && project.budgetId) await api(`/draws/budgets/${project.budgetId}`, { method: "PATCH", body: { fundingLimit: 0 } })
-      else if (draw) await api(`/draws/${draw.id}`, { method: "DELETE" })
+      else if (column === "funding" && project.budgetId) await api(`/draws/budgets/${project.budgetId}`, { method: "PATCH", body: { fundingLimit: null } })
+      else if (draw) {
+        if (!window.confirm(`Delete ${draw.title} from ${project.address}?`)) return
+        await api(`/draws/${draw.id}`, { method: "DELETE" })
+      }
       await data.reload()
       return
     }
@@ -141,30 +202,57 @@ export default function DrawsPage() {
       </div>
 
       <div className="stats">
-        <article className="stat"><div className="stat-label">Received</div><div className="stat-value">{cash(totals.received)}</div><div className="stat-hint">Lender cash already in</div></article>
-        <article className="stat"><div className="stat-label">Forecasted</div><div className="stat-value">{cash(totals.forecast)}</div><div className="stat-hint">Open draws with a finish date</div></article>
-        <article className="stat"><div className="stat-label">Undrawn</div><div className="stat-value">{cash(totals.remaining)}</div><div className="stat-hint">{cash(totals.total)} on the schedules</div></article>
-        <article className="stat"><div className="stat-label">Rehab left</div><div className="stat-value">{cash(totals.rehabLeft)}</div><div className="stat-hint">{cash(totals.spent)} posted in costs</div></article>
+        <article className="stat"><div className="stat-label">Remaining</div><div className="stat-value">{cash(totals.remaining)}</div><div className="stat-hint">Budget left after drawn and pending</div></article>
+        <article className="stat"><div className="stat-label">Forecasted</div><div className="stat-value">{cash(totals.forecast)}</div><div className="stat-hint">{cash(totals.pending)} requested, not funded yet</div></article>
+        <article className="stat"><div className="stat-label">Received</div><div className="stat-value">{cash(totals.received)}</div><div className="stat-hint">{cash(totals.available)} available to withdraw</div></article>
+        <article className="stat"><div className="stat-label">Total budget</div><div className="stat-value">{cash(totals.budget)}</div><div className="stat-hint">{cash(totals.drawn)} drawn · {Math.round(totals.used * 100)}% used</div></article>
       </div>
 
       <div className="panel draws-toolbar">
         <div className="seg">
-          <button type="button" className={view === "sheet" ? "on" : ""} onClick={() => setView("sheet")}>Sheet</button>
-          <button type="button" className={view === "properties" ? "on" : ""} onClick={() => setView("properties")}>Cards</button>
+          <button type="button" className={view === "properties" ? "on" : ""} onClick={() => setView("properties")}>Properties</button>
           <button type="button" className={view === "money" ? "on" : ""} onClick={() => setView("money")}>Money</button>
         </div>
-        {view === "properties" ? (
-          <select value={sort} onChange={(event) => setSort(event.target.value)}>
-            <option value="forecast">Money forecasted</option>
-            <option value="least">Least complete</option>
-            <option value="most">Most complete</option>
-          </select>
-        ) : view === "money" ? (
+        {view === "properties" && selecting ? (
+          <div className="draws-bulk">
+            <span><b>{selected.length}</b> selected</span>
+            <button type="button" className="import-button" onClick={() => setSelected(selected.length === projects.length ? [] : projects.map((project) => project.id))}>
+              {selected.length === projects.length ? "Select none" : "Select all"}
+            </button>
+            {writable && (
+              <button type="button" className="import-button" disabled={!selected.length || Boolean(bulkBusy)} onClick={clearSelected}>
+                {bulkBusy === "clear" ? "Clearing…" : "Clear draw data"}
+              </button>
+            )}
+            {canDeleteProperty && (
+              <button type="button" className="import-button is-danger" disabled={!selected.length || Boolean(bulkBusy)} onClick={deleteSelected}>
+                {bulkBusy === "delete" ? "Deleting…" : "Delete properties"}
+              </button>
+            )}
+            <button type="button" className="primary" onClick={stopSelecting}>Done</button>
+          </div>
+        ) : view === "properties" ? (
+          <div className="draws-filters">
+            <label className="draws-search">
+              <Icon name="search" size={14} />
+              <input value={query} placeholder="Search properties" aria-label="Search properties" onChange={(event) => setQuery(event.target.value)} />
+            </label>
+            <select value={sort} aria-label="Sort properties" onChange={(event) => setSort(event.target.value)}>
+              <option value="pending">Pending first</option>
+              <option value="remaining">Most remaining</option>
+              <option value="available">Lowest funds</option>
+              <option value="address">Address</option>
+            </select>
+            {(writable || canDeleteProperty) && projects.length > 0 && (
+              <button type="button" className="import-button" onClick={() => { setSelecting(true); setBulkNote(null) }}>Select</button>
+            )}
+          </div>
+        ) : (
           <div className="seg">
             <button type="button" className={moneyView === "calendar" ? "on" : ""} onClick={() => setMoneyView("calendar")}>Calendar</button>
             <button type="button" className={moneyView === "timeline" ? "on" : ""} onClick={() => setMoneyView("timeline")}>Timeline</button>
           </div>
-        ) : <span />}
+        )}
       </div>
 
       {canImport && (
@@ -179,24 +267,22 @@ export default function DrawsPage() {
 
       {data.error && <p className="draws-empty">{data.error}</p>}
 
-      {view === "sheet" && <DrawSheet projects={projects} writable={writable} canDelete={canDeleteProperty} onSave={saveSheetValue} onRemove={removeProperty} />}
+      {bulkNote && <p className={bulkNote.ok ? "draws-bulk-note is-ok" : "draws-bulk-note"}>{bulkNote.text}</p>}
 
       {view === "properties" && (
-        <div className="draw-board">
-          {projects.map((project) => (
-            <PropertyCard
-              key={project.id}
-              project={project}
-              open={openId === project.id}
-              writable={writable}
-              onToggle={() => setOpenId(openId === project.id ? "" : project.id)}
-              onForecast={forecast}
-              onPull={pull}
-              onPulled={savePulled}
-            />
-          ))}
-          {!projects.length && !data.error && <p className="draws-empty">No properties yet.</p>}
-        </div>
+        <DrawBoard
+          selecting={selecting}
+          selected={selected}
+          onSelect={toggleSelected}
+          projects={projects}
+          writable={writable}
+          canDelete={canDeleteProperty}
+          onSave={saveSheetValue}
+          onRemove={removeProperty}
+          onForecast={forecast}
+          onPull={pull}
+          onPulled={savePulled}
+        />
       )}
 
       {view === "money" && moneyView === "calendar" && (
@@ -230,294 +316,320 @@ export default function DrawsPage() {
   )
 }
 
-function DrawSheet({ projects, writable, canDelete, onSave, onRemove }) {
-  const [columnsOpen, setColumnsOpen] = useState(false)
-  const [hidden, setHidden] = useState([])
-  const [openId, setOpenId] = useState("")
-  const columns = [
-    { id: "property", label: "Property" },
-    { id: "budget", label: "Total Budget" },
-    { id: "funding", label: "Lender Funding" },
-    { id: "drawn", label: "Drawn to Date" },
-    { id: "pulled", label: "Cash Received" },
-    { id: "remaining", label: "Remaining" },
-    { id: "status", label: "Status" },
-    { id: "draws", label: "Draws" },
-  ]
-  const shown = columns.filter((column) => !hidden.includes(column.id))
-  const value = (project, column) => {
-    const draws = scheduledDraws(project)
-    if (column.id === "property") return project.address || project.name || "Untitled property"
-    if (column.id === "budget") return cash(project.totalBudget)
-    if (column.id === "funding") return cash(project.lenderFunding)
-    if (column.id === "drawn" || column.id === "pulled") {
-      const total = draws.reduce((sum, line) => sum + Number(column.id === "drawn" ? line.amount : line.pulled) || 0, 0)
-      return total ? cash(total) : ""
-    }
-    if (column.id === "remaining") return cash(Math.max(0, (Number(project.totalBudget) || 0) - draws.reduce((sum, line) => sum + (Number(line.amount) || 0), 0)))
-    if (column.id === "status") return project.nextAction || project.stage || "Active"
-    return ""
-  }
-  const cell = (project, column) => {
-    if (column.id === "draws") return <DrawsToggle project={project} open={openId === project.id} onToggle={() => setOpenId(openId === project.id ? "" : project.id)} />
-    const editable = writable && (column.id === "budget" || column.id === "funding")
-    if (!editable) return value(project, column)
-    return (
-      <SheetMoneyCell
-        value={column.id === "budget" ? project.totalBudget : project.lenderFunding}
-        label={`${project.address} ${column.label}`}
-        onSave={(next) => onSave({ project, column: column.id, value: next })}
-      />
-    )
-  }
-  const details = shown.filter((column) => !["property", "remaining", "draws"].includes(column.id) && (column.id !== "budget" || writable))
-  const schedule = (project) => (
-    <DrawSchedule
-      project={project}
-      writable={writable}
-      onSave={(number, draw, next) => onSave({ project, column: number, draw, value: next })}
-    />
-  )
+function DrawBoard({ projects, selecting, selected, onSelect, writable, canDelete, onSave, onRemove, onForecast, onPull, onPulled }) {
+  const [openIds, setOpenIds] = useState([])
+  const toggle = (id) => setOpenIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
+  if (!projects.length) return <p className="draws-empty">No draw data yet. Import a workbook to add it.</p>
   return (
-    <section className="draw-sheet panel">
-      <div className="sheet-tools">
-        <p><b>{projects.length}</b> properties · <b>{projects.reduce((sum, project) => sum + scheduledDraws(project).length, 0)}</b> draws{writable ? <span className="sheet-hint"> · Click a budget to edit it, or open Draws to change a draw</span> : ""}</p>
-        <div className="column-picker">
-          <button type="button" className="import-button" onClick={() => setColumnsOpen((current) => !current)}>Columns · {shown.length}</button>
-          {columnsOpen && (
-            <div className="column-menu">
-              {columns.map((column) => (
-                <label key={column.id}>
-                  <input
-                    type="checkbox"
-                    checked={!hidden.includes(column.id)}
-                    onChange={() => setHidden((current) => current.includes(column.id) ? current.filter((id) => id !== column.id) : [...current, column.id])}
-                  />
-                  {column.label}
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="excel-wrap">
-        <table className="excel-sheet">
-          <thead><tr><th className="row-number">#</th>{shown.map((column) => <th key={column.id} className={column.id === "property" ? "pin-col" : undefined}>{column.label}</th>)}</tr></thead>
-          <tbody>
-            {projects.map((project, index) => (
-              <Fragment key={project.id}>
-                <tr className={openId === project.id ? "is-open" : undefined}>
-                  <th className="row-number">{index + 1}</th>
-                  {shown.map((column) => (
-                    <td key={column.id} className={column.id === "property" ? "pin-col" : column.id === "status" || column.id === "draws" ? undefined : "num"}>
-                      {column.id === "property" ? (
-                        <span className="sheet-property">
-                          <Link href={`/properties/${project.id}`}>{value(project, column)}</Link>
-                          {canDelete && <button type="button" className="sheet-remove" onClick={() => onRemove(project)}>Remove</button>}
-                        </span>
-                      ) : cell(project, column)}
-                    </td>
-                  ))}
-                </tr>
-                {openId === project.id && (
-                  <tr className="sheet-expand">
-                    <td colSpan={shown.length + 1}>{schedule(project)}</td>
-                  </tr>
-                )}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
-        {!projects.length && <p className="draws-empty">No draw data yet. Import a workbook to add it.</p>}
-      </div>
-      <div className="sheet-list">
-        {projects.map((project) => (
-          <SheetListItem
-            key={project.id}
-            project={project}
-            name={value(project, columns[0])}
-            budget={value(project, columns[1])}
-            remaining={value(project, columns[5])}
-            fields={details}
-            cell={cell}
-            schedule={schedule}
-            canDelete={canDelete}
-            onRemove={onRemove}
-          />
-        ))}
-        {!projects.length && <p className="draws-empty">No draw data yet. Import a workbook to add it.</p>}
-      </div>
-    </section>
+    <div className="draw-board">
+      {projects.map((project) => (
+        <DrawProperty
+          key={project.id}
+          project={project}
+          open={openIds.includes(project.id)}
+          onToggle={() => (selecting ? onSelect(project.id) : toggle(project.id))}
+          selecting={selecting}
+          checked={selected.includes(project.id)}
+          onCheck={() => onSelect(project.id)}
+          writable={writable}
+          canDelete={canDelete}
+          onSave={onSave}
+          onRemove={onRemove}
+          onForecast={onForecast}
+          onPull={onPull}
+          onPulled={onPulled}
+        />
+      ))}
+    </div>
   )
 }
 
-function SheetListItem({ project, name, budget, remaining, fields, cell, schedule, canDelete, onRemove }) {
-  const [open, setOpen] = useState(false)
+function DrawProperty({ project, open, onToggle, selecting, checked, onCheck, ...actions }) {
+  const figures = project.figures
+  const used = figures.budget ? Math.min(1, figures.drawn / figures.budget) : 0
+  const queued = figures.budget ? Math.min(1 - used, figures.pending / figures.budget) : 0
+  const count = project.draws.filter((draw) => !isPendingDraw(draw)).length
   return (
-    <article className={open ? "sheet-item is-open" : "sheet-item"}>
-      <button type="button" className="sheet-item-head" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
-        <b>{name}</b>
-        <span><small>Budget</small>{budget}</span>
-        <span><small>Remaining</small>{remaining}</span>
-        <i aria-hidden="true"><Icon name="chevron" size={16} /></i>
-      </button>
-      {open && (
-        <div className="sheet-item-body">
-          {fields.length > 0 && (
-            <dl>
-              {fields.map((column) => (
-                <div key={column.id}>
-                  <dt>{column.label}</dt>
-                  <dd>{cell(project, column) || "—"}</dd>
-                </div>
-              ))}
-            </dl>
-          )}
-          {schedule(project)}
-          <div className="sheet-item-actions">
-            <Link href={`/properties/${project.id}`}>Open property</Link>
-            {canDelete && <button type="button" className="sheet-remove" onClick={() => onRemove(project)}>Remove</button>}
-          </div>
-        </div>
+    <article className={`draw-property${open && !selecting ? " is-open" : ""}${selecting ? " is-selecting" : ""}${checked ? " is-checked" : ""}`}>
+      <div className="draw-property-row">
+      {selecting && (
+        <label className="draw-select">
+          <input type="checkbox" checked={checked} onChange={onCheck} aria-label={`Select ${project.address}`} />
+        </label>
       )}
+      <button type="button" className="draw-property-head" aria-expanded={open} onClick={onToggle}>
+        <span className="draw-property-name">
+          <b>{project.address || "Untitled property"}</b>
+          <small>{[project.city, count ? `${count} ${count === 1 ? "draw" : "draws"} funded` : "No draws yet"].filter(Boolean).join(" · ")}</small>
+          <span className="draw-property-progress">
+            <em className={`draw-health ${healthTone(project.health)}`}>{project.health}</em>
+            <span className="draw-progress-bar" aria-hidden="true">
+              <i style={{ width: `${used * 100}%` }} />
+              <i className="is-pending" style={{ width: `${queued * 100}%` }} />
+            </span>
+            <small>{Math.round(used * 100)}% used</small>
+          </span>
+        </span>
+        <span className="draw-figures">
+          <Figure label="Remaining" value={figures.remaining} tone="strong" />
+          <Figure label="Total budget" value={figures.budget} />
+          <Figure label="Drawn" value={figures.drawn} />
+          <Figure label="Pulled" value={figures.received} tone="good" />
+          <Figure label="Pending" value={figures.pending} tone={figures.pending > 0 ? "warn" : "quiet"} />
+        </span>
+        <i className="draw-property-chevron" aria-hidden="true"><Icon name="chevron" size={16} /></i>
+      </button>
+      </div>
+      {open && !selecting && <DrawPropertyBody project={project} {...actions} />}
     </article>
   )
 }
 
-function DrawsToggle({ project, open, onToggle }) {
-  const draws = scheduledDraws(project)
+function Figure({ label, value, tone }) {
   return (
-    <button type="button" className="draws-toggle" aria-expanded={open} onClick={onToggle}>
-      <span>{draws.length ? `${draws.length} ${draws.length === 1 ? "draw" : "draws"}` : "No draws"}</span>
-      <DrawMeter project={project} draws={draws} />
-      <i aria-hidden="true"><Icon name="chevron" size={14} /></i>
-    </button>
-  )
-}
-
-function DrawMeter({ project, draws }) {
-  const drawn = draws.reduce((sum, line) => sum + (Number(line.amount) || 0), 0)
-  const scale = Math.max(Number(project.totalBudget) || 0, drawn)
-  return (
-    <span className="draw-meter" aria-hidden="true">
-      {scale > 0 && draws.map((line) => (
-        <i key={line.id} className={drawState(line)} style={{ width: `${((Number(line.amount) || 0) / scale) * 100}%` }} />
-      ))}
+    <span className={tone ? `draw-figure is-${tone}` : "draw-figure"}>
+      <small>{label}</small>
+      <b>{cash(value)}</b>
     </span>
   )
 }
 
-function DrawSchedule({ project, writable, onSave }) {
+function DrawPropertyBody({ project, writable, canDelete, onSave, onRemove, onForecast, onPull, onPulled }) {
+  const sheet = useMemo(() => lineSheet(project), [project])
   const [adding, setAdding] = useState(false)
+  const [managing, setManaging] = useState(false)
   const [error, setError] = useState("")
-  const draws = scheduledDraws(project)
-  const drawn = draws.reduce((sum, line) => sum + (Number(line.amount) || 0), 0)
-  const received = draws.reduce((sum, line) => sum + (Number(line.pulled) || 0), 0)
-  const budget = Number(project.totalBudget) || 0
-  const next = draws.reduce((max, line) => Math.max(max, drawIndex(line.title)), 0) + 1
+  const figures = project.figures
+  const next = project.draws.reduce((max, draw) => Math.max(max, drawIndex(draw.title)), 0) + 1
+
+  async function run(task) {
+    setError("")
+    try {
+      await task()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
 
   async function add(event) {
     const text = event.currentTarget.value.trim()
     setAdding(false)
-    if (!text) return
-    setError("")
-    try {
-      await onSave(next, null, text)
-    } catch (err) {
-      setError(err.message)
-    }
+    if (text) await run(() => onSave({ project, column: next, value: text }))
   }
 
-  async function remove(line) {
-    if (!window.confirm(`Remove ${line.title} from ${project.address}?`)) return
-    setError("")
-    try {
-      await onSave(drawIndex(line.title), line, "")
-    } catch (err) {
-      setError(err.message)
-    }
+  async function remove(draw) {
+    if (!window.confirm(`Remove ${draw.title} from ${project.address}?`)) return
+    await run(() => onSave({ project, column: drawIndex(draw.title), draw, value: "" }))
   }
+
+  const saveDraw = (draw, text) => onSave({ project, column: drawIndex(draw.title), draw, value: text })
 
   return (
-    <div className="draw-schedule">
-      <div className="draw-schedule-head">
-        <span><b>{draws.length} {draws.length === 1 ? "draw" : "draws"}</b> · {cash(drawn)}{budget ? ` of ${cash(budget)}` : ""} drawn</span>
-        <span>{cash(received)} received{budget ? ` · ${cash(Math.max(0, budget - drawn))} left` : ""}</span>
+    <div className="draw-property-body">
+      <div className="draw-summary">
+        <div className="draw-summary-figures">
+          <span><small>Lender funding</small><b>{cash(figures.lenderFunding)}</b></span>
+          <span><small>Lender share</small><b>{figures.fundedShare != null ? `${Math.round(figures.fundedShare * 100)}%` : "—"}</b></span>
+          <span><small>After pending</small><b>{cash(figures.availableAfterPending)}</b></span>
+          <span><small>Funds left</small><b>{figures.fundsAvailable != null ? `${Math.round(figures.fundsAvailable * 100)}%` : "—"}</b></span>
+        </div>
+        <div className="draw-summary-actions">
+          {writable && !adding && (
+            <button type="button" className="draw-step-add" onClick={() => setAdding(true)}>
+              <Icon name="plus" size={14} />
+              Draw {next}
+            </button>
+          )}
+          {adding && (
+            <input
+              className="sheet-money-input draw-add-input"
+              autoFocus
+              inputMode="decimal"
+              placeholder={`Draw ${next} amount`}
+              aria-label={`Draw ${next} amount`}
+              onBlur={add}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur()
+                if (event.key === "Escape") setAdding(false)
+              }}
+            />
+          )}
+          {writable && project.draws.length > 0 && (
+            <button type="button" className="draw-step-add" aria-expanded={managing} onClick={() => setManaging((current) => !current)}>
+              {managing ? "Done" : "Manage draws"}
+            </button>
+          )}
+          <Link href={`/properties/${project.id}`}>Open property</Link>
+          {canDelete && <button type="button" className="sheet-remove" onClick={() => onRemove(project)}>Remove</button>}
+        </div>
       </div>
-      <DrawMeter project={project} draws={draws} />
-      {draws.length === 0 && !adding && <p className="draws-empty">No draws on this property yet.</p>}
-      <ol className="draw-steps">
-        {draws.map((line) => (
-          <li key={line.id} className={drawState(line)}>
-            <span className="draw-step-no">{drawIndex(line.title)}</span>
-            <span className="draw-step-copy">
-              <b>{line.title}</b>
-              <small>{drawNote(line)}</small>
-            </span>
-            <span className="draw-step-amount">
-              {writable ? (
-                <SheetMoneyCell value={line.amount} label={`${project.address} ${line.title}`} onSave={(text) => onSave(drawIndex(line.title), line, text)} />
-              ) : cash(line.amount)}
-            </span>
-            {writable && (
-              <button type="button" className="draw-step-remove" aria-label={`Remove ${line.title}`} onClick={() => remove(line)}>
-                <Icon name="close" size={14} />
-              </button>
-            )}
-          </li>
-        ))}
-        {adding && (
-          <li className="is-new">
-            <span className="draw-step-no">{next}</span>
-            <span className="draw-step-copy"><b>Draw {next}</b><small>Enter the gross amount</small></span>
-            <span className="draw-step-amount">
-              <input
-                className="sheet-money-input"
-                autoFocus
-                inputMode="decimal"
-                aria-label={`Draw ${next} amount`}
-                onBlur={add}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") event.currentTarget.blur()
-                  if (event.key === "Escape") setAdding(false)
-                }}
-              />
-            </span>
-          </li>
-        )}
-      </ol>
       {error && <p className="draw-schedule-error">{error}</p>}
-      {writable && !adding && (
-        <button type="button" className="draw-step-add" onClick={() => setAdding(true)}>
-          <Icon name="plus" size={14} />
-          Add draw {next}
-        </button>
+      {managing && (
+        <div className="draw-manage">
+          {project.draws.map((draw) => (
+            <DrawControls
+              key={draw.id}
+              draw={draw}
+              label={`${project.address} ${draw.title}`}
+              onAmount={(text) => run(() => saveDraw(draw, text))}
+              onPulled={(text) => run(() => onPulled(draw.id, text))}
+              onForecast={(date) => run(() => onForecast(draw.id, date))}
+              onPull={() => run(() => onPull(draw.id))}
+              onRemove={() => remove(draw)}
+            />
+          ))}
+        </div>
+      )}
+      <LineSheet sheet={sheet} project={project} writable={writable} onAmount={(draw, text) => run(() => saveDraw(draw, text))} />
+      <LineCards sheet={sheet} />
+    </div>
+  )
+}
+
+function LineSheet({ sheet, project, writable, onAmount }) {
+  const { draws, rows, total } = sheet
+  const described = rows.some((item) => item.description) || !rows.length
+  return (
+    <div className="excel-wrap line-sheet">
+      <table className="excel-sheet">
+        <thead>
+          <tr>
+            <th className="row-number">#</th>
+            <th className="pin-col">Line item</th>
+            {described && <th className="line-description">Description</th>}
+            <th className="num">Budget</th>
+            {draws.map((draw) => (
+              <th key={draw.id} className={isPendingDraw(draw) ? "num is-pending" : "num"}>
+                <span className="line-draw-head">{draw.title}<small>{drawLabel(draw)}</small></span>
+              </th>
+            ))}
+            <th className="num">Drawn</th>
+            <th className="num">Remaining</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((item, index) => (
+            <tr key={item.key} className={item.other ? "is-other" : undefined}>
+              <th className="row-number">{item.other ? "" : index + 1}</th>
+              <td className="pin-col">{item.title}</td>
+              {described && <td className="line-description" title={item.description}>{item.description || ""}</td>}
+              <td className="num">{cell(item.budget)}</td>
+              {draws.map((draw) => (
+                <td key={draw.id} className={isPendingDraw(draw) ? "num is-pending" : "num"}>{cell(item.amounts[draw.id])}</td>
+              ))}
+              <td className="num">{cell(item.drawn)}</td>
+              <td className={item.remaining < -0.5 ? "num is-over" : "num"}>{item.remaining == null ? "" : cash(item.remaining)}</td>
+            </tr>
+          ))}
+          {!rows.length && (
+            <tr className="is-other">
+              <th className="row-number" />
+              <td className="pin-col">No line items yet</td>
+              <td className="line-description">Import the workbook to see each line of the budget.</td>
+              <td className="num" />
+              {draws.map((draw) => <td key={draw.id} />)}
+              <td />
+              <td />
+            </tr>
+          )}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th className="row-number" />
+            <td className="pin-col">TOTAL</td>
+            {described && <td className="line-description" />}
+            <td className="num">{cash(total.budget)}</td>
+            {draws.map((draw) => (
+              <td key={draw.id} className={isPendingDraw(draw) ? "num is-pending" : "num"}>
+                {writable && !(draw.lines || []).length ? (
+                  <SheetMoneyCell value={draw.amount} label={`${project.address} ${draw.title}`} onSave={(text) => onAmount(draw, text)} />
+                ) : cash(draw.amount)}
+              </td>
+            ))}
+            <td className="num">{cash(total.drawn)}</td>
+            <td className={total.remaining < -0.5 ? "num is-over" : "num"}>{cash(total.remaining)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
+function LineCards({ sheet }) {
+  const { draws, rows, total } = sheet
+  return (
+    <div className="line-cards">
+      {draws.length > 0 && (
+        <div className="line-draws">
+          {draws.map((draw) => (
+            <span key={draw.id} className={isPendingDraw(draw) ? "is-pending" : undefined}>
+              <small>{draw.title} · {drawLabel(draw)}</small>
+              <b>{cash(draw.amount)}</b>
+            </span>
+          ))}
+        </div>
+      )}
+      {rows.map((item) => <LineCard key={item.key} item={item} draws={draws} />)}
+      {!rows.length && <p className="draws-empty">No line items yet. Import the workbook to see each line of the budget.</p>}
+      <div className="line-card is-total">
+        <div className="line-card-head">
+          <span><b>Total</b><small>Budget {cash(total.budget)} · Drawn {cash(total.drawn)}{total.pending ? ` · Pending ${cash(total.pending)}` : ""}</small></span>
+          <span className={total.remaining < -0.5 ? "line-card-left is-over" : "line-card-left"}><small>Remaining</small>{cash(total.remaining)}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function LineCard({ item, draws }) {
+  const [open, setOpen] = useState(false)
+  const budget = Number(item.budget) || 0
+  const scale = Math.max(budget, item.drawn + item.pending)
+  const shares = draws.filter((draw) => item.amounts[draw.id])
+  return (
+    <div className={open ? "line-card is-open" : "line-card"}>
+      <button type="button" className="line-card-head" aria-expanded={open} onClick={() => setOpen((current) => !current)} disabled={!shares.length && !item.description}>
+        <span>
+          <b>{item.title}</b>
+          <small>{item.budget != null ? `Budget ${cash(item.budget)}` : "No budget"} · Drawn {cash(item.drawn)}{item.pending ? ` · Pending ${cash(item.pending)}` : ""}</small>
+        </span>
+        <span className={item.remaining < -0.5 ? "line-card-left is-over" : "line-card-left"}><small>Remaining</small>{item.remaining == null ? "—" : cash(item.remaining)}</span>
+      </button>
+      <span className="draw-progress-bar" aria-hidden="true">
+        <i style={{ width: `${scale ? (item.drawn / scale) * 100 : 0}%` }} />
+        <i className="is-pending" style={{ width: `${scale ? (item.pending / scale) * 100 : 0}%` }} />
+      </span>
+      {open && (
+        <div className="line-card-body">
+          {item.description && <p>{item.description}</p>}
+          {shares.map((draw) => (
+            <div key={draw.id} className={isPendingDraw(draw) ? "is-pending" : undefined}>
+              <span>{draw.title}<small> · {drawLabel(draw)}</small></span>
+              <b>{cash(item.amounts[draw.id])}</b>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )
 }
 
-function scheduledDraws(project) {
-  return project.lines
-    .filter((line) => drawIndex(line.title))
-    .sort((a, b) => drawIndex(a.title) - drawIndex(b.title))
-}
-
-function drawState(line) {
-  const amount = Number(line.amount) || 0
-  const pulled = Number(line.pulled) || 0
-  if (pulled > 0 && pulled >= amount) return "is-received"
-  if (pulled > 0) return "is-partial"
-  return "is-open"
-}
-
-function drawNote(line) {
-  const pulled = Number(line.pulled) || 0
-  const amount = Number(line.amount) || 0
-  if (pulled > 0 && pulled >= amount) return `Received${line.fundedDate ? ` ${shortDate(line.fundedDate)}` : ""}`
-  if (pulled > 0) return `${cash(pulled)} received`
-  if (line.requestedDate) return `Forecast ${shortDate(line.requestedDate)}`
-  return "Not received"
+function DrawControls({ draw, label, onAmount, onPulled, onForecast, onPull, onRemove }) {
+  const pending = isPendingDraw(draw)
+  return (
+    <div className={pending ? "draw-control is-pending" : "draw-control"}>
+      <span className="draw-control-title"><b>{draw.title}</b><small>{drawLabel(draw)}</small></span>
+      <label><small>Amount</small>{(draw.lines || []).length ? <b>{cash(draw.amount)}</b> : <SheetMoneyCell value={draw.amount} label={`${label} amount`} onSave={onAmount} />}</label>
+      <label><small>Pulled</small><SheetMoneyCell value={drawPulled(draw)} label={`${label} pulled`} onSave={onPulled} /></label>
+      {draw.status !== "Funded" ? (
+        <label><small>Forecast</small><input type="date" defaultValue={draw.requestedDate || ""} onChange={(event) => onForecast(event.target.value)} /></label>
+      ) : <span />}
+      <span className="draw-control-actions">
+        {draw.status !== "Funded" && <button type="button" onClick={onPull}>Pull draw</button>}
+        <button type="button" className="draw-step-remove" aria-label={`Remove ${draw.title}`} onClick={onRemove}><Icon name="close" size={14} /></button>
+      </span>
+    </div>
+  )
 }
 
 function SheetMoneyCell({ value, label, onSave }) {
@@ -571,96 +683,97 @@ function SheetMoneyCell({ value, label, onSave }) {
   )
 }
 
-function PropertyCard({ project, open, writable, onToggle, onForecast, onPull, onPulled }) {
-  const arrival = forecastWindow(project)
-  const pct = project.schedule ? Math.round(project.pct * 100) : null
-  return (
-    <article className={open ? "draw-card open" : "draw-card"}>
-      <button type="button" className="draw-card-head" onClick={onToggle}>
-        <div className="draw-card-top">
-          <div>
-            <h2>{project.address}</h2>
-            <p>{[project.city, project.strategy].filter(Boolean).join(" · ")}</p>
-          </div>
-          <StatusPill>{project.stage}</StatusPill>
-        </div>
-        <div className="draw-metrics">
-          <div><b className={project.received ? "got" : ""}>{cash(project.received)}</b><span>Received</span></div>
-          <div><b>{cash(project.undrawn)}</b><span>Undrawn</span></div>
-          <div><b>{cash(project.schedule)}</b><span>{project.scheduleLabel}</span></div>
-          <div><b>{cash(project.spent)}</b><span>Costs posted</span></div>
-        </div>
-        {project.schedule != null && (
-          <div className="draw-progress">
-            <div className="draw-track"><i style={{ width: `${pct}%` }} /></div>
-            <span>{pct}%</span>
-          </div>
-        )}
-        <div className="draw-card-foot">
-          {project.rehabBudget != null && <span>Rehab budget {cash(project.rehabBudget)} · {cash(project.rehabLeft)} left after costs</span>}
-          {project.pending > 0 && <span>{cash(project.pending)} waiting on approval</span>}
-          {project.forecast > 0 && arrival && <span className="draw-chip">{cash(project.forecast)} forecast {arrival}</span>}
-          {project.schedule == null && <span>No rehab budget or draw schedule on this property.</span>}
-        </div>
-      </button>
-      {open && (
-        <div className="draw-body">
-          <h3>Draw lines</h3>
-          {project.lines.length === 0 && <p className="draws-empty">No draw has been recorded. The schedule above is the figure already stored on the property.</p>}
-          {project.lines.map((line) => (
-            <DrawRow key={line.id} line={line} writable={writable} onForecast={onForecast} onPull={onPull} onPulled={onPulled} />
-          ))}
-        </div>
-      )}
-    </article>
-  )
+function lineSheet(project) {
+  const draws = project.draws
+  const figures = project.figures
+  const pendingIds = new Set(draws.filter(isPendingDraw).map((draw) => draw.id))
+  const rows = []
+  const byKey = new Map()
+  const row = (title, description) => {
+    const key = lineKey(title)
+    let item = byKey.get(key)
+    if (!item) {
+      item = { key, title: String(title || "").trim() || "Untitled line", description: description || "", budget: null, amounts: {} }
+      byKey.set(key, item)
+      rows.push(item)
+    } else if (!item.description && description) {
+      item.description = description
+    }
+    return item
+  }
+  for (const scope of project.scopeLines) {
+    const item = row(scope.title, scope.description)
+    if (scope.budget != null && scope.budget !== "") item.budget = (item.budget || 0) + (Number(scope.budget) || 0)
+  }
+  for (const draw of draws) {
+    for (const line of draw.lines || []) {
+      const amount = Number(line.amount) || 0
+      if (!amount) continue
+      const item = row(line.title, line.description)
+      item.amounts[draw.id] = (item.amounts[draw.id] || 0) + amount
+    }
+  }
+  if (rows.length) {
+    const other = { key: "__other", title: "Not in line items", description: "Budget or draw money without a line item", budget: null, amounts: {}, other: true }
+    const lineBudget = rows.reduce((sum, item) => sum + (Number(item.budget) || 0), 0)
+    if (figures.budget != null && Math.abs(figures.budget - lineBudget) > 0.5) other.budget = figures.budget - lineBudget
+    for (const draw of draws) {
+      const lined = rows.reduce((sum, item) => sum + (item.amounts[draw.id] || 0), 0)
+      const gap = (Number(draw.amount) || 0) - lined
+      if (Math.abs(gap) > 0.5) other.amounts[draw.id] = gap
+    }
+    if (other.budget != null || Object.keys(other.amounts).length) rows.push(other)
+  }
+  for (const item of rows) {
+    item.drawn = 0
+    item.pending = 0
+    for (const [id, amount] of Object.entries(item.amounts)) {
+      if (pendingIds.has(id)) item.pending += amount
+      else item.drawn += amount
+    }
+    item.remaining = item.budget == null ? null : item.budget - item.drawn - item.pending
+  }
+  return {
+    draws,
+    rows,
+    total: {
+      budget: figures.budget,
+      drawn: figures.drawn,
+      pending: figures.pending,
+      remaining: figures.budget == null ? null : figures.budget - figures.drawn - figures.pending,
+    },
+  }
 }
 
-function DrawRow({ line, writable, onForecast, onPull, onPulled }) {
-  const [open, setOpen] = useState(false)
-  const amount = line.amount
-  const pulled = line.pulled ?? (line.status === "Funded" ? line.fundedAmount ?? line.amount : line.fundedAmount || 0)
-  const remaining = line.remaining ?? (amount == null ? null : Math.max(0, Number(amount) - Number(pulled || 0)))
-  return (
-    <article className={open ? "draw-fold is-open" : "draw-fold"}>
-      <button type="button" className="draw-fold-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-        <span><small>Draw</small><b>{line.title}</b></span>
-        <span><small>Amount</small><b>{cash(amount)}</b></span>
-        <span><small>Pulled</small><b>{cash(pulled)}</b></span>
-        <span><small>Remaining</small><b>{cash(remaining)}</b></span>
-        <i>{open ? "Hide" : "Open"}</i>
-      </button>
-      {open && (
-        <div className="draw-fold-body">
-          <table className="sow-table">
-            <thead><tr><th>Line item</th><th>Description</th><th>Amount</th></tr></thead>
-            <tbody>
-              {(line.lines || []).length === 0 && <tr><td colSpan="3">No scope lines on this draw yet.</td></tr>}
-              {(line.lines || []).map((item) => (
-                <tr key={item.id || item.title}><td>{item.title}</td><td>{item.description || "—"}</td><td>{cash(item.amount)}</td></tr>
-              ))}
-            </tbody>
-          </table>
-          {writable && (
-            <form className="draw-line-actions" onSubmit={(event) => { event.preventDefault(); onPulled(line.id, new FormData(event.currentTarget).get("fundedAmount")) }}>
-              <label>Pulled
-                <input name="fundedAmount" inputMode="decimal" defaultValue={pulled ?? 0} />
-              </label>
-              <button type="submit">Save pulled</button>
-              {line.status !== "Funded" && (
-                <>
-                  <label>Forecast finish
-                    <input type="date" defaultValue={line.requestedDate || ""} onChange={(event) => onForecast(line.id, event.target.value)} />
-                  </label>
-                  <button type="button" onClick={() => onPull(line.id)}>Pull draw</button>
-                </>
-              )}
-            </form>
-          )}
-        </div>
-      )}
-    </article>
-  )
+function lineKey(title) {
+  return String(title || "").toLowerCase().replace(/\s+/g, " ").trim()
+}
+
+function drawLabel(draw) {
+  if (isPendingDraw(draw)) return draw.requestedDate ? `Pending · ${shortDate(draw.requestedDate)}` : "Pending"
+  if (draw.status === "Funded") return draw.fundedDate ? `Funded ${shortDate(draw.fundedDate)}` : "Funded"
+  return draw.status || "Open"
+}
+
+function healthTone(health) {
+  if (/low funds/i.test(health)) return "is-bad"
+  if (/pending/i.test(health)) return "is-warn"
+  if (/not started/i.test(health)) return "is-quiet"
+  return "is-good"
+}
+
+function cell(value) {
+  if (value == null || Math.abs(Number(value)) < 0.005) return ""
+  return cash(value)
+}
+
+function orderDraws(draws) {
+  return [...draws].sort((a, b) => {
+    const left = drawIndex(a.title) || Number.MAX_SAFE_INTEGER
+    const right = drawIndex(b.title) || Number.MAX_SAFE_INTEGER
+    if (left !== right) return left - right
+    return String(a.title).localeCompare(String(b.title))
+  })
 }
 
 function ReceivedMoney({ projects }) {
@@ -775,64 +888,60 @@ function buildProjects(payload) {
   return (payload.properties || []).map((property) => {
     const lines = draws.filter((draw) => draw.propertyId === property.id)
     const budget = budgets.find((item) => item.propertyId === property.id)
-    const lineTotal = lines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0)
-    const lender = firstNumber(budget?.budget)
-    const rehab = firstNumber(property.rehabBudget)
-    const schedule = lender ?? rehab ?? (lineTotal || null)
-    const received = lines
-      .filter((line) => line.status === "Funded")
-      .reduce((sum, line) => sum + (Number(line.fundedAmount ?? line.amount) || 0), 0)
+    const figures = drawFigures({
+      budget: firstNumber(property.rehabBudget, budget?.budget),
+      lenderFunding: firstNumber(budget?.fundingLimit),
+      fundedPercent: budget?.fundingPercent,
+      draws: lines,
+    })
     const forecast = lines.reduce((sum, line) => {
-      if (!line.requestedDate || line.status === "Funded") return sum
+      if (line.status === "Funded" || !(isPendingDraw(line) || line.requestedDate)) return sum
       return sum + Math.max(0, (Number(line.amount) || 0) - (Number(line.fundedAmount) || 0))
     }, 0)
-    const spent = Number(property.spent) || 0
     return {
       ...property,
       scopeLines: property.scopeLines || [],
       lines,
-      schedule,
+      draws: orderDraws(lines),
+      figures,
+      health: drawHealth(figures),
       budgetId: budget?.id || "",
-      totalBudget: rehab ?? lender ?? (lineTotal || null),
-      lenderFunding: firstNumber(budget?.fundingLimit) ?? lender,
-      scheduleLabel: lender != null ? "Draw schedule" : rehab != null ? "Rehab budget" : "Draw lines",
-      received,
-      undrawn: schedule == null ? null : Math.max(0, schedule - received),
+      totalBudget: figures.budget,
+      lenderFunding: figures.lenderFunding,
+      received: figures.received,
       forecast,
-      spent,
-      pending: Number(property.pending) || 0,
-      rehabLeft: property.rehabRemaining ?? (rehab == null ? null : Math.max(0, rehab - spent)),
-      pct: schedule ? received / schedule : 0,
+      spent: Number(property.spent) || 0,
     }
   })
 }
 
-function sortProjects(projects, sort) {
-  const funded = projects.filter((project) => project.schedule > 0)
-  const empty = projects.filter((project) => !(project.schedule > 0))
-  if (sort === "least") funded.sort((a, b) => a.pct - b.pct)
-  else if (sort === "most") funded.sort((a, b) => b.pct - a.pct)
-  else {
-    funded.sort((a, b) => {
-      const aOn = a.forecast > 0
-      const bOn = b.forecast > 0
-      if (aOn !== bOn) return aOn ? -1 : 1
-      return b.forecast - a.forecast
-    })
-  }
-  return funded.concat(empty)
+const SORTS = {
+  pending: (a, b) => b.figures.pending - a.figures.pending || (b.figures.remaining || 0) - (a.figures.remaining || 0),
+  remaining: (a, b) => (b.figures.remaining || 0) - (a.figures.remaining || 0),
+  available: (a, b) => (a.figures.fundsAvailable ?? 2) - (b.figures.fundsAvailable ?? 2),
+  address: (a, b) => String(a.address).localeCompare(String(b.address), undefined, { numeric: true }),
+}
+
+function sortProjects(projects, sort, query) {
+  const words = String(query || "").toLowerCase().split(/\s+/).filter(Boolean)
+  const found = words.length ? projects.filter((project) => words.every((word) => `${project.address} ${project.city} ${project.health}`.toLowerCase().includes(word))) : projects
+  return [...found].sort(SORTS[sort] || SORTS.pending)
 }
 
 function sumProjects(projects) {
-  const received = projects.reduce((sum, project) => sum + project.received, 0)
-  const forecast = projects.reduce((sum, project) => sum + project.forecast, 0)
-  const known = projects.filter((project) => project.schedule != null)
-  const total = known.reduce((sum, project) => sum + project.schedule, 0)
-  const remaining = known.reduce((sum, project) => sum + (project.undrawn || 0), 0)
-  const withRehab = projects.filter((project) => project.rehabLeft != null)
-  const rehabLeft = withRehab.reduce((sum, project) => sum + project.rehabLeft, 0)
-  const spent = projects.reduce((sum, project) => sum + project.spent, 0)
-  return { received, forecast, total, remaining, rehabLeft: withRehab.length ? rehabLeft : null, spent, pct: total ? received / total : 0 }
+  const add = (key) => projects.reduce((sum, project) => sum + (Number(project.figures[key]) || 0), 0)
+  const budget = add("budget")
+  const drawn = add("drawn")
+  return {
+    budget,
+    drawn,
+    received: add("received"),
+    pending: add("pending"),
+    available: add("available"),
+    remaining: add("remaining"),
+    forecast: projects.reduce((sum, project) => sum + project.forecast, 0),
+    used: budget ? drawn / budget : 0,
+  }
 }
 
 function collectEvents(projects) {
@@ -878,15 +987,6 @@ function groupWeeks(events) {
     week.events.push(event)
   }
   return weeks
-}
-
-function forecastWindow(project) {
-  const dates = project.lines
-    .filter((line) => line.requestedDate && line.status !== "Funded")
-    .map((line) => line.requestedDate)
-  if (!dates.length) return ""
-  const start = dates.reduce((earliest, date) => (date < earliest ? date : earliest))
-  return `${fmtDay(addBiz(start, FUND_WINDOW[0]))}–${fmtDay(addBiz(start, FUND_WINDOW[1]))}`
 }
 
 function drawIndex(title) {

@@ -1,10 +1,11 @@
 "use client"
 
-import { memo, useEffect, useState } from "react"
+import { memo, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { initials, navFor } from "@synergifund/shared"
+import { can, initials, navFor, PERMISSIONS } from "@synergifund/shared"
 import { api } from "../../lib/api"
+import { useChatEvents } from "../../lib/chatSocket"
 import { Icon } from "../ui/Icon"
 
 export const Sidebar = memo(function Sidebar({ user, onSearch, onToggle, onNavigate }) {
@@ -39,7 +40,7 @@ export const Sidebar = memo(function Sidebar({ user, onSearch, onToggle, onNavig
         <span>Quick Actions</span>
         <kbd>⌘K</kbd>
       </button>
-      <SidebarNav primary={primary} sections={sections} onNavigate={onNavigate} />
+      <SidebarNav primary={primary} sections={sections} onNavigate={onNavigate} chat={can(user, PERMISSIONS.chatUse)} me={user.id} />
       <div className="user-dock">
         {open && (
           <div className="user-pop">
@@ -86,11 +87,24 @@ function ThemeButton() {
   )
 }
 
-function SidebarNav({ primary, sections, onNavigate }) {
-  const [counts, setCounts] = useState({ notifications: 0 })
+function SidebarNav({ primary, sections, onNavigate, chat, me }) {
+  const [counts, setCounts] = useState({ notifications: 0, chat: 0 })
+  const timer = useRef(null)
   useEffect(() => {
     api("/counts").then(setCounts).catch(() => {})
+    return () => clearTimeout(timer.current)
   }, [])
+  function refreshChat() {
+    clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      api("/chat/unread").then((data) => setCounts((current) => ({ ...current, chat: data.mentions }))).catch(() => {})
+    }, 1200)
+  }
+  function onMessage({ message, channel }) {
+    if (!message || message.userId === me) return
+    if (channel?.kind === "direct" || message.mentionsChannel || (message.mentionIds || []).includes(me)) refreshChat()
+  }
+  useChatEvents({ "message:new": onMessage, read: refreshChat, "channel:remove": refreshChat, "chat:refresh": refreshChat, reconnect: refreshChat }, chat)
   return (
     <nav className="nav">
       {primary.map((item) => (

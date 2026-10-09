@@ -1,4 +1,4 @@
-import { PERMISSIONS } from "@synergifund/shared"
+import { PERMISSIONS, drawFigures, drawHealth } from "@synergifund/shared"
 import { Bill, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, Property, Task, User } from "../../models/index.js"
 import { presentProperty } from "../../lib/serialize.js"
 import { propertyFilter } from "../access.js"
@@ -122,16 +122,21 @@ function drawView(context, draw) {
 function drawSummary(context, property, budgets, draws) {
   const rows = draws.map((draw) => drawView(context, draw))
   const budget = budgets.find((item) => String(item.propertyId) === String(property._id))
-  const scheduled = sum(rows, (row) => row.amount)
-  const received = sum(rows, (row) => row.pulled)
   const total = property.rehabBudget ?? budget?.budget ?? null
+  const figures = drawFigures({ budget: total, lenderFunding: budget?.fundingLimit, fundedPercent: budget?.fundingPercent, draws })
+  const staff = context.user.role !== "contractor"
   return {
     property: property.address,
     rehabBudget: total,
-    lenderFundingLimit: budget?.fundingLimit ?? null,
-    scheduled,
-    received,
-    remainingToDraw: total == null ? null : Math.max(0, Number(total) - scheduled),
+    lenderFundingLimit: staff ? figures.lenderFunding : null,
+    drawnGross: figures.drawn,
+    cashReceived: staff ? figures.received : null,
+    pendingRequested: figures.pending,
+    availableToWithdraw: staff ? figures.available : null,
+    availableAfterPending: staff ? figures.availableAfterPending : null,
+    remainingBudget: figures.remaining,
+    status: drawHealth(figures),
+    lineItems: staff ? (property.scopeLines || []).map((line) => ({ title: line.title, description: line.description || "", budget: line.budget ?? null })) : undefined,
     draws: rows.map((row) => ({
       title: row.title,
       status: row.status,
@@ -140,6 +145,7 @@ function drawSummary(context, property, budgets, draws) {
       remaining: row.remaining,
       forecastDate: row.requestedDate || "",
       fundedDate: row.fundedDate || "",
+      lines: staff ? (row.lines || []).map((line) => ({ title: line.title, amount: line.amount })) : undefined,
     })),
   }
 }
@@ -424,7 +430,7 @@ export const TOOLS = [
     name: "list_draws",
     label: "Reading draws",
     permission: PERMISSIONS.drawsRead,
-    description: "Rehab draw schedules: for each property the budget, each draw's amount, cash received, remaining, forecast and funded dates.",
+    description: "Rehab draw schedules, using the draws workbook definitions: for each property the total budget, lender funding, drawn to date (gross, funded draws), cash received (lender's funded share), pending (requested, not funded), available to withdraw (lender funding minus cash received), remaining budget (budget minus drawn minus pending), status, budget line items, and each draw with its per-line amounts and dates.",
     parameters: {
       type: "object",
       properties: {
@@ -450,8 +456,14 @@ export const TOOLS = [
       return {
         success: true,
         properties: rows.length,
-        scheduledTotal: sum(rows, (row) => row.scheduled),
-        receivedTotal: sum(rows, (row) => row.received),
+        totals: {
+          budget: sum(rows, (row) => row.rehabBudget),
+          drawn: sum(rows, (row) => row.drawnGross),
+          received: sum(rows, (row) => row.cashReceived),
+          pending: sum(rows, (row) => row.pendingRequested),
+          available: sum(rows, (row) => row.availableToWithdraw),
+          remaining: sum(rows, (row) => row.remainingBudget),
+        },
         schedules: rows,
       }
     },
@@ -624,7 +636,7 @@ export const TOOLS = [
       properties: { query: { type: "string", description: "Words in the file name. Leave empty to list the most recent files." } },
     },
     run: async (args, context) => {
-      const filter = {}
+      const filter = { kind: { $ne: "chat" } }
       const properties = await scopedProperties(context)
       if (context.user.role === "contractor") filter.propertyId = { $in: properties.map((property) => property._id) }
       if (args.query) filter.name = new RegExp(escapeRegex(String(args.query).trim()), "i")
@@ -754,7 +766,7 @@ export const TOOLS = [
         add("task", tasks, (task) => [task.title, ...(task.labels || []), names.get(String(task.propertyId || ""))].filter(Boolean).join(" "), (task) => ({ label: task.title, detail: [task.due, names.get(String(task.propertyId || ""))].filter(Boolean).join(" · ") }))
       }
       if (allowed(PERMISSIONS.documentsRead)) {
-        const files = await DocumentFile.find(staff ? {} : { propertyId: { $in: ids } }).sort({ createdAt: -1 }).limit(500)
+        const files = await DocumentFile.find(staff ? { kind: { $ne: "chat" } } : { propertyId: { $in: ids }, kind: { $ne: "chat" } }).sort({ createdAt: -1 }).limit(500)
         add("document", files, (file) => file.name, (file) => ({ label: file.name, detail: names.get(String(file.propertyId || "")) || file.kind }))
       }
       if (staff && allowed(PERMISSIONS.expensesRead)) {

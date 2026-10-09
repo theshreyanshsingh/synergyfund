@@ -89,7 +89,7 @@ export async function sendMail({ people, title, body, details, href, event }) {
     error: resend ? "" : "RESEND_API_KEY is not set.",
   })
   if (!resend) return { status: "Failed", error: record.error, sent: 0 }
-  const from = process.env.RESEND_FROM || "SynergiFund <noreply@synergyfund.com>"
+  const from = process.env.RESEND_FROM || "SynergiFund <noreply@synergifund.com>"
   const emails = recipients.map((person) => ({
     from,
     to: [person.email],

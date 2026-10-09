@@ -159,6 +159,7 @@ export const Draw = register(
       requestedDate: String,
       fundedDate: String,
       notes: String,
+      source: String,
       lines: [
         {
           title: String,
@@ -252,6 +253,8 @@ export const ImportJob = register(
         added: Number,
         duplicate: Number,
         skipped: Number,
+        removed: Number,
+        lines: Number,
       },
       status: { type: String, default: "Draft" },
       createdBy: { type: Schema.Types.ObjectId, ref: "User" },
@@ -442,4 +445,67 @@ export const AgentSetting = register(
     },
     { timestamps: true },
   ),
+)
+
+export const ChatChannel = register(
+  "ChatChannel",
+  new Schema(
+    {
+      kind: { type: String, enum: ["general", "channel", "property", "direct"], required: true },
+      name: { type: String, default: "" },
+      topic: { type: String, default: "" },
+      private: { type: Boolean, default: false },
+      propertyId: { type: Schema.Types.ObjectId, ref: "Property" },
+      memberIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      directKey: String,
+      createdBy: { type: Schema.Types.ObjectId, ref: "User" },
+      archivedAt: Date,
+      lastMessageAt: Date,
+    },
+    { timestamps: true },
+  )
+    .index({ kind: 1 })
+    .index({ propertyId: 1 }, { unique: true, partialFilterExpression: { kind: "property" } })
+    .index({ directKey: 1 }, { unique: true, partialFilterExpression: { kind: "direct" } })
+    .index({ kind: 1, name: 1 }, { unique: true, partialFilterExpression: { kind: "general" } }),
+)
+
+export const ChatMessage = register(
+  "ChatMessage",
+  new Schema(
+    {
+      channelId: { type: Schema.Types.ObjectId, ref: "ChatChannel", required: true },
+      userId: { type: Schema.Types.ObjectId, ref: "User" },
+      userName: String,
+      kind: { type: String, default: "message" },
+      text: { type: String, default: "" },
+      parentId: { type: Schema.Types.ObjectId, ref: "ChatMessage" },
+      replyCount: { type: Number, default: 0 },
+      replyUserIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      lastReplyAt: Date,
+      mentionIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      mentionsChannel: { type: Boolean, default: false },
+      reactions: [{ emoji: String, userIds: [{ type: Schema.Types.ObjectId, ref: "User" }] }],
+      attachments: [{ fileId: { type: Schema.Types.ObjectId, ref: "Document" }, name: String, mime: String, size: Number }],
+      editedAt: Date,
+      deletedAt: Date,
+    },
+    { timestamps: true },
+  )
+    .index({ channelId: 1, parentId: 1, createdAt: -1 })
+    .index({ parentId: 1, createdAt: 1 })
+    .index({ mentionIds: 1, createdAt: -1 }),
+)
+
+export const ChatRead = register(
+  "ChatRead",
+  new Schema(
+    {
+      userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+      channelId: { type: Schema.Types.ObjectId, ref: "ChatChannel", required: true },
+      lastReadAt: Date,
+      hidden: { type: Boolean, default: false },
+    },
+    { timestamps: true },
+  ).index({ userId: 1, channelId: 1 }, { unique: true }),
 )

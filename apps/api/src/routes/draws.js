@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { drawPulled } from "@synergifund/shared"
 import xlsx from "xlsx"
 import { DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, ImportJob, PhotoReport, Property } from "../models/index.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
@@ -44,7 +45,7 @@ export function presentDraw(item) {
   }))
   const lineTotal = lines.reduce((total, line) => total + Number(line.amount || 0), 0)
   const amount = item.amount != null ? Number(item.amount) : lines.length ? lineTotal : null
-  const pulled = item.fundedAmount != null ? Number(item.fundedAmount) : item.status === "Funded" && amount != null ? Number(amount) : 0
+  const pulled = drawPulled({ ...(item.toObject ? item.toObject() : item), amount })
   return {
     id: String(item._id),
     propertyId: String(item.propertyId),
@@ -267,17 +268,23 @@ drawsRouter.post(
         DrawBudget,
         Property,
         userName: req.user.name,
+        totals: portfolio.totals,
       })
       job.marks = result.marks
       job.counts = result.counts
       job.status = "Confirmed"
       await job.save()
+      const check = result.reconciliation
       await recordActivity({
         user: req.user,
-        title: "Draw workbook appended",
-        detail: `${result.counts.added} draws added, ${result.counts.duplicate} already on file`,
+        title: "Draw workbook imported",
+        detail: [
+          `${result.counts.added} draws added, ${result.counts.duplicate} updated`,
+          result.counts.removed ? `${result.counts.removed} removed` : "",
+          check.matches ? "totals match the workbook" : `${check.differences.length} figures differ from the workbook`,
+        ].filter(Boolean).join(", "),
       })
-      res.json({ import: sheetImport(job, fileForRows, portfolio) })
+      res.json({ import: { ...sheetImport(job, fileForRows, portfolio), reconciliation: check } })
       return
     }
     const rows = await drawRows(fileForRows, job)
@@ -304,6 +311,44 @@ drawsRouter.post(
       detail: `${result.counts.added} added, ${result.counts.duplicate} duplicates left unchanged, ${result.counts.skipped} skipped`,
     })
     res.json({ import: presentImport(job, fileForRows, rows) })
+  }),
+)
+
+drawsRouter.post(
+  "/clear",
+  requirePermission("draws.write"),
+  asyncHandler(async (req, res) => {
+    const wanted = (Array.isArray(req.body.propertyIds) ? req.body.propertyIds : []).map(String).filter((id) => /^[a-f0-9]{24}$/.test(id))
+    if (!wanted.length) {
+      sendError(res, 400, "Pick at least one property.")
+      return
+    }
+    const properties = await Property.find({ ...propertyFilter(req.user), _id: { $in: wanted } }).select("_id address scopeLines")
+    if (!properties.length) {
+      sendError(res, 404, "Those properties were not found.")
+      return
+    }
+    const ids = properties.map((property) => property._id)
+    const removed = await Draw.deleteMany({ propertyId: { $in: ids } })
+    const linked = new Set((await Promise.all([
+      Expense.find({ propertyId: { $in: ids }, scopeLineId: { $nin: [null, ""] } }).select("scopeLineId"),
+      ExpenseRequest.find({ propertyId: { $in: ids }, scopeLineId: { $nin: [null, ""] } }).select("scopeLineId"),
+    ])).flat().map((item) => String(item.scopeLineId)))
+    let lines = 0
+    let kept = 0
+    for (const property of properties) {
+      const keep = (property.scopeLines || []).filter((line) => linked.has(String(line._id)))
+      lines += (property.scopeLines || []).length - keep.length
+      kept += keep.length
+      property.scopeLines = keep
+      await property.save()
+    }
+    await recordActivity({
+      user: req.user,
+      title: "Draw data cleared",
+      detail: `${removed.deletedCount} draws and ${lines} line items removed from ${properties.length === 1 ? properties[0].address : `${properties.length} properties`}${kept ? `; ${kept} line items kept because expenses use them` : ""}`,
+    })
+    res.json({ properties: properties.length, draws: removed.deletedCount, lines, kept })
   }),
 )
 
@@ -345,6 +390,10 @@ drawsRouter.patch(
     const before = budget.toObject()
     for (const field of ["budget", "fundingLimit", "fundingPercent"]) {
       if (!(field in req.body)) continue
+      if (req.body[field] === null || req.body[field] === "") {
+        budget[field] = field === "fundingPercent" ? 100 : undefined
+        continue
+      }
       const value = numberOrUndefined(req.body[field])
       if (value == null || value < 0) {
         sendError(res, 400, `${field} needs to be zero or more.`)
@@ -549,6 +598,15 @@ function sheetImport(job, file, portfolio) {
       city: record.city,
       budget: record.rehabBudget,
       draws: record.draws.length,
+      pending: record.pending || 0,
+      pendingTitle: record.pending > 0 ? record.pendingTitle : "",
+      lines: record.lines.map((line) => ({
+        title: line.title,
+        description: line.description || "",
+        budget: line.budget ?? null,
+        drawn: line.drawn || 0,
+        pending: line.pending || 0,
+      })),
     })),
     createdAt: job.createdAt,
     totalRows: portfolio.grid.length,

@@ -7,6 +7,8 @@ import { presentProperty } from "../lib/serialize.js"
 import { propertyFilter, ownsProperty } from "../services/access.js"
 import { deleteStoredFile, publicFileUrl, saveUploadedFile, upload, withProofUrls } from "../services/files.js"
 import { ensureLenders } from "../services/lenders.js"
+import { removePropertyRoom } from "../services/chat.js"
+import { emitToUsers } from "../services/chatHub.js"
 import { changeSummary, notifyPropertyAccess, recordActivity } from "../services/notify.js"
 import { presentContractorDraw, presentDraw } from "./draws.js"
 
@@ -235,6 +237,9 @@ propertiesRouter.delete(
     }
     const files = await DocumentFile.find({ propertyId: property._id })
     await Promise.all(files.map((file) => deleteStoredFile(file).catch(() => {})))
+    const room = await removePropertyRoom(property)
+    await Promise.all(room.files.map((file) => deleteStoredFile(file).catch(() => {})))
+    if (room.channelId) emitToUsers(room.userIds, "channel:remove", { id: room.channelId })
     await Promise.all([
       Loan.deleteMany({ propertyId: property._id }),
       Draw.deleteMany({ propertyId: property._id }),
