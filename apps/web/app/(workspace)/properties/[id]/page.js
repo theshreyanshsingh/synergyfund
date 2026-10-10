@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { PROPERTY_LABELS, STAGES, STRATEGIES, can } from "@synergifund/shared"
 import { FormSheet } from "../../../../components/ui/FormSheet"
+import { DrawEditor } from "../../../../components/draws/DrawEditor"
 import { money } from "../../../../lib/format"
 import { api } from "../../../../lib/api"
 import { useApi } from "../../../../lib/useApi"
@@ -28,10 +29,8 @@ export default function PropertyDetailPage({ params }) {
   const [editing, setEditing] = useState(null)
   const [editError, setEditError] = useState("")
   const [addingDraw, setAddingDraw] = useState(false)
-  const [drawLines, setDrawLines] = useState([blankDrawLine()])
-  const [drawError, setDrawError] = useState("")
-  const [drawPending, setDrawPending] = useState(false)
   const [shots, setShots] = useState([])
+  const [uploading, setUploading] = useState(false)
   const property = detail.data?.property
   const editOpened = useRef(false)
   useEffect(() => {
@@ -52,6 +51,13 @@ export default function PropertyDetailPage({ params }) {
   const postedCosts = (detail.data.expenses || []).filter((item) => item.costTreatment !== "Exclude from construction margin")
   const left = property.rehabBudget == null ? null : Math.max(0, Number(property.rehabBudget) - spent)
   const draws = detail.data.draws
+  const drawProject = property ? {
+    id,
+    address: property.address,
+    scopeLines: (property.scopeLines || []).map((line) => ({ id: String(line._id || line.id || ""), title: line.title, description: line.description || "", budget: line.budget ?? null })),
+    draws: draws?.items || [],
+    figures: { budget: property.rehabBudget ?? null },
+  } : null
   const loans = detail.data.loans || []
   const upcoming = detail.data.upcoming || []
   const openDraws = (draws?.items || []).filter((draw) => draw.status !== "Funded")
@@ -78,14 +84,21 @@ export default function PropertyDetailPage({ params }) {
         <section className="panel property-card">
           <div className="property-card-head">
             <div>
-              <h2>Draws</h2>
-              <p className="property-missing">Open a draw to see the work, then file a cost with a camera photo.</p>
+              <h2>Scope of work</h2>
+              <p className="property-missing">Open a line item to see what has been released and file a cost with a camera photo.</p>
             </div>
           </div>
-          {(draws?.items || []).length === 0 && <p className="property-missing">No draws on this house yet.</p>}
-          {(draws?.items || []).map((draw) => (
-            <DrawFold key={draw.id} draw={draw} canEdit={false} canPost={false} canRequest={canRequest} costs={postedCosts.filter((item) => item.drawId === draw.id)} propertyId={id} onSaved={() => detail.reload()} />
-          ))}
+          <ScopeOfWork
+            scopeLines={property.scopeLines || []}
+            draws={draws?.items || []}
+            costs={postedCosts}
+            requests={detail.data.requests || []}
+            showBudget={false}
+            canPost={false}
+            canRequest={canRequest}
+            propertyId={id}
+            onSaved={() => detail.reload()}
+          />
         </section>
         <section className="panel property-card">
           <h2>Weekly photos</h2>
@@ -94,22 +107,28 @@ export default function PropertyDetailPage({ params }) {
           {session?.user && can(session.user, "photos.write") && (
             <form className="photo-form" onSubmit={async (event) => {
               event.preventDefault()
+              if (uploading) return
+              const element = event.currentTarget
               if (!shots.length) {
                 setMessage("Take at least one photo with the camera.")
                 return
               }
-              const form = new FormData(event.currentTarget)
+              const form = new FormData(element)
               form.set("propertyId", id)
               for (const shot of shots) form.append("photos", shot.file, shot.file.name)
+              setUploading(true)
+              setMessage(`Uploading ${shots.length} ${shots.length === 1 ? "photo" : "photos"}…`)
               try {
                 const result = await api("/photo-sets", { method: "POST", body: form })
-                setMessage(`${result.count} photos filed.`)
+                setMessage(`${result.count} ${result.count === 1 ? "photo" : "photos"} filed.`)
                 for (const shot of shots) URL.revokeObjectURL(shot.url)
                 setShots([])
-                event.currentTarget.reset()
+                element.reset()
                 detail.reload()
               } catch (err) {
                 setMessage(err.message)
+              } finally {
+                setUploading(false)
               }
             }}>
               <label className="field"><span>Week of</span><input name="weekOf" type="date" required /></label>
@@ -118,7 +137,7 @@ export default function PropertyDetailPage({ params }) {
                 <CameraCapture shots={shots} onChange={setShots} />
               </div>
               <label className="field wide"><span>What changed on site</span><input name="note" value={note} onChange={(event) => setNote(event.target.value)} /></label>
-              <div className="photo-form-actions"><button className="primary" type="submit">File this week</button></div>
+              <div className="photo-form-actions"><button className="primary" type="submit" disabled={uploading || !shots.length}>{uploading ? `Uploading ${shots.length}…` : shots.length ? `Upload ${shots.length} ${shots.length === 1 ? "photo" : "photos"}` : "File this week"}</button></div>
             </form>
           )}
           {message && <p className="property-missing">{message}</p>}
@@ -262,13 +281,14 @@ export default function PropertyDetailPage({ params }) {
             {session?.user && can(session.user, "photos.write") && (
               <form className="photo-form" onSubmit={async (event) => {
                 event.preventDefault()
-                const form = new FormData(event.currentTarget)
+                const element = event.currentTarget
+                const form = new FormData(element)
                 form.set("propertyId", id)
                 try {
                   const result = await api("/photo-sets", { method: "POST", body: form })
                   setMessage(`${result.count} photos filed.`)
                   setFiles([])
-                  event.currentTarget.reset()
+                  element.reset()
                   detail.reload()
                 } catch (err) {
                   setMessage(err.message)
@@ -365,73 +385,46 @@ export default function PropertyDetailPage({ params }) {
         <section className="panel property-card">
           <div className="property-card-head">
             <div>
-              <h2>Draws</h2>
-              <p className="property-missing">Open a draw to see its full scope and posted costs.</p>
+              <h2>Line items</h2>
+              <p className="property-missing">The scope of work. Open a line to see its budget, what has been released and the costs filed against it.</p>
             </div>
             <div className="row-actions">
               <a className="tool" href={`/api/draws/export?propertyId=${id}`}>Export Excel</a>
-              {canDraws && <button type="button" className="primary" onClick={() => { setDrawError(""); setDrawLines([blankDrawLine()]); setAddingDraw(true) }}>Add draw</button>}
+              {canDraws && <button type="button" className="primary" onClick={() => setAddingDraw(true)}>Add draw</button>}
             </div>
           </div>
+          <ScopeOfWork
+            scopeLines={property.scopeLines || []}
+            draws={draws?.items || []}
+            costs={postedCosts}
+            requests={detail.data.requests || []}
+            showBudget
+            canPost={canPost}
+            canRequest={canRequest}
+            propertyId={id}
+            onSaved={() => detail.reload()}
+          />
+          <h3 className="scope-draws-title">Draws <span>· each one split across the line items above</span></h3>
           {draws?.undrawn != null && <p className="property-missing">{money(draws.undrawn)} still undrawn · {money(draws.received)} received</p>}
           {(draws?.items || []).length === 0 && <p className="property-missing">No draws recorded.</p>}
           {(draws?.items || []).map((draw) => (
-            <DrawFold key={draw.id} draw={draw} canEdit={canDraws} canPost={canPost} canRequest={canRequest} costs={postedCosts.filter((item) => item.drawId === draw.id)} propertyId={id} onSaved={() => detail.reload()} />
+            <DrawFold key={draw.id} draw={draw} canEdit={canDraws} canPost={canPost} canRequest={canRequest} costs={postedCosts.filter((item) => item.drawId === draw.id)} propertyId={id} project={drawProject} onSaved={() => detail.reload()} />
           ))}
         </section>
       )}
-      {addingDraw && (
-        <FormSheet
-          eyebrow="Draws"
-          title="Add draw"
-          hint="Create the draw first, then list every scope item included in it."
-          onClose={() => setAddingDraw(false)}
-          onSubmit={async (event) => {
-            event.preventDefault()
-            setDrawPending(true)
-            setDrawError("")
-            const form = Object.fromEntries(new FormData(event.currentTarget))
-            try {
-              await api("/draws", {
-                method: "POST",
-                body: {
-                  propertyId: id,
-                  title: form.title,
-                  requestedDate: form.requestedDate || "",
-                  lines: cleanDrawLines(drawLines),
-                },
-              })
-              setAddingDraw(false)
-              detail.reload()
-            } catch (err) {
-              setDrawError(err.message)
-            } finally {
-              setDrawPending(false)
-            }
-          }}
-          submitLabel="Add draw"
-          pending={drawPending}
-          error={drawError}
-        >
-          <div className="form-grid">
-            <label className="field"><span>Draw name</span><input name="title" placeholder="Draw 3" required /></label>
-            <label className="field"><span>Forecast finish</span><input name="requestedDate" type="date" /></label>
-            <DrawLinesEditor lines={drawLines} onChange={setDrawLines} />
-          </div>
-        </FormSheet>
+      {addingDraw && drawProject && (
+        <DrawEditor project={drawProject} onClose={() => setAddingDraw(false)} onSaved={() => { setAddingDraw(false); detail.reload() }} />
       )}
     </DetailFrame>
   )
 }
 
-function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, onSaved }) {
+function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, project, onSaved }) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [addingCost, setAddingCost] = useState(false)
-  const [lines, setLines] = useState([])
   const [proofs, setProofs] = useState([])
   const [error, setError] = useState("")
-  const [saving, setSaving] = useState(false)
 
   return (
     <article className={open ? "draw-fold is-open" : "draw-fold"}>
@@ -451,7 +444,7 @@ function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, onSav
             </div>
             <div className="row-actions">
               {(canPost || canRequest) && <button type="button" className="tool" onClick={() => { setError(""); setProofs([]); setAddingCost(true) }}>{canPost ? "Add cost" : "Request cost"}</button>}
-              {canEdit && <button type="button" className="primary" onClick={() => { setError(""); setLines((draw.lines || []).length ? draw.lines.map((line) => ({ ...line })) : [blankDrawLine()]); setEditing(true) }}>Edit draw</button>}
+              {canEdit && <button type="button" className="primary" onClick={() => { setError(""); setEditing(true) }}>Edit draw</button>}
             </div>
           </div>
           <table className="sow-table">
@@ -484,46 +477,8 @@ function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, onSav
           )}
         </div>
       )}
-      {editing && (
-        <FormSheet
-          eyebrow={draw.title}
-          title="Edit draw"
-          hint="The draw amount comes from the scope lines. Pulled is the cash already taken, and remaining is the amount minus pulled."
-          onClose={() => setEditing(false)}
-          onSubmit={async (event) => {
-            event.preventDefault()
-            setSaving(true)
-            setError("")
-            const form = Object.fromEntries(new FormData(event.currentTarget))
-            try {
-              await api(`/draws/${draw.id}`, {
-                method: "PATCH",
-                body: {
-                  title: form.title,
-                  requestedDate: form.requestedDate || "",
-                  fundedAmount: form.fundedAmount,
-                  lines: cleanDrawLines(lines),
-                },
-              })
-              setEditing(false)
-              onSaved()
-            } catch (err) {
-              setError(err.message)
-            } finally {
-              setSaving(false)
-            }
-          }}
-          submitLabel="Save draw"
-          pending={saving}
-          error={error}
-        >
-          <div className="form-grid">
-            <label className="field"><span>Draw name</span><input name="title" defaultValue={draw.title} required /></label>
-            <label className="field"><span>Pulled</span><input name="fundedAmount" inputMode="decimal" defaultValue={draw.pulled ?? 0} /></label>
-            <label className="field"><span>Forecast finish</span><input name="requestedDate" type="date" defaultValue={draw.requestedDate || ""} /></label>
-            <DrawLinesEditor lines={lines} onChange={setLines} />
-          </div>
-        </FormSheet>
+      {editing && project && (
+        <DrawEditor project={project} draw={draw} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); onSaved() }} />
       )}
       {addingCost && (
         <FormSheet
@@ -565,7 +520,7 @@ function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, onSav
                 {canPost ? (
                   <label className="photo-pick">Attach photos<input name="proof" type="file" accept="image/*" multiple /></label>
                 ) : (
-                  <CameraCapture shots={proofs} onChange={setProofs} />
+                  <CameraCapture shots={proofs} onChange={setProofs} max={12} />
                 )}
               </div>
               <label className="field wide"><span>Note</span><input name="note" /></label>
@@ -574,45 +529,6 @@ function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, onSav
       )}
     </article>
   )
-}
-
-function DrawLinesEditor({ lines, onChange }) {
-  function update(index, key, value) {
-    onChange(lines.map((line, lineIndex) => lineIndex === index ? { ...line, [key]: value } : line))
-  }
-  return (
-    <div className="field wide draw-lines-editor">
-      <div className="draw-lines-label">
-        <span>Scope of work</span>
-        <button type="button" className="tool" onClick={() => onChange([...lines, blankDrawLine()])}>Add line</button>
-      </div>
-      {lines.map((line, index) => (
-        <div className="draw-line-edit" key={line.id || index}>
-          <input aria-label="Line item" placeholder="Line item" value={line.title} onChange={(event) => update(index, "title", event.target.value)} />
-          <input aria-label="Description" placeholder="Description from scope of work" value={line.description || ""} onChange={(event) => update(index, "description", event.target.value)} />
-          <input aria-label="Amount" placeholder="Amount" inputMode="decimal" value={line.amount ?? ""} onChange={(event) => update(index, "amount", event.target.value)} />
-          <button type="button" className="icon-btn" aria-label="Remove line" onClick={() => onChange(lines.filter((_, lineIndex) => lineIndex !== index))}>×</button>
-        </div>
-      ))}
-      <div className="draw-lines-total"><span>Draw total</span><strong>{money(lines.reduce((total, line) => total + (Number(line.amount) || 0), 0))}</strong></div>
-    </div>
-  )
-}
-
-async function removeProperty(id, address, router) {
-  if (!window.confirm(`Delete ${address}? Its draws, loans, costs, and photos will be removed.`)) return
-  await api(`/properties/${id}`, { method: "DELETE" })
-  router.push("/properties")
-}
-
-function blankDrawLine() {
-  return { id: "", title: "", description: "", amount: "" }
-}
-
-function cleanDrawLines(lines) {
-  return lines
-    .filter((line) => line.title.trim())
-    .map((line) => ({ id: line.id, title: line.title.trim(), description: String(line.description || "").trim(), amount: line.amount === "" ? null : Number(line.amount) }))
 }
 
 function propertyForm(property) {
@@ -714,5 +630,192 @@ function Fact({ label, value, wide }) {
       <dt>{label}</dt>
       <dd>{value || "Not entered"}</dd>
     </div>
+  )
+}
+
+function lineKey(title) {
+  return String(title || "").toLowerCase().replace(/\s+/g, " ").trim()
+}
+
+function isOpenDraw(draw) {
+  return !["funded", "partial", "received", "paid"].includes(String(draw.status || "").toLowerCase()) && !(Number(draw.fundedAmount ?? draw.pulled) > 0)
+}
+
+function scopeRows(scopeLines, draws, costs, requests) {
+  const rows = []
+  const byKey = new Map()
+  const row = (line) => {
+    const key = lineKey(line.title)
+    if (byKey.has(key)) return byKey.get(key)
+    const item = { key, id: String(line._id || line.id || ""), title: line.title, description: line.description || "", status: line.status || "", budget: line.budget ?? null, released: 0, requested: 0, draws: [], costs: [], requests: [] }
+    byKey.set(key, item)
+    rows.push(item)
+    return item
+  }
+  for (const line of scopeLines || []) row(line)
+  const ordered = [...(draws || [])].sort((a, b) => String(a.title).localeCompare(String(b.title), undefined, { numeric: true }))
+  let loose = 0
+  let looseRequested = 0
+  for (const draw of ordered) {
+    const open = isOpenDraw(draw)
+    let lined = 0
+    for (const line of draw.lines || []) {
+      const amount = Number(line.amount) || 0
+      if (!amount) continue
+      const item = row(line)
+      if (!item.description && line.description) item.description = line.description
+      if (open) item.requested += amount
+      else item.released += amount
+      if (!item.draws.includes(draw)) item.draws.push(draw)
+      lined += amount
+    }
+    const rest = (Number(draw.amount) || 0) - lined
+    if (rest > 0.5) {
+      if (open) looseRequested += rest
+      else loose += rest
+    }
+  }
+  const byId = new Map(rows.filter((item) => item.id).map((item) => [item.id, item]))
+  const other = { key: "__other", id: "", title: "Other work", description: "Money or costs not tied to a line item yet", released: loose, requested: looseRequested, draws: ordered, costs: [], requests: [], other: true }
+  for (const cost of costs || []) (byId.get(cost.scopeLineId) || other).costs.push(cost)
+  for (const request of requests || []) (byId.get(request.scopeLineId) || other).requests.push(request)
+  if (other.released || other.requested || other.costs.length || other.requests.length) rows.push(other)
+  return rows
+}
+
+function ScopeOfWork({ scopeLines, draws, costs, requests, showBudget, canPost, canRequest, propertyId, onSaved }) {
+  const rows = scopeRows(scopeLines, draws, costs, requests)
+  const released = rows.reduce((sum, item) => sum + item.released, 0)
+  const requested = rows.reduce((sum, item) => sum + item.requested, 0)
+  return (
+    <div className="scope-work">
+      <div className="scope-work-summary">
+        <span><small>Line items</small><b>{rows.filter((item) => !item.other).length}</b></span>
+        <span><small>Released</small><b>{money(released)}</b></span>
+        {requested > 0 && <span className="is-pending"><small>Requested</small><b>{money(requested)}</b></span>}
+      </div>
+      {!rows.length && <p className="property-missing">No line items on this house yet.</p>}
+      {rows.map((item) => (
+        <ScopeLine key={item.key} item={item} showBudget={showBudget} canPost={canPost} canRequest={canRequest} propertyId={propertyId} onSaved={onSaved} />
+      ))}
+    </div>
+  )
+}
+
+function ScopeLine({ item, showBudget, canPost, canRequest, propertyId, onSaved }) {
+  const [open, setOpen] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [proofs, setProofs] = useState([])
+  const [error, setError] = useState("")
+  const [pending, setPending] = useState(false)
+  const spent = item.costs.reduce((sum, cost) => sum + (Number(cost.amount) || 0), 0)
+  const target = item.draws.find(isOpenDraw) || item.draws[item.draws.length - 1] || null
+  const left = showBudget && item.budget != null ? Number(item.budget) - item.released - item.requested : null
+
+  async function submit(event) {
+    event.preventDefault()
+    setError("")
+    if (!canPost && !proofs.length) {
+      setError("Take at least one photo with the camera.")
+      return
+    }
+    const body = new FormData(event.currentTarget)
+    body.set("propertyId", propertyId)
+    if (item.id) body.set("scopeLineId", item.id)
+    if (target) body.set("drawId", target.id)
+    body.set("category", "Materials")
+    body.set("entity", "Construction company")
+    body.set("costTreatment", "Include in construction margin")
+    for (const shot of proofs) body.append("proof", shot.file, shot.file.name)
+    setPending(true)
+    try {
+      await api(canPost ? "/expenses/post" : "/expenses", { method: "POST", body })
+      setAdding(false)
+      onSaved()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <article className={`scope-line${open ? " is-open" : ""}${item.other ? " is-other" : ""}`}>
+      <button type="button" className="scope-line-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        <span className="scope-line-name">
+          <b>{item.title}</b>
+          <small>{[item.status && !item.other ? item.status : "", item.description].filter(Boolean).join(" · ") || "Tap to see costs"}</small>
+        </span>
+        <span className="scope-line-money">
+          <b>{money(item.released)}</b>
+          <small>{item.requested > 0 ? `${money(item.requested)} requested` : "released"}</small>
+        </span>
+        <i aria-hidden="true">⌄</i>
+      </button>
+      {open && (
+        <div className="scope-line-body">
+          <dl className="scope-line-facts">
+            {showBudget && item.budget != null && <div><dt>Budget</dt><dd>{money(item.budget)}</dd></div>}
+            <div><dt>Released</dt><dd>{money(item.released)}</dd></div>
+            <div><dt>Requested</dt><dd>{money(item.requested)}</dd></div>
+            {left != null && <div><dt>Left</dt><dd className={left < -0.5 ? "is-over" : undefined}>{money(left)}</dd></div>}
+            <div><dt>Costs filed</dt><dd>{money(spent)}</dd></div>
+          </dl>
+          {item.costs.length > 0 && (
+            <ul className="property-scope">
+              {item.costs.map((cost) => (
+                <li key={cost.id}>
+                  <div><strong>{cost.title}</strong><em>{cost.date || "Posted"}</em><ProofPhotos ids={cost.proofFileIds} urls={cost.proofUrls} /></div>
+                  <span>{money(cost.amount)}</span>
+                  <StatusPill>Posted</StatusPill>
+                </li>
+              ))}
+            </ul>
+          )}
+          {item.requests.length > 0 && (
+            <ul className="property-scope">
+              {item.requests.map((request) => (
+                <li key={request.id}>
+                  <div><strong>{request.title}</strong><em>{request.date || "Submitted"}</em></div>
+                  <span>{money(request.amount)}</span>
+                  <StatusPill>{request.status}</StatusPill>
+                </li>
+              ))}
+            </ul>
+          )}
+          {!item.costs.length && !item.requests.length && <p className="property-missing">No costs filed on this line yet.</p>}
+          {(canPost || canRequest) && (
+            <button type="button" className="tool scope-line-action" onClick={() => { setError(""); setProofs([]); setAdding(true) }}>{canPost ? "Add cost" : "Request cost"}</button>
+          )}
+        </div>
+      )}
+      {adding && (
+        <FormSheet
+          eyebrow={item.title}
+          title={canPost ? "Add cost" : "Request cost"}
+          hint={item.other ? "This cost isn't tied to a line item." : `This cost is filed against ${item.title}.`}
+          onClose={() => setAdding(false)}
+          onSubmit={submit}
+          submitLabel={canPost ? "Add cost" : "Submit request"}
+          pending={pending}
+          error={error}
+        >
+          <div className="form-grid">
+            <label className="field wide"><span>Material or cost</span><input name="title" required /></label>
+            <label className="field"><span>Amount</span><input name="amount" type="number" min="0.01" step="0.01" required /></label>
+            <label className="field"><span>Date</span><input name="date" type="date" /></label>
+            <div className="field wide">
+              <span>Proof photos</span>
+              {canPost ? (
+                <label className="photo-pick">Attach photos<input name="proof" type="file" accept="image/*" multiple /></label>
+              ) : (
+                <CameraCapture shots={proofs} onChange={setProofs} max={12} />
+              )}
+            </div>
+            <label className="field wide"><span>Note</span><input name="note" /></label>
+          </div>
+        </FormSheet>
+      )}
+    </article>
   )
 }

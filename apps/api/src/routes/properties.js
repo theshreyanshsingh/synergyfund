@@ -108,7 +108,8 @@ propertiesRouter.get(
       res.json({
         property: presentProperty(property, req.user),
         photos: photos.map(presentPhoto),
-        expenses: await withProofUrls(expenseDocs.filter((item) => item.drawId).map(presentCost)),
+        expenses: await withProofUrls(expenseDocs.filter((item) => item.drawId || item.scopeLineId).map(presentCost)),
+        requests: await withProofUrls(requestDocs.filter((item) => String(item.requestedBy) === String(req.user._id)).map(presentCost)),
         draws: canDraws ? { items: draws.map(presentContractorDraw) } : null,
       })
       return
@@ -141,7 +142,7 @@ propertiesRouter.get(
 propertiesRouter.post(
   "/",
   requirePermission("properties.write"),
-  upload.array("photos", 24),
+  upload.array("photos", 60),
   asyncHandler(async (req, res) => {
     const parsed = writable.safeParse({ ...req.body, purchasePrice: numberOrNull(req.body.purchasePrice), arv: numberOrNull(req.body.arv), rehabBudget: numberOrNull(req.body.rehabBudget), houseBoughtPrice: numberOrNull(req.body.houseBoughtPrice), actualRent: numberOrNull(req.body.actualRent), marketRent: numberOrNull(req.body.marketRent) })
     if (!parsed.success) {

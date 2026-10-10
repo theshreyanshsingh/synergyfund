@@ -1,5 +1,6 @@
 import { Inter } from "next/font/google"
 import { Providers } from "../components/shell/Providers"
+import { NoZoom } from "../components/shell/NoZoom"
 import "./globals.css"
 
 const inter = Inter({ subsets: ["latin"], variable: "--font" })
@@ -22,6 +23,9 @@ export const metadata = {
 export const viewport = {
   width: "device-width",
   initialScale: 1,
+  maximumScale: 1,
+  minimumScale: 1,
+  userScalable: false,
   themeColor: "#111111",
 }
 
@@ -30,6 +34,7 @@ export default function RootLayout({ children }) {
     <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
         <script dangerouslySetInnerHTML={{ __html: "try{var t=localStorage.getItem('synergifund-theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t}catch(e){}" }} />
+        <NoZoom />
         <Providers>{children}</Providers>
       </body>
     </html>

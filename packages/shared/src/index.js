@@ -288,7 +288,7 @@ export function drawPulled(draw) {
   return draw?.status === "Funded" ? amountOf(draw.amount) : 0
 }
 
-export function drawFigures({ budget, lenderFunding, fundedPercent, draws = [] }) {
+export function drawFigures({ budget, lenderFunding, fundedPercent, draws = [], budgetEstimated = false }) {
   const pendingDraws = draws.filter(isPendingDraw)
   const drawnDraws = draws.filter((draw) => !isPendingDraw(draw))
   const drawn = drawnDraws.reduce((sum, draw) => sum + amountOf(draw.amount), 0)
@@ -310,12 +310,67 @@ export function drawFigures({ budget, lenderFunding, fundedPercent, draws = [] }
     budgetUsed: total ? drawn / total : null,
     fundsAvailable: lender ? (available ?? 0) / lender : null,
     fundedShare: share,
+    budgetEstimated: Boolean(budgetEstimated && total != null),
     drawCount: drawnDraws.length,
     pendingCount: pendingDraws.length,
   }
 }
 
+function positive(value) {
+  if (value == null || value === "") return null
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : null
+}
+
+function scopeKey(title) {
+  return String(title || "").toLowerCase().replace(/\s+/g, " ").trim()
+}
+
+export function resolveBudget({ rehabBudget, recordBudget, scopeLines = [], draws = [] }) {
+  const explicit = positive(rehabBudget) ?? positive(recordBudget)
+  if (explicit != null) return { budget: explicit, estimated: false, source: "budget" }
+  const committed = new Map()
+  let loose = 0
+  for (const draw of draws) {
+    let lined = 0
+    for (const line of draw.lines || []) {
+      const amount = Number(line.amount) || 0
+      if (!amount) continue
+      committed.set(scopeKey(line.title), (committed.get(scopeKey(line.title)) || 0) + amount)
+      lined += amount
+    }
+    loose += Math.max(0, (Number(draw.amount) || 0) - lined)
+  }
+  if (!scopeLines.length && !committed.size && !loose) return { budget: null, estimated: false, source: "none" }
+  let total = 0
+  let budgeted = 0
+  let missing = 0
+  for (const line of scopeLines) {
+    const key = scopeKey(line.title)
+    const budget = positive(line.budget)
+    if (budget != null) {
+      total += budget
+      budgeted += 1
+    } else {
+      total += committed.get(key) || 0
+      missing += 1
+    }
+    committed.delete(key)
+  }
+  for (const amount of committed.values()) {
+    total += amount
+    missing += 1
+  }
+  total += loose
+  return {
+    budget: total > 0 ? Math.round(total * 100) / 100 : null,
+    estimated: missing > 0 || loose > 0 || !budgeted,
+    source: budgeted ? "lines" : "drawn",
+  }
+}
+
 export function drawHealth(figures) {
+  if (figures.budgetEstimated && !figures.pending) return "Budget missing"
   if (figures.pending > 0) return "Pending draw"
   if (!figures.drawn) return "Not started"
   if (figures.fundsAvailable != null && figures.fundsAvailable < 0.15) return "Low funds"

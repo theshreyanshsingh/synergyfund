@@ -155,7 +155,7 @@ export default function ExpensesPage() {
               </select>
             </label>
             <label className="field"><span>Margin</span><select name="costTreatment"><option>Include in construction margin</option><option>Exclude from construction margin</option></select></label>
-            <label className="field wide"><span>Proof photos</span>{camera ? <CameraCapture shots={proofs} onChange={setProofs} /> : <input name="proof" type="file" accept="image/*" multiple required />}</label>
+            <label className="field wide"><span>Proof photos</span>{camera ? <CameraCapture shots={proofs} onChange={setProofs} max={12} /> : <input name="proof" type="file" accept="image/*" multiple required />}</label>
           </div>
         </FormSheet>
       )}
@@ -244,7 +244,7 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camer
         <label className="field"><span>Amount</span><input name="amount" type="number" min="0.01" step="0.01" defaultValue={item.amount} required /></label>
         <label className="field"><span>Vendor</span><input name="vendor" defaultValue={item.vendor || ""} /></label>
         <label className="field wide"><span>Note</span><input name="note" defaultValue={item.note || ""} /></label>
-        <label className="field wide"><span>Add or replace proof photos</span>{camera ? <CameraCapture shots={proofs} onChange={setProofs} /> : <input name="proof" type="file" accept="image/*" multiple />}</label>
+        <label className="field wide"><span>Add or replace proof photos</span>{camera ? <CameraCapture shots={proofs} onChange={setProofs} max={12} /> : <input name="proof" type="file" accept="image/*" multiple />}</label>
       </div>
     </FormSheet>
   )

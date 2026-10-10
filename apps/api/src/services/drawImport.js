@@ -2,12 +2,17 @@ import { drawFigures } from "@synergifund/shared"
 import xlsx from "xlsx"
 
 export const DRAW_FIELD_ALIASES = [
-  ["fundedAmount", ["funded amount", "lender cash", "received amount"]],
+  ["fundedAmount", ["funded amount", "lender cash", "received amount", "cash received", "pulled", "amount pulled"]],
   ["requestedDate", ["forecast finish", "requested date", "request date", "est date", "forecast"]],
   ["fundedDate", ["funded date", "received date", "date received"]],
-  ["rehabBudget", ["rehab budget", "rehab"]],
+  ["rehabBudget", ["rehab budget", "rehab", "total budget"]],
+  ["fundingLimit", ["lender funding", "funding limit", "lender limit"]],
   ["address", ["property address", "street", "project", "property", "address"]],
-  ["title", ["draw name", "scope item", "description", "draw", "line", "item"]],
+  ["lineAmount", ["line amount", "line item amount", "item amount", "scope amount"]],
+  ["lineBudget", ["line budget", "line item budget", "scope budget"]],
+  ["lineDescription", ["line description", "line item description", "scope description", "description"]],
+  ["lineTitle", ["line item", "scope item", "scope of work", "scope", "line", "item"]],
+  ["title", ["draw name", "draw"]],
   ["amount", ["draw amount", "gross", "amount"]],
   ["status", ["draw status", "status"]],
   ["city", ["location", "city"]],
@@ -331,107 +336,239 @@ export function readWorkbook(filePath, aliasNames = []) {
   return tables
 }
 
-export function classifyDrawRows(tables, properties, draws) {
-  const propertiesByAddress = new Map()
-  for (const property of properties) propertiesByAddress.set(normalize(property.address), property)
-  const existingKeys = new Set()
+function planDrawRows(rows, properties, draws) {
+  const byAddress = indexProperties(properties)
+  const existing = new Map()
   for (const draw of draws) {
     const property = properties.find((item) => String(item._id || item.id) === String(draw.propertyId))
-    if (!property) continue
-    existingKeys.add(drawKey(property.address, draw.title))
-    if (isAmountTitle(draw.title) && draw.amount != null) existingKeys.add(amountKey(property.address, draw.amount))
+    if (property) existing.set(drawKey(property.address, draw.title), draw)
   }
-  const seen = new Set()
+  const groups = new Map()
+  const decisions = rows.map((source) => {
+    const mapped = mapRow(source.cells)
+    const address = String(mapped.address || "").trim()
+    if (!address) return { status: "skipped", reason: "No address, so this row was not added." }
+    const property = byAddress.get(normalize(address))
+    const title = String(mapped.title || "").trim()
+    const lineTitle = String(mapped.lineTitle || "").trim()
+    if (!title) {
+      if (lineTitle) {
+        const known = (property?.scopeLines || []).some((line) => normalize(line.title) === normalize(lineTitle))
+        if (known) return { status: "duplicate", reason: `${lineTitle} is already a line item on ${address}.`, mapped, scopeOnly: true }
+        return { status: "new", reason: `Adds ${lineTitle} to the line items of ${address}.`, mapped, scopeOnly: true }
+      }
+      if (mapped.rehabBudget == null) {
+        return { status: "skipped", reason: mapped.amount != null ? "This amount has no draw name. Add a Draw column (Draw 1, Draw 2…) so it can be saved as a draw." : "This row has no draw, line item or budget." }
+      }
+      if (property && property.rehabBudget != null) return { status: "duplicate", reason: `${address} is already on file. Its budget was not replaced.` }
+      return { status: "new", reason: property ? "The budget is blank on this property, so this figure will be added." : "New property. Only the cells with values will be saved.", mapped, budgetOnly: true }
+    }
+    const key = drawKey(address, title)
+    let group = groups.get(key)
+    if (!group) {
+      group = { key, address, title, mapped, property, existing: existing.get(key), rows: [], lines: [] }
+      groups.set(key, group)
+    }
+    group.rows.push(source)
+    if (lineTitle) {
+      group.lines.push({
+        title: lineTitle,
+        description: String(mapped.lineDescription || "").trim(),
+        amount: mapped.lineAmount,
+        budget: mapped.lineBudget,
+        row: source,
+      })
+    }
+    const lineNote = lineTitle ? `${lineTitle}${mapped.lineAmount != null ? ` · $${Number(mapped.lineAmount).toLocaleString("en-US")}` : ""}` : ""
+    if (group.existing && ((group.existing.lines || []).length || !lineTitle)) {
+      return { status: "duplicate", reason: `${address} already has ${title}. The original was left unchanged.`, group }
+    }
+    if (group.existing) return { status: "new", reason: `Adds the line item ${lineNote} to ${title}, which is already on file.`, group }
+    if (group.rows.length > 1) return { status: "new", reason: `Line item of ${title}${lineNote ? `: ${lineNote}` : ""}.`, group, line: true }
+    const where = property ? `New draw on ${address}.` : "New property and draw."
+    return { status: "new", reason: `${where}${lineNote ? ` First line item: ${lineNote}.` : ""}`, group }
+  })
+  return { decisions, groups: [...groups.values()] }
+}
+
+export function classifyDrawRows(tables, properties, draws) {
   const headers = []
   const rows = []
   for (const table of tables) {
     for (const header of table.headers) if (!headers.includes(header)) headers.push(header)
-    for (const source of table.rows) {
-      rows.push({ ...source, ...decideRow(source, propertiesByAddress, existingKeys, seen) })
-    }
+    rows.push(...table.rows)
   }
+  const { decisions, groups } = planDrawRows(rows, properties, draws)
+  const marked = rows.map((source, index) => ({ ...source, status: decisions[index].status, reason: decisions[index].reason }))
+  const newGroups = groups.filter((group) => decisions.some((decision) => decision.group === group && decision.status === "new"))
   return {
     headers,
-    rows,
+    rows: marked,
     counts: {
-      pending: rows.filter((row) => row.status === "new").length,
-      duplicate: rows.filter((row) => row.status === "duplicate").length,
-      skipped: rows.filter((row) => row.status === "skipped").length,
+      pending: marked.filter((row) => row.status === "new").length,
+      draws: newGroups.filter((group) => !group.existing).length,
+      lines: newGroups.reduce((total, group) => total + group.lines.length, 0),
+      duplicate: marked.filter((row) => row.status === "duplicate").length,
+      skipped: marked.filter((row) => row.status === "skipped").length,
       added: 0,
     },
   }
 }
 
-export async function appendNewDrawRows({ rows, properties, draws, Draw, Property, userName }) {
-  const liveProperties = [...properties]
-  const liveDraws = [...draws]
+function mergeLines(lines, fallbackAmount) {
+  const merged = new Map()
+  for (const line of lines) {
+    const key = normalize(line.title)
+    const amount = line.amount ?? (lines.length === 1 ? fallbackAmount : null)
+    const current = merged.get(key)
+    if (current) {
+      if (amount != null) current.amount = (current.amount || 0) + amount
+      if (!current.description && line.description) current.description = line.description
+      if (current.budget == null && line.budget != null) current.budget = line.budget
+    } else {
+      merged.set(key, { title: line.title, description: line.description || "", amount: amount ?? undefined, budget: line.budget ?? null })
+    }
+  }
+  return [...merged.values()]
+}
+
+function addScopeLines(property, lines) {
+  const known = new Set((property.scopeLines || []).map((line) => normalize(line.title)))
   let added = 0
-  let duplicate = 0
-  let skipped = 0
-  const marks = []
+  for (const line of lines) {
+    if (known.has(normalize(line.title))) continue
+    known.add(normalize(line.title))
+    property.scopeLines = [...(property.scopeLines || []), { title: line.title, description: line.description || "", budget: line.budget ?? undefined, status: "Not started" }]
+    added += 1
+  }
+  if (added) property.markModified?.("scopeLines")
+  return added
+}
+
+export async function appendNewDrawRows({ rows, properties, draws, Draw, DrawBudget, Property, userName }) {
+  const liveProperties = [...properties]
+  const { decisions, groups } = planDrawRows(rows, liveProperties, draws)
+  const marks = rows.map((source, index) => mark(source, decisions[index].status, decisions[index].reason))
   const propertyIds = new Set()
-  for (const source of rows) {
-    const decision = decideRow(source, indexProperties(liveProperties), indexDraws(liveProperties, liveDraws), new Set())
-    if (decision.status === "skipped") {
-      skipped += 1
-      marks.push(mark(source, "skipped", decision.reason))
-      continue
-    }
-    if (decision.status === "duplicate") {
-      duplicate += 1
-      marks.push(mark(source, "duplicate", decision.reason))
-      continue
-    }
-    const mapped = mapRow(source.cells)
-    const address = String(mapped.address || "").trim()
+  let added = 0
+  let lineCount = 0
+
+  async function propertyFor(address, mapped) {
     let property = liveProperties.find((item) => normalize(item.address) === normalize(address))
     if (!property) {
-      property = await Property.create({
-        address,
-        city: String(mapped.city || "").trim(),
-        rehabBudget: mapped.rehabBudget,
-        updatedBy: userName,
-      })
+      property = await Property.create({ address, city: String(mapped.city || "").trim(), rehabBudget: mapped.rehabBudget ?? undefined, updatedBy: userName })
       liveProperties.push(property)
-      propertyIds.add(String(property._id))
     } else if (property.rehabBudget == null && mapped.rehabBudget != null) {
       property.rehabBudget = mapped.rehabBudget
       if (!String(property.city || "").trim() && mapped.city) property.city = String(mapped.city).trim()
-      await property.save()
-      propertyIds.add(String(property._id))
     }
-    const title = drawTitle(mapped)
-    if (!title) {
-      added += 1
-      marks.push(mark(source, "added", "The property was missing a rehab budget, so only that blank was filled."))
-      continue
-    }
-    const already = liveDraws.find((draw) => {
-      if (String(draw.propertyId) !== String(property._id || property.id)) return false
-      if (normalize(draw.title) === normalize(title)) return true
-      return !String(mapped.title || "").trim() && isAmountTitle(draw.title) && draw.amount === mapped.amount
-    })
-    if (already) {
-      duplicate += 1
-      marks.push(mark(source, "duplicate", `${address} already has this draw. The original was left unchanged.`))
-      continue
-    }
-    const status = drawStatus(mapped.status)
-    const draw = await Draw.create({
-      propertyId: property._id,
-      title,
-      status,
-      amount: mapped.amount,
-      fundedAmount: status === "Funded" ? mapped.fundedAmount : mapped.fundedAmount,
-      requestedDate: mapped.requestedDate || "",
-      fundedDate: status === "Funded" ? mapped.fundedDate || "" : mapped.fundedDate || "",
-      notes: mapped.title ? "" : "Imported without a draw name. Matched later by address and amount.",
-    })
-    liveDraws.push(draw)
-    added += 1
-    marks.push(mark(source, "added", "Appended. Existing records were not changed."))
+    propertyIds.add(String(property._id))
+    return property
   }
-    return { marks, propertyIds: [...propertyIds], counts: { pending: 0, added, duplicate, skipped } }
+
+  for (const group of groups) {
+    const wanted = decisions.filter((decision) => decision.group === group && decision.status === "new")
+    if (!wanted.length) continue
+    const property = await propertyFor(group.address, group.mapped)
+    const lines = mergeLines(group.lines, group.mapped.amount)
+    const lineTotal = lines.reduce((total, line) => total + (Number(line.amount) || 0), 0)
+    lineCount += addScopeLines(property, lines)
+    await property.save()
+    const drawLines = lines.filter((line) => line.amount != null).map((line) => ({ title: line.title, description: line.description, amount: line.amount }))
+    if (group.existing) {
+      const draw = await Draw.findById(group.existing._id || group.existing.id)
+      if (draw && !(draw.lines || []).length) {
+        draw.lines = drawLines
+        if (draw.amount == null && lineTotal) draw.amount = lineTotal
+        await draw.save()
+      }
+    } else {
+      const status = drawStatus(group.mapped.status)
+      await Draw.create({
+        propertyId: property._id,
+        title: group.title,
+        status,
+        amount: group.mapped.amount ?? (lineTotal || undefined),
+        fundedAmount: group.mapped.fundedAmount ?? undefined,
+        requestedDate: group.mapped.requestedDate || "",
+        fundedDate: group.mapped.fundedDate || "",
+        lines: drawLines,
+        notes: group.mapped.amount != null && lineTotal && Math.abs(lineTotal - group.mapped.amount) > 0.5 ? `Line items add up to $${lineTotal.toLocaleString("en-US")}; the sheet's draw amount is $${group.mapped.amount.toLocaleString("en-US")}.` : "",
+      })
+      added += 1
+    }
+    for (const decision of wanted) {
+      const at = decisions.indexOf(decision)
+      marks[at] = mark(rows[at], "added", decision.reason.replace(/^New property and draw\.|^New draw on [^.]+\./, "Added."))
+    }
+  }
+  for (const [index, decision] of decisions.entries()) {
+    if (decision.status !== "new" || decision.group) continue
+    const mapped = decision.mapped
+    const property = await propertyFor(String(mapped.address).trim(), mapped)
+    if (decision.scopeOnly) {
+      lineCount += addScopeLines(property, [{ title: String(mapped.lineTitle).trim(), description: String(mapped.lineDescription || "").trim(), budget: mapped.lineBudget ?? mapped.lineAmount ?? mapped.amount ?? null }])
+    }
+    await property.save()
+    marks[index] = mark(rows[index], "added", decision.scopeOnly ? "Line item added." : "Budget added.")
+  }
+
+  let budgetsFilled = 0
+  const touched = new Map()
+  for (const [index, decision] of decisions.entries()) {
+    const mapped = decision.mapped || decision.group?.mapped
+    if (decision.status === "skipped" || !mapped) continue
+    const rowMapped = mapRow(rows[index].cells)
+    const address = String(rowMapped.address || "").trim()
+    const property = liveProperties.find((item) => normalize(item.address) === normalize(address))
+    if (!property) continue
+    let changed = false
+    if (property.rehabBudget == null && rowMapped.rehabBudget != null) {
+      property.rehabBudget = rowMapped.rehabBudget
+      changed = true
+      budgetsFilled += 1
+    }
+    const lineTitle = String(rowMapped.lineTitle || "").trim()
+    if (lineTitle && rowMapped.lineBudget != null) {
+      const line = (property.scopeLines || []).find((item) => normalize(item.title) === normalize(lineTitle))
+      if (line && (line.budget == null || line.budget === "")) {
+        line.budget = rowMapped.lineBudget
+        property.markModified?.("scopeLines")
+        changed = true
+        budgetsFilled += 1
+      }
+    }
+    if (changed) touched.set(String(property._id), property)
+    if (DrawBudget && rowMapped.fundingLimit != null && !touched.has(`funding:${property._id}`)) {
+      touched.set(`funding:${property._id}`, true)
+      const record = await DrawBudget.findOne({ propertyId: property._id })
+      if (!record) {
+        await DrawBudget.create({ propertyId: property._id, title: "Lender funding", budget: property.rehabBudget ?? rowMapped.rehabBudget ?? undefined, fundingLimit: rowMapped.fundingLimit, fundingBasis: "Imported workbook" })
+        budgetsFilled += 1
+      } else if (record.fundingLimit == null) {
+        record.fundingLimit = rowMapped.fundingLimit
+        await record.save()
+        budgetsFilled += 1
+      }
+    }
+  }
+  for (const [id, property] of touched) {
+    if (id.startsWith("funding:")) continue
+    await property.save()
+    propertyIds.add(id)
+  }
+  return {
+    marks,
+    propertyIds: [...propertyIds],
+    counts: {
+      pending: 0,
+      added,
+      budgets: budgetsFilled,
+      lines: lineCount,
+      duplicate: decisions.filter((decision) => decision.status === "duplicate").length,
+      skipped: decisions.filter((decision) => decision.status === "skipped").length,
+    },
+  }
 }
 
 function parsePropertySheets(book) {
@@ -585,30 +722,6 @@ function chooseHeader(grid, wanted) {
   return grid.findIndex((line) => (line || []).some((cell) => String(cell || "").trim()))
 }
 
-function decideRow(source, propertiesByAddress, existingKeys, seen) {
-  const mapped = mapRow(source.cells)
-  const address = String(mapped.address || "").trim()
-  if (!address) return { status: "skipped", reason: "No address, so this row was not added." }
-  const title = drawTitle(mapped)
-  const property = propertiesByAddress.get(normalize(address))
-  const keys = []
-  if (title) keys.push(drawKey(address, title))
-  if (!String(mapped.title || "").trim() && mapped.amount != null) keys.push(amountKey(address, mapped.amount))
-  if (!title && mapped.rehabBudget == null) {
-    return { status: "skipped", reason: "This row has no draw name, amount, or rehab budget." }
-  }
-  if (!title && property && property.rehabBudget != null) {
-    return { status: "duplicate", reason: `${address} is already on file. Its rehab budget was not replaced.` }
-  }
-  if (keys.some((key) => existingKeys.has(key) || seen.has(key))) {
-    return { status: "duplicate", reason: `${address} already has this draw. The original was left unchanged.` }
-  }
-  keys.forEach((key) => seen.add(key))
-  if (!property) return { status: "new", reason: "New property. Only the cells with values will be saved." }
-  if (title) return { status: "new", reason: "New draw on a property that is already on file. Nothing already stored will be replaced." }
-  return { status: "new", reason: "Rehab budget is blank on this property, so this figure will be added." }
-}
-
 function mapRow(cells) {
   const headers = Object.keys(cells)
   const used = new Set()
@@ -632,18 +745,12 @@ function mapRow(cells) {
     requestedDate: asDate(mapped.requestedDate),
     fundedDate: asDate(mapped.fundedDate),
     rehabBudget: numberOrEmpty(mapped.rehabBudget),
+    lineTitle: mapped.lineTitle || "",
+    lineDescription: mapped.lineDescription || "",
+    lineAmount: numberOrEmpty(mapped.lineAmount),
+    lineBudget: numberOrEmpty(mapped.lineBudget),
+    fundingLimit: numberOrEmpty(mapped.fundingLimit),
   }
-}
-
-function isAmountTitle(title) {
-  return /^amount \d/i.test(String(title || "").trim())
-}
-
-function drawTitle(mapped) {
-  const title = String(mapped.title || "").trim()
-  if (title) return title
-  if (mapped.amount == null) return ""
-  return `Amount ${mapped.amount}`
 }
 
 function drawStatus(value) {
@@ -657,25 +764,10 @@ function drawKey(address, title) {
   return `${normalize(address)}||title||${normalize(title)}`
 }
 
-function amountKey(address, amount) {
-  return `${normalize(address)}||amount||${amount}`
-}
-
 function indexProperties(properties) {
   const map = new Map()
   for (const property of properties) map.set(normalize(property.address), property)
   return map
-}
-
-function indexDraws(properties, draws) {
-  const keys = new Set()
-  for (const draw of draws) {
-    const property = properties.find((item) => String(item._id || item.id) === String(draw.propertyId))
-    if (!property) continue
-    keys.add(drawKey(property.address, draw.title))
-    if (isAmountTitle(draw.title) && draw.amount != null) keys.add(amountKey(property.address, draw.amount))
-  }
-  return keys
 }
 
 function mark(source, status, reason) {

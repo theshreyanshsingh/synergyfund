@@ -99,7 +99,10 @@ export function WorkspacePage({
         {(action || secondary) && (
           <HeaderActions>
             {secondary && (
-              <button type="button" className="import-button" onClick={secondary.onClick}>{secondary.label}</button>
+              <button type="button" className="import-button" disabled={secondary.disabled} aria-busy={secondary.busy || undefined} onClick={secondary.onClick}>
+                {secondary.busy && <span className="spinner spinner-sm tw:animate-spin" />}
+                {secondary.label}
+              </button>
             )}
             {action && (
               <button type="button" className="primary" onClick={action.onClick}>

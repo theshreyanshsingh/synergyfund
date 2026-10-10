@@ -255,6 +255,8 @@ export const ImportJob = register(
         skipped: Number,
         removed: Number,
         lines: Number,
+        draws: Number,
+        budgets: Number,
       },
       status: { type: String, default: "Draft" },
       createdBy: { type: Schema.Types.ObjectId, ref: "User" },

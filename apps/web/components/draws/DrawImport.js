@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { StatusPill } from "../ui/StatusPill"
 import { api } from "../../lib/api"
 
@@ -11,16 +11,26 @@ const LABELS = {
   skipped: "Skipped",
 }
 
-export function DrawImport({ job, onOpen, onChange, onReload, inputRef }) {
+export function DrawImport({ job, onOpen, onChange, onReload, inputRef, onBusy }) {
   const [error, setError] = useState("")
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusyState] = useState("")
+  const [fileName, setFileName] = useState("")
+  const working = useRef(false)
+
+  function setBusy(next) {
+    working.current = Boolean(next)
+    setBusyState(next)
+    onBusy?.(next)
+  }
 
   async function upload(event) {
     const file = event.target.files?.[0]
     event.target.value = ""
-    if (!file) return
-    setBusy(true)
+    if (!file || working.current) return
+    setFileName(file.name)
+    setBusy("reading")
     setError("")
+    onOpen(null)
     try {
       const body = new FormData()
       body.set("file", file)
@@ -30,29 +40,38 @@ export function DrawImport({ job, onOpen, onChange, onReload, inputRef }) {
     } catch (err) {
       setError(err.message)
     } finally {
-      setBusy(false)
+      setBusy("")
     }
   }
 
   async function confirm() {
-    setBusy(true)
+    if (working.current) return
+    setBusy("saving")
     setError("")
     try {
       const result = await api(`/draws/import/${job.id}/confirm`, { method: "POST", body: {} })
       onChange(result.import)
       await onReload()
-      if (!result.import?.reconciliation) onOpen(null)
     } catch (err) {
       setError(err.message)
     } finally {
-      setBusy(false)
+      setBusy("")
     }
   }
 
   return (
     <>
-      <input ref={inputRef} type="file" accept=".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onChange={upload} />
-      {error && !job && <p className="draws-empty">{error}</p>}
+      <input ref={inputRef} type="file" accept=".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden disabled={Boolean(busy)} onChange={upload} />
+      {busy === "reading" && (
+        <section className="panel import-panel import-working" role="status" aria-live="polite">
+          <span className="spinner spinner-md tw:animate-spin" />
+          <div>
+            <b>Reading {fileName || "the workbook"}…</b>
+            <p>Checking every sheet, property and line item. This can take a few seconds for a big workbook.</p>
+          </div>
+        </section>
+      )}
+      {error && !job && !busy && <p className="draws-empty import-error">{error}</p>}
       {job && (
         <section className="panel import-panel">
           <div className="import-head">
@@ -63,16 +82,19 @@ export function DrawImport({ job, onOpen, onChange, onReload, inputRef }) {
                   ? job.status === "Confirmed"
                     ? `Saved ${job.properties?.length || 0} properties · ${count(job, "added")} draws added, ${count(job, "duplicate")} updated${count(job, "removed") ? `, ${count(job, "removed")} removed` : ""} · ${count(job, "lines")} line items`
                     : `${job.properties?.length || 0} properties · ${count(job, "pending")} draws · ${(job.properties || []).reduce((total, property) => total + (property.lines?.length || 0), 0)} line items ready to save`
-                  : `${count(job, "added") || count(job, "pending")} to append · ${count(job, "duplicate")} duplicates left as they are · ${count(job, "skipped")} skipped`}
+                  : job.status === "Confirmed"
+                    ? `Added ${count(job, "added")} ${count(job, "added") === 1 ? "draw" : "draws"} and ${count(job, "lines")} line items · ${count(job, "duplicate")} left as they were · ${count(job, "skipped")} skipped`
+                    : `${count(job, "draws")} ${count(job, "draws") === 1 ? "draw" : "draws"} with ${count(job, "lines")} line items to add · ${count(job, "duplicate")} already on file · ${count(job, "skipped")} skipped`}
               </p>
             </div>
             <div className="import-actions">
               {job.status === "Draft" && (
-                <button type="button" className="primary" disabled={busy || !count(job, "pending")} onClick={confirm}>
-                  {count(job, "pending") ? (job.format === "sheet" ? "Save properties and draws" : "Append new rows") : "Nothing new to add"}
+                <button type="button" className="primary import-save" disabled={Boolean(busy) || !count(job, "pending")} aria-busy={busy === "saving"} onClick={confirm}>
+                  {busy === "saving" && <span className="spinner spinner-sm tw:animate-spin" />}
+                  {busy === "saving" ? "Saving…" : count(job, "pending") ? (job.format === "sheet" ? "Save properties and draws" : "Append new rows") : "Nothing new to add"}
                 </button>
               )}
-              <button type="button" className="import-button" onClick={() => onOpen(null)}>Close</button>
+              <button type="button" className="import-button" disabled={Boolean(busy)} onClick={() => onOpen(null)}>Close</button>
             </div>
           </div>
           {error && <p className="draws-empty">{error}</p>}
@@ -81,7 +103,7 @@ export function DrawImport({ job, onOpen, onChange, onReload, inputRef }) {
             <SheetPreview job={job} />
           ) : (
             <>
-          <p className="import-note">Duplicate rows stay marked and are not saved again. Draws and budgets already on file are not replaced.</p>
+          <p className="import-note">Rows for the same property and draw become one draw, with each row as a line item. Draws already on file are not replaced.</p>
           {job.truncated && <p className="import-note">Showing the first {job.rows.length} of {job.totalRows} rows. Append still saves every new row.</p>}
           <div className="import-rows">
             {(job.rows || []).map((row) => {

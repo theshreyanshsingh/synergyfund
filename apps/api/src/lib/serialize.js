@@ -24,6 +24,12 @@ export function presentProperty(property, user) {
       city: source.city || "",
       stage: source.stage,
       accessInfo: source.accessInfo || "",
+      scopeLines: (source.scopeLines || []).map((line) => ({
+        _id: String(line._id),
+        title: line.title,
+        description: line.description || "",
+        status: line.status || "Not started",
+      })),
     }
   }
   const visible = {

@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { can, drawFigures, drawPulled, ensureTaskPermissions, isRole, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
+import { can, drawFigures, drawPulled, ensureTaskPermissions, resolveBudget, isRole, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
 import {
   Activity,
   AgentThread,
@@ -71,11 +71,14 @@ workspaceRouter.get(
     const monthlyMortgage = loans.reduce((total, loan) => total + Number(loan.payment || 0), 0)
     const drawTotals = properties.reduce((total, property) => {
       const budget = budgets.find((item) => String(item.propertyId) === String(property._id))
+      const own = draws.filter((draw) => String(draw.propertyId) === String(property._id))
+      const resolved = resolveBudget({ rehabBudget: property.rehabBudget, recordBudget: budget?.budget, scopeLines: property.scopeLines || [], draws: own })
       const figures = drawFigures({
-        budget: property.rehabBudget ?? budget?.budget,
+        budget: resolved.budget,
         lenderFunding: budget?.fundingLimit,
         fundedPercent: budget?.fundingPercent,
-        draws: draws.filter((draw) => String(draw.propertyId) === String(property._id)),
+        draws: own,
+        budgetEstimated: resolved.estimated,
       })
       return { received: total.received + figures.received, remaining: total.remaining + (figures.remaining || 0) }
     }, { received: 0, remaining: 0 })
@@ -922,7 +925,7 @@ function readAccess(req, res) {
 workspaceRouter.post(
   "/photo-sets",
   requirePermission("photos.write"),
-  upload.array("photos", 24),
+  upload.array("photos", 60),
   asyncHandler(async (req, res) => {
     if (!req.files?.length || !req.body.propertyId || !req.body.weekOf) {
       sendError(res, 400, "Choose a property, a week, and at least one photo.")

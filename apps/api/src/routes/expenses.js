@@ -1,6 +1,6 @@
 import { Router } from "express"
 import { APPROVAL_THRESHOLD, EXPENSE_CATEGORIES } from "@synergifund/shared"
-import { Expense, ExpenseRequest, Property } from "../models/index.js"
+import { Draw, Expense, ExpenseRequest, Property } from "../models/index.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { ownsProperty, propertyFilter } from "../services/access.js"
 import { saveUploadedFile, upload, withProofUrls } from "../services/files.js"
@@ -104,6 +104,10 @@ expensesRouter.post(
     const scopeLineId = String(req.body.scopeLineId || "")
     if (scopeLineId && property && !(property.scopeLines || []).some((line) => String(line._id) === scopeLineId)) {
       sendError(res, 400, "That part of the house is not on this property.")
+      return
+    }
+    if (req.body.drawId && !(property && /^[a-f0-9]{24}$/.test(String(req.body.drawId)) && (await Draw.exists({ _id: req.body.drawId, propertyId: property._id })))) {
+      sendError(res, 400, "That draw is not on this property.")
       return
     }
     const proofs = []

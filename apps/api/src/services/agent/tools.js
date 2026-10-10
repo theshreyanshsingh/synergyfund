@@ -1,4 +1,4 @@
-import { PERMISSIONS, drawFigures, drawHealth } from "@synergifund/shared"
+import { PERMISSIONS, drawFigures, drawHealth, resolveBudget } from "@synergifund/shared"
 import { Bill, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, Property, Task, User } from "../../models/index.js"
 import { presentProperty } from "../../lib/serialize.js"
 import { propertyFilter } from "../access.js"
@@ -122,12 +122,14 @@ function drawView(context, draw) {
 function drawSummary(context, property, budgets, draws) {
   const rows = draws.map((draw) => drawView(context, draw))
   const budget = budgets.find((item) => String(item.propertyId) === String(property._id))
-  const total = property.rehabBudget ?? budget?.budget ?? null
-  const figures = drawFigures({ budget: total, lenderFunding: budget?.fundingLimit, fundedPercent: budget?.fundingPercent, draws })
+  const resolved = resolveBudget({ rehabBudget: property.rehabBudget, recordBudget: budget?.budget, scopeLines: property.scopeLines || [], draws })
+  const total = resolved.budget
+  const figures = drawFigures({ budget: total, lenderFunding: budget?.fundingLimit, fundedPercent: budget?.fundingPercent, draws, budgetEstimated: resolved.estimated })
   const staff = context.user.role !== "contractor"
   return {
     property: property.address,
     rehabBudget: total,
+    budgetEstimated: resolved.estimated,
     lenderFundingLimit: staff ? figures.lenderFunding : null,
     drawnGross: figures.drawn,
     cashReceived: staff ? figures.received : null,

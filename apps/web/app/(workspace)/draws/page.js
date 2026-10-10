@@ -2,7 +2,8 @@
 
 import Link from "next/link"
 import { useMemo, useRef, useState } from "react"
-import { can, drawFigures, drawHealth, drawPulled, isPendingDraw } from "@synergifund/shared"
+import { can, drawFigures, drawHealth, drawPulled, isPendingDraw, resolveBudget } from "@synergifund/shared"
+import { DrawEditor, ScopeEditor } from "../../../components/draws/DrawEditor"
 import { DrawImport } from "../../../components/draws/DrawImport"
 import { FormSheet, InfoSheet } from "../../../components/ui/FormSheet"
 import { HeaderActions } from "../../../components/ui/HeaderActions"
@@ -21,6 +22,7 @@ export default function DrawsPage() {
   const canDeleteProperty = session?.user && can(session.user, "properties.write")
   const canImport = writable && can(session.user, "imports.run")
   const importInput = useRef(null)
+  const [importBusy, setImportBusy] = useState("")
   const [workbook, setWorkbook] = useState(null)
   const [view, setView] = useState("properties")
   const [moneyView, setMoneyView] = useState("calendar")
@@ -44,17 +46,15 @@ export default function DrawsPage() {
   )
   const totals = useMemo(() => sumProjects(projects), [projects])
 
-  async function create(event) {
+  const [addFor, setAddFor] = useState("")
+  const addProject = projects.find((project) => project.id === addFor)
+
+  function chooseProperty(event) {
     event.preventDefault()
-    const form = Object.fromEntries(new FormData(event.currentTarget))
-    try {
-      await api("/draws", { method: "POST", body: form })
-      setAdding(false)
-      setError("")
-      data.reload()
-    } catch (err) {
-      setError(err.message)
-    }
+    const id = new FormData(event.currentTarget).get("propertyId")
+    if (!id) return
+    setAdding(false)
+    setAddFor(String(id))
   }
 
   async function forecast(id, requestedDate) {
@@ -190,7 +190,10 @@ export default function DrawsPage() {
         <HeaderActions>
           <a className="import-button" href="/api/draws/export">Export Excel</a>
           {canImport && (
-            <button type="button" className="import-button" onClick={() => importInput.current?.click()}>Import Excel</button>
+            <button type="button" className="import-button import-trigger" disabled={Boolean(importBusy)} aria-busy={Boolean(importBusy) || undefined} onClick={() => { if (!importBusy) importInput.current?.click() }}>
+              {importBusy && <span className="spinner spinner-sm tw:animate-spin" />}
+              {importBusy === "reading" ? "Reading…" : importBusy === "saving" ? "Saving…" : "Import Excel"}
+            </button>
           )}
           {writable && (
             <button type="button" className="primary" onClick={() => { setError(""); setAdding(true) }}>
@@ -205,7 +208,7 @@ export default function DrawsPage() {
         <article className="stat"><div className="stat-label">Remaining</div><div className="stat-value">{cash(totals.remaining)}</div><div className="stat-hint">Budget left after drawn and pending</div></article>
         <article className="stat"><div className="stat-label">Forecasted</div><div className="stat-value">{cash(totals.forecast)}</div><div className="stat-hint">{cash(totals.pending)} requested, not funded yet</div></article>
         <article className="stat"><div className="stat-label">Received</div><div className="stat-value">{cash(totals.received)}</div><div className="stat-hint">{cash(totals.available)} available to withdraw</div></article>
-        <article className="stat"><div className="stat-label">Total budget</div><div className="stat-value">{cash(totals.budget)}</div><div className="stat-hint">{cash(totals.drawn)} drawn · {Math.round(totals.used * 100)}% used</div></article>
+        <article className="stat"><div className="stat-label">Total budget</div><div className="stat-value">{cash(totals.budget)}</div><div className="stat-hint">{totals.estimated ? `${totals.estimated} ${totals.estimated === 1 ? "property" : "properties"} estimated from line items` : `${cash(totals.drawn)} drawn · ${Math.round(totals.used * 100)}% used`}</div></article>
       </div>
 
       <div className="panel draws-toolbar">
@@ -259,6 +262,7 @@ export default function DrawsPage() {
         <DrawImport
           job={workbook}
           inputRef={importInput}
+          onBusy={setImportBusy}
           onOpen={setWorkbook}
           onChange={setWorkbook}
           onReload={data.reload}
@@ -274,6 +278,7 @@ export default function DrawsPage() {
           selecting={selecting}
           selected={selected}
           onSelect={toggleSelected}
+          onChanged={data.reload}
           projects={projects}
           writable={writable}
           canDelete={canDeleteProperty}
@@ -299,24 +304,24 @@ export default function DrawsPage() {
         </InfoSheet>
       )}
       {adding && (
-        <FormSheet eyebrow="Draws" title="Add a draw" hint="A draw is lender rehab cash for one property. Set a finish date when you want it in the forecast." onClose={() => setAdding(false)} onSubmit={create} submitLabel="Save draw" error={error}>
+        <FormSheet eyebrow="Draws" title="Add a draw" hint="Pick the property. Next you’ll split the draw across its line items." onClose={() => setAdding(false)} onSubmit={chooseProperty} submitLabel="Next: line items" error={error}>
           <div className="form-grid">
             <label className="field wide"><span>Property</span>
               <select name="propertyId" required>
-                {projects.map((project) => <option key={project.id} value={project.id}>{project.address}</option>)}
+                {projects.map((project) => <option key={project.id} value={project.id}>{project.address} · {project.scopeLines.length} line items</option>)}
               </select>
             </label>
-            <label className="field"><span>Name</span><input name="title" required placeholder="Draw 1" /></label>
-            <label className="field"><span>Gross amount</span><input name="amount" inputMode="decimal" /></label>
-            <label className="field wide"><span>Forecast finish</span><input name="requestedDate" type="date" /></label>
           </div>
         </FormSheet>
+      )}
+      {addProject && (
+        <DrawEditor project={addProject} onClose={() => setAddFor("")} onSaved={() => { setAddFor(""); data.reload() }} />
       )}
     </div>
   )
 }
 
-function DrawBoard({ projects, selecting, selected, onSelect, writable, canDelete, onSave, onRemove, onForecast, onPull, onPulled }) {
+function DrawBoard({ projects, selecting, selected, onSelect, onChanged, writable, canDelete, onSave, onRemove, onForecast, onPull, onPulled }) {
   const [openIds, setOpenIds] = useState([])
   const toggle = (id) => setOpenIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
   if (!projects.length) return <p className="draws-empty">No draw data yet. Import a workbook to add it.</p>
@@ -338,6 +343,7 @@ function DrawBoard({ projects, selecting, selected, onSelect, writable, canDelet
           onForecast={onForecast}
           onPull={onPull}
           onPulled={onPulled}
+          onChanged={onChanged}
         />
       ))}
     </div>
@@ -371,8 +377,8 @@ function DrawProperty({ project, open, onToggle, selecting, checked, onCheck, ..
           </span>
         </span>
         <span className="draw-figures">
-          <Figure label="Remaining" value={figures.remaining} tone="strong" />
-          <Figure label="Total budget" value={figures.budget} />
+          <Figure label={figures.budgetEstimated ? "Remaining · est." : "Remaining"} value={figures.remaining} tone="strong" />
+          <Figure label={figures.budgetEstimated ? "Total budget · est." : "Total budget"} value={figures.budget} />
           <Figure label="Drawn" value={figures.drawn} />
           <Figure label="Pulled" value={figures.received} tone="good" />
           <Figure label="Pending" value={figures.pending} tone={figures.pending > 0 ? "warn" : "quiet"} />
@@ -394,13 +400,12 @@ function Figure({ label, value, tone }) {
   )
 }
 
-function DrawPropertyBody({ project, writable, canDelete, onSave, onRemove, onForecast, onPull, onPulled }) {
+function DrawPropertyBody({ project, writable, canDelete, onSave, onRemove, onForecast, onPull, onPulled, onChanged }) {
   const sheet = useMemo(() => lineSheet(project), [project])
-  const [adding, setAdding] = useState(false)
+  const [editor, setEditor] = useState(null)
   const [managing, setManaging] = useState(false)
   const [error, setError] = useState("")
   const figures = project.figures
-  const next = project.draws.reduce((max, draw) => Math.max(max, drawIndex(draw.title)), 0) + 1
 
   async function run(task) {
     setError("")
@@ -411,18 +416,17 @@ function DrawPropertyBody({ project, writable, canDelete, onSave, onRemove, onFo
     }
   }
 
-  async function add(event) {
-    const text = event.currentTarget.value.trim()
-    setAdding(false)
-    if (text) await run(() => onSave({ project, column: next, value: text }))
-  }
-
   async function remove(draw) {
     if (!window.confirm(`Remove ${draw.title} from ${project.address}?`)) return
     await run(() => onSave({ project, column: drawIndex(draw.title), draw, value: "" }))
   }
 
-  const saveDraw = (draw, text) => onSave({ project, column: drawIndex(draw.title), draw, value: text })
+  const openDraw = writable ? (draw) => setEditor({ kind: "draw", draw }) : null
+  const editScope = writable ? () => setEditor({ kind: "scope" }) : null
+  const saved = () => {
+    setEditor(null)
+    onChanged?.()
+  }
 
   return (
     <div className="draw-property-body">
@@ -434,25 +438,14 @@ function DrawPropertyBody({ project, writable, canDelete, onSave, onRemove, onFo
           <span><small>Funds left</small><b>{figures.fundsAvailable != null ? `${Math.round(figures.fundsAvailable * 100)}%` : "—"}</b></span>
         </div>
         <div className="draw-summary-actions">
-          {writable && !adding && (
-            <button type="button" className="draw-step-add" onClick={() => setAdding(true)}>
+          {writable && (
+            <button type="button" className="draw-step-add" onClick={() => setEditor({ kind: "draw", draw: null })}>
               <Icon name="plus" size={14} />
-              Draw {next}
+              New draw
             </button>
           )}
-          {adding && (
-            <input
-              className="sheet-money-input draw-add-input"
-              autoFocus
-              inputMode="decimal"
-              placeholder={`Draw ${next} amount`}
-              aria-label={`Draw ${next} amount`}
-              onBlur={add}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") event.currentTarget.blur()
-                if (event.key === "Escape") setAdding(false)
-              }}
-            />
+          {writable && (
+            <button type="button" className="draw-step-add" onClick={editScope}>Line items</button>
           )}
           {writable && project.draws.length > 0 && (
             <button type="button" className="draw-step-add" aria-expanded={managing} onClick={() => setManaging((current) => !current)}>
@@ -471,7 +464,7 @@ function DrawPropertyBody({ project, writable, canDelete, onSave, onRemove, onFo
               key={draw.id}
               draw={draw}
               label={`${project.address} ${draw.title}`}
-              onAmount={(text) => run(() => saveDraw(draw, text))}
+              onEdit={() => openDraw?.(draw)}
               onPulled={(text) => run(() => onPulled(draw.id, text))}
               onForecast={(date) => run(() => onForecast(draw.id, date))}
               onPull={() => run(() => onPull(draw.id))}
@@ -480,13 +473,15 @@ function DrawPropertyBody({ project, writable, canDelete, onSave, onRemove, onFo
           ))}
         </div>
       )}
-      <LineSheet sheet={sheet} project={project} writable={writable} onAmount={(draw, text) => run(() => saveDraw(draw, text))} />
-      <LineCards sheet={sheet} />
+      <LineSheet sheet={sheet} onDraw={openDraw} onScope={editScope} />
+      <LineCards sheet={sheet} onDraw={openDraw} onScope={editScope} />
+      {editor?.kind === "draw" && <DrawEditor project={project} draw={editor.draw} onClose={() => setEditor(null)} onSaved={saved} />}
+      {editor?.kind === "scope" && <ScopeEditor project={project} onClose={() => setEditor(null)} onSaved={saved} />}
     </div>
   )
 }
 
-function LineSheet({ sheet, project, writable, onAmount }) {
+function LineSheet({ sheet, onDraw, onScope }) {
   const { draws, rows, total } = sheet
   const described = rows.some((item) => item.description) || !rows.length
   return (
@@ -500,7 +495,11 @@ function LineSheet({ sheet, project, writable, onAmount }) {
             <th className="num">Budget</th>
             {draws.map((draw) => (
               <th key={draw.id} className={isPendingDraw(draw) ? "num is-pending" : "num"}>
-                <span className="line-draw-head">{draw.title}<small>{drawLabel(draw)}</small></span>
+                {onDraw ? (
+                  <button type="button" className="line-draw-head is-button" title={`Edit ${draw.title} line items`} onClick={() => onDraw(draw)}>{draw.title}<small>{drawLabel(draw)} · edit</small></button>
+                ) : (
+                  <span className="line-draw-head">{draw.title}<small>{drawLabel(draw)}</small></span>
+                )}
               </th>
             ))}
             <th className="num">Drawn</th>
@@ -513,7 +512,7 @@ function LineSheet({ sheet, project, writable, onAmount }) {
               <th className="row-number">{item.other ? "" : index + 1}</th>
               <td className="pin-col">{item.title}</td>
               {described && <td className="line-description" title={item.description}>{item.description || ""}</td>}
-              <td className="num">{cell(item.budget)}</td>
+              <td className={item.estimated ? "num is-estimate" : "num"} title={item.estimated ? "No budget set for this line. Showing what has been drawn so far." : undefined}>{cell(item.budget)}</td>
               {draws.map((draw) => (
                 <td key={draw.id} className={isPendingDraw(draw) ? "num is-pending" : "num"}>{cell(item.amounts[draw.id])}</td>
               ))}
@@ -525,7 +524,9 @@ function LineSheet({ sheet, project, writable, onAmount }) {
             <tr className="is-other">
               <th className="row-number" />
               <td className="pin-col">No line items yet</td>
-              <td className="line-description">Import the workbook to see each line of the budget.</td>
+              <td className="line-description">
+                {onScope ? <button type="button" className="line-empty-action" onClick={onScope}>Add the scope of work</button> : "Import the workbook to see each line of the budget."}
+              </td>
               <td className="num" />
               {draws.map((draw) => <td key={draw.id} />)}
               <td />
@@ -538,13 +539,9 @@ function LineSheet({ sheet, project, writable, onAmount }) {
             <th className="row-number" />
             <td className="pin-col">TOTAL</td>
             {described && <td className="line-description" />}
-            <td className="num">{cash(total.budget)}</td>
+            <td className={total.estimated ? "num is-estimate" : "num"} title={total.estimated ? "Estimated from line items. Add line budgets for exact figures." : undefined}>{cash(total.budget)}{total.estimated ? " est." : ""}</td>
             {draws.map((draw) => (
-              <td key={draw.id} className={isPendingDraw(draw) ? "num is-pending" : "num"}>
-                {writable && !(draw.lines || []).length ? (
-                  <SheetMoneyCell value={draw.amount} label={`${project.address} ${draw.title}`} onSave={(text) => onAmount(draw, text)} />
-                ) : cash(draw.amount)}
-              </td>
+              <td key={draw.id} className={isPendingDraw(draw) ? "num is-pending" : "num"}>{cash(draw.amount)}</td>
             ))}
             <td className="num">{cash(total.drawn)}</td>
             <td className={total.remaining < -0.5 ? "num is-over" : "num"}>{cash(total.remaining)}</td>
@@ -555,28 +552,51 @@ function LineSheet({ sheet, project, writable, onAmount }) {
   )
 }
 
-function LineCards({ sheet }) {
+function LineCards({ sheet, onDraw, onScope }) {
   const { draws, rows, total } = sheet
   return (
     <div className="line-cards">
-      {draws.length > 0 && (
-        <div className="line-draws">
-          {draws.map((draw) => (
-            <span key={draw.id} className={isPendingDraw(draw) ? "is-pending" : undefined}>
-              <small>{draw.title} · {drawLabel(draw)}</small>
-              <b>{cash(draw.amount)}</b>
-            </span>
-          ))}
+      <p className="line-cards-label">Line items</p>
+      {rows.map((item) => <LineCard key={item.key} item={item} draws={draws} />)}
+      {!rows.length && (
+        <div className="line-cards-empty">
+          <p>No line items yet. Every draw is split across the scope of work, so add the line items first.</p>
+          {onScope ? <button type="button" className="draw-step-add" onClick={onScope}><Icon name="plus" size={14} />Add line items</button> : <p>Import the workbook to load them.</p>}
         </div>
       )}
-      {rows.map((item) => <LineCard key={item.key} item={item} draws={draws} />)}
-      {!rows.length && <p className="draws-empty">No line items yet. Import the workbook to see each line of the budget.</p>}
       <div className="line-card is-total">
         <div className="line-card-head">
           <span><b>Total</b><small>Budget {cash(total.budget)} · Drawn {cash(total.drawn)}{total.pending ? ` · Pending ${cash(total.pending)}` : ""}</small></span>
           <span className={total.remaining < -0.5 ? "line-card-left is-over" : "line-card-left"}><small>Remaining</small>{cash(total.remaining)}</span>
         </div>
       </div>
+      {draws.length > 0 && <p className="line-cards-label">Draws</p>}
+      {draws.map((draw) => <DrawLinesCard key={draw.id} draw={draw} onEdit={onDraw ? () => onDraw(draw) : null} />)}
+    </div>
+  )
+}
+
+function DrawLinesCard({ draw, onEdit }) {
+  const [open, setOpen] = useState(false)
+  const lines = (draw.lines || []).filter((line) => Number(line.amount))
+  const lined = lines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0)
+  const loose = (Number(draw.amount) || 0) - lined
+  return (
+    <div className={`draw-lines-card${isPendingDraw(draw) ? " is-pending" : ""}${open ? " is-open" : ""}`}>
+      <button type="button" className="draw-lines-head" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <span><b>{draw.title}</b><small>{drawLabel(draw)} · {lines.length} {lines.length === 1 ? "line item" : "line items"}</small></span>
+        <strong>{cash(draw.amount)}</strong>
+        <i aria-hidden="true"><Icon name="chevron" size={14} /></i>
+      </button>
+      {open && (
+        <div className="draw-lines-body">
+          {lines.map((line, index) => (
+            <div key={line.id || `${line.title}-${index}`}><span>{line.title}{line.description ? <small>{line.description}</small> : null}</span><b>{cash(line.amount)}</b></div>
+          ))}
+          {loose > 0.5 && <div className="is-loose"><span>Not split into line items<small>Edit the draw to assign it</small></span><b>{cash(loose)}</b></div>}
+          {onEdit && <button type="button" className="draw-step-add" onClick={onEdit}><Icon name="edit" size={13} />Edit line items</button>}
+        </div>
+      )}
     </div>
   )
 }
@@ -614,12 +634,12 @@ function LineCard({ item, draws }) {
   )
 }
 
-function DrawControls({ draw, label, onAmount, onPulled, onForecast, onPull, onRemove }) {
+function DrawControls({ draw, label, onEdit, onPulled, onForecast, onPull, onRemove }) {
   const pending = isPendingDraw(draw)
   return (
     <div className={pending ? "draw-control is-pending" : "draw-control"}>
       <span className="draw-control-title"><b>{draw.title}</b><small>{drawLabel(draw)}</small></span>
-      <label><small>Amount</small>{(draw.lines || []).length ? <b>{cash(draw.amount)}</b> : <SheetMoneyCell value={draw.amount} label={`${label} amount`} onSave={onAmount} />}</label>
+      <label><small>Amount</small><button type="button" className="draw-control-lines" onClick={onEdit} title="Edit this draw's line items">{cash(draw.amount)}<span>{(draw.lines || []).length ? `${draw.lines.length} lines · edit` : "Split into lines"}</span></button></label>
       <label><small>Pulled</small><SheetMoneyCell value={drawPulled(draw)} label={`${label} pulled`} onSave={onPulled} /></label>
       {draw.status !== "Funded" ? (
         <label><small>Forecast</small><input type="date" defaultValue={draw.requestedDate || ""} onChange={(event) => onForecast(event.target.value)} /></label>
@@ -713,6 +733,21 @@ function lineSheet(project) {
       item.amounts[draw.id] = (item.amounts[draw.id] || 0) + amount
     }
   }
+  const split = (item) => {
+    item.drawn = 0
+    item.pending = 0
+    for (const [id, amount] of Object.entries(item.amounts)) {
+      if (pendingIds.has(id)) item.pending += amount
+      else item.drawn += amount
+    }
+  }
+  for (const item of rows) {
+    split(item)
+    if (item.budget == null && figures.budgetEstimated && item.drawn + item.pending > 0) {
+      item.budget = item.drawn + item.pending
+      item.estimated = true
+    }
+  }
   if (rows.length) {
     const other = { key: "__other", title: "Not in line items", description: "Budget or draw money without a line item", budget: null, amounts: {}, other: true }
     const lineBudget = rows.reduce((sum, item) => sum + (Number(item.budget) || 0), 0)
@@ -722,21 +757,20 @@ function lineSheet(project) {
       const gap = (Number(draw.amount) || 0) - lined
       if (Math.abs(gap) > 0.5) other.amounts[draw.id] = gap
     }
-    if (other.budget != null || Object.keys(other.amounts).length) rows.push(other)
+    if (other.budget != null || Object.keys(other.amounts).length) {
+      split(other)
+      if (figures.budgetEstimated && other.budget != null) other.estimated = true
+      rows.push(other)
+    }
   }
   for (const item of rows) {
-    item.drawn = 0
-    item.pending = 0
-    for (const [id, amount] of Object.entries(item.amounts)) {
-      if (pendingIds.has(id)) item.pending += amount
-      else item.drawn += amount
-    }
     item.remaining = item.budget == null ? null : item.budget - item.drawn - item.pending
   }
   return {
     draws,
     rows,
     total: {
+      estimated: figures.budgetEstimated,
       budget: figures.budget,
       drawn: figures.drawn,
       pending: figures.pending,
@@ -756,6 +790,7 @@ function drawLabel(draw) {
 }
 
 function healthTone(health) {
+  if (/budget missing/i.test(health)) return "is-warn"
   if (/low funds/i.test(health)) return "is-bad"
   if (/pending/i.test(health)) return "is-warn"
   if (/not started/i.test(health)) return "is-quiet"
@@ -778,7 +813,7 @@ function orderDraws(draws) {
 
 function ReceivedMoney({ projects }) {
   const rows = projects.flatMap((project) => {
-    const draws = project.lines.filter((line) => drawIndex(line.title) && Number(line.pulled) > 0)
+    const draws = orderDraws(project.lines.filter((line) => Number(line.pulled) > 0))
     if (!draws.length) return []
     return [{
       id: project.id,
@@ -888,11 +923,13 @@ function buildProjects(payload) {
   return (payload.properties || []).map((property) => {
     const lines = draws.filter((draw) => draw.propertyId === property.id)
     const budget = budgets.find((item) => item.propertyId === property.id)
+    const resolved = resolveBudget({ rehabBudget: property.rehabBudget, recordBudget: budget?.budget, scopeLines: property.scopeLines || [], draws: lines })
     const figures = drawFigures({
-      budget: firstNumber(property.rehabBudget, budget?.budget),
+      budget: resolved.budget,
       lenderFunding: firstNumber(budget?.fundingLimit),
       fundedPercent: budget?.fundingPercent,
       draws: lines,
+      budgetEstimated: resolved.estimated,
     })
     const forecast = lines.reduce((sum, line) => {
       if (line.status === "Funded" || !(isPendingDraw(line) || line.requestedDate)) return sum
@@ -941,6 +978,7 @@ function sumProjects(projects) {
     remaining: add("remaining"),
     forecast: projects.reduce((sum, project) => sum + project.forecast, 0),
     used: budget ? drawn / budget : 0,
+    estimated: projects.filter((project) => project.figures.budgetEstimated).length,
   }
 }
 

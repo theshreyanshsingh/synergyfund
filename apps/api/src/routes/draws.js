@@ -121,6 +121,7 @@ drawsRouter.get(
         rehabBudget: property.rehabBudget ?? null,
         rehabRemaining: property.rehabRemaining ?? null,
         scopeLines: (property.scopeLines || []).map((line) => ({
+          id: String(line._id),
           title: line.title,
           description: line.description || "",
           budget: line.budget ?? null,
@@ -293,6 +294,7 @@ drawsRouter.post(
       properties,
       draws,
       Draw,
+      DrawBudget,
       Property,
       userName: req.user.name,
     })
@@ -308,9 +310,74 @@ drawsRouter.post(
     await recordActivity({
       user: req.user,
       title: "Draw workbook appended",
-      detail: `${result.counts.added} added, ${result.counts.duplicate} duplicates left unchanged, ${result.counts.skipped} skipped`,
+      detail: `${result.counts.added} draws and ${result.counts.lines || 0} line items added${result.counts.budgets ? `, ${result.counts.budgets} blank budgets filled` : ""}, ${result.counts.duplicate} rows already on file, ${result.counts.skipped} skipped`,
     })
     res.json({ import: presentImport(job, fileForRows, rows) })
+  }),
+)
+
+drawsRouter.put(
+  "/scope/:propertyId",
+  requirePermission("draws.write"),
+  asyncHandler(async (req, res) => {
+    const property = /^[a-f0-9]{24}$/.test(String(req.params.propertyId)) ? await Property.findOne({ ...propertyFilter(req.user), _id: req.params.propertyId }) : null
+    if (!property) {
+      sendError(res, 404, "That property was not found.")
+      return
+    }
+    const incoming = Array.isArray(req.body.lines) ? req.body.lines : []
+    const current = new Map((property.scopeLines || []).map((line) => [String(line._id), line]))
+    const next = []
+    const seen = new Set()
+    for (const line of incoming) {
+      const title = String(line?.title || "").trim().slice(0, 120)
+      if (!title) continue
+      const key = title.toLowerCase()
+      if (seen.has(key)) {
+        sendError(res, 400, `"${title}" is listed twice. Give each line item its own name.`)
+        return
+      }
+      seen.add(key)
+      const budget = line.budget === "" || line.budget == null ? null : Number(String(line.budget).replace(/[$,\s]/g, ""))
+      if (budget != null && (!Number.isFinite(budget) || budget < 0)) {
+        sendError(res, 400, `Enter a budget of zero or more for "${title}".`)
+        return
+      }
+      const kept = line.id && current.get(String(line.id))
+      next.push({
+        ...(kept ? { _id: kept._id } : {}),
+        title,
+        description: String(line.description || "").trim().slice(0, 500),
+        budget: budget ?? undefined,
+        status: kept?.status || "Not started",
+      })
+    }
+    const keptIds = new Set(next.filter((line) => line._id).map((line) => String(line._id)))
+    const dropped = [...current.values()].filter((line) => !keptIds.has(String(line._id)))
+    if (dropped.length) {
+      const ids = dropped.map((line) => String(line._id))
+      const used = await Promise.all([
+        Expense.find({ propertyId: property._id, scopeLineId: { $in: ids } }).select("scopeLineId"),
+        ExpenseRequest.find({ propertyId: property._id, scopeLineId: { $in: ids } }).select("scopeLineId"),
+      ])
+      const usedIds = new Set(used.flat().map((item) => String(item.scopeLineId)))
+      const blocked = dropped.filter((line) => usedIds.has(String(line._id)))
+      if (blocked.length) {
+        sendError(res, 400, `${blocked.map((line) => line.title).join(", ")} ${blocked.length === 1 ? "has" : "have"} expenses filed against ${blocked.length === 1 ? "it" : "them"}, so ${blocked.length === 1 ? "it" : "they"} can't be removed.`)
+        return
+      }
+    }
+    const before = property.scopeLines.length
+    property.scopeLines = next
+    await property.save()
+    const added = next.filter((line) => !line._id || !current.has(String(line._id))).length
+    await recordActivity({
+      user: req.user,
+      title: "Line items updated",
+      detail: `${property.address}: ${property.scopeLines.length} line items${added ? `, ${added} added` : ""}${dropped.length ? `, ${dropped.length} removed` : ""}${!added && !dropped.length && before === property.scopeLines.length ? ", edited" : ""}`,
+      propertyId: property._id,
+    })
+    res.json({ scopeLines: property.scopeLines.map((line) => ({ id: String(line._id), title: line.title, description: line.description || "", budget: line.budget ?? null, status: line.status || "Not started" })) })
   }),
 )
 
@@ -441,7 +508,7 @@ drawsRouter.get(
   "/export",
   requirePermission("draws.read"),
   asyncHandler(async (req, res) => {
-    const allowed = await Property.find(propertyFilter(req.user)).select("address city")
+    const allowed = await Property.find(propertyFilter(req.user)).select("address city rehabBudget scopeLines")
     const allowedIds = new Set(allowed.map((property) => String(property._id)))
     let properties = allowed
     if (req.query.propertyId) {
@@ -451,30 +518,53 @@ drawsRouter.get(
         return
       }
     }
-    const draws = await Draw.find({ propertyId: { $in: properties.map((property) => property._id) } }).sort({ createdAt: 1 })
-    const names = new Map(properties.map((property) => [String(property._id), property]))
-    const header = ["Property", "City", "Draw", "Status", "Line item", "Description", "Line amount", "Draw amount", "Pulled", "Remaining", "Forecast finish", "Funded date"]
+    const ids = properties.map((property) => property._id)
+    const [draws, budgets] = await Promise.all([
+      Draw.find({ propertyId: { $in: ids } }).sort({ createdAt: 1 }),
+      DrawBudget.find({ propertyId: { $in: ids } }),
+    ])
+    const header = ["Property", "City", "Total budget", "Lender funding", "Draw", "Status", "Line item", "Description", "Line budget", "Line amount", "Draw amount", "Pulled", "Remaining", "Forecast finish", "Funded date"]
     const rows = [header]
-    for (const draw of draws) {
-      if (!allowedIds.has(String(draw.propertyId))) continue
-      const view = presentDraw(draw)
-      const property = names.get(String(draw.propertyId))
-      const lines = view.lines.length ? view.lines : [{ title: "", description: "", amount: "" }]
-      for (const line of lines) {
-        rows.push([
-          property?.address || "",
-          property?.city || "",
-          view.title,
-          view.status,
-          line.title || "",
-          line.description || "",
-          line.amount ?? "",
-          view.amount ?? "",
-          view.pulled ?? "",
-          view.remaining ?? "",
-          view.requestedDate || "",
-          view.fundedDate || "",
-        ])
+    const key = (title) => String(title || "").toLowerCase().replace(/\s+/g, " ").trim()
+    for (const property of properties) {
+      if (!allowedIds.has(String(property._id))) continue
+      const budget = budgets.find((item) => String(item.propertyId) === String(property._id))
+      const totalBudget = property.rehabBudget ?? budget?.budget ?? ""
+      const lender = budget?.fundingLimit ?? ""
+      const scope = new Map((property.scopeLines || []).map((line) => [key(line.title), line]))
+      const used = new Set()
+      const own = draws.filter((draw) => String(draw.propertyId) === String(property._id))
+      for (const draw of own) {
+        const view = presentDraw(draw)
+        const lines = view.lines.length ? view.lines : [{ title: "", description: "", amount: "" }]
+        for (const line of lines) {
+          const scoped = scope.get(key(line.title))
+          if (scoped) used.add(key(line.title))
+          rows.push([
+            property.address,
+            property.city || "",
+            totalBudget,
+            lender,
+            view.title,
+            view.status,
+            line.title || "",
+            line.description || scoped?.description || "",
+            scoped?.budget ?? "",
+            line.amount ?? "",
+            view.amount ?? "",
+            view.pulled ?? "",
+            view.remaining ?? "",
+            view.requestedDate || "",
+            view.fundedDate || "",
+          ])
+        }
+      }
+      const unused = (property.scopeLines || []).filter((line) => !used.has(key(line.title)))
+      for (const line of unused) {
+        rows.push([property.address, property.city || "", totalBudget, lender, "", "", line.title, line.description || "", line.budget ?? "", "", "", "", "", "", ""])
+      }
+      if (!own.length && !unused.length && (totalBudget !== "" || lender !== "")) {
+        rows.push([property.address, property.city || "", totalBudget, lender, "", "", "", "", "", "", "", "", "", "", ""])
       }
     }
     if (rows.length === 1) rows.push(header.map(() => ""))

@@ -27,6 +27,7 @@ function PropertiesScreen() {
   const [assigned, setAssigned] = useState([])
   const [contractors, setContractors] = useState([])
   const importInput = useRef(null)
+  const [importBusy, setImportBusy] = useState("")
   const [workbook, setWorkbook] = useState(null)
   const writable = session?.user && can(session.user, "properties.write")
   const canImport = session?.user && can(session.user, "imports.run") && can(session.user, "draws.write")
@@ -67,12 +68,13 @@ function PropertiesScreen() {
         loading={!list.data && !list.error}
         customize={false}
         title="Properties"
-        secondary={canImport ? { label: "Import Excel", onClick: () => importInput.current?.click() } : null}
+        secondary={canImport ? { label: importBusy === "reading" ? "Reading…" : importBusy === "saving" ? "Saving…" : "Import Excel", busy: Boolean(importBusy), disabled: Boolean(importBusy), onClick: () => { if (!importBusy) importInput.current?.click() } } : null}
         action={writable ? { label: "New property", onClick: () => setOpen(true) } : null}
         lead={canImport ? (
           <DrawImport
             job={workbook}
             inputRef={importInput}
+            onBusy={setImportBusy}
             onOpen={setWorkbook}
             onChange={setWorkbook}
             onReload={list.reload}
