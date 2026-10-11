@@ -6,6 +6,9 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { PROPERTY_LABELS, STAGES, STRATEGIES, can } from "@synergifund/shared"
 import { FormSheet } from "../../../../components/ui/FormSheet"
 import { DrawEditor } from "../../../../components/draws/DrawEditor"
+import { FinancingSection } from "../../../../components/properties/FinancingSection"
+import { ArvSection } from "../../../../components/properties/ArvSection"
+import { ReportSheet } from "../../../../components/properties/ReportSheet"
 import { money } from "../../../../lib/format"
 import { api } from "../../../../lib/api"
 import { useApi } from "../../../../lib/useApi"
@@ -27,6 +30,7 @@ export default function PropertyDetailPage({ params }) {
   const [message, setMessage] = useState("")
   const [termsMessage, setTermsMessage] = useState("")
   const [editing, setEditing] = useState(null)
+  const [reporting, setReporting] = useState(false)
   const [editError, setEditError] = useState("")
   const [addingDraw, setAddingDraw] = useState(false)
   const [shots, setShots] = useState([])
@@ -61,7 +65,7 @@ export default function PropertyDetailPage({ params }) {
   const loans = detail.data.loans || []
   const upcoming = detail.data.upcoming || []
   const openDraws = (draws?.items || []).filter((draw) => draw.status !== "Funded")
-  const monthlyMortgage = loans.reduce((total, loan) => total + Number(loan.payment || 0), 0)
+  const monthlyMortgage = loans.filter((loan) => loan.status !== "Paid off").reduce((total, loan) => total + Number(loan.payment || 0), 0)
   const missing = [
     property.actualRent == null ? "actual rent" : "",
     !property.rentStatus ? "rent status" : "",
@@ -70,7 +74,7 @@ export default function PropertyDetailPage({ params }) {
   const tabs = [
     { id: "overview", label: "Overview" },
   ]
-  if (internal) tabs.push({ id: "draws", label: "Draws" }, { id: "financing", label: "Financing" })
+  if (internal) tabs.push({ id: "draws", label: "Draws" }, { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" })
 
   if (!internal) {
     return (
@@ -85,7 +89,7 @@ export default function PropertyDetailPage({ params }) {
           <div className="property-card-head">
             <div>
               <h2>Scope of work</h2>
-              <p className="property-missing">Open a line item to see what has been released and file a cost with a camera photo.</p>
+              <p className="property-missing">Open a line item to see its costs and file a new one with a camera photo.</p>
             </div>
           </div>
           <ScopeOfWork
@@ -94,6 +98,7 @@ export default function PropertyDetailPage({ params }) {
             costs={postedCosts}
             requests={detail.data.requests || []}
             showBudget={false}
+            showMoney={false}
             canPost={false}
             canRequest={canRequest}
             propertyId={id}
@@ -153,10 +158,11 @@ export default function PropertyDetailPage({ params }) {
       title={property.address}
       meta={[property.city, property.stage, property.strategy].filter(Boolean).join(" · ")}
       status={<StatusPill>{property.stage}</StatusPill>}
-      actions={canWrite ? [
-        <button key="delete" type="button" className="danger" onClick={() => removeProperty(id, property.address, router)}>Delete</button>,
-        <button key="modify" type="button" className="primary" onClick={() => { setEditError(""); setEditing(propertyForm(property)) }}>Modify</button>,
-      ] : null}
+      actions={[
+        canWrite && <button key="delete" type="button" className="danger" onClick={() => removeProperty(id, property.address, router)}>Delete</button>,
+        <button key="report" type="button" className="import-button" onClick={() => setReporting(true)}>Make report</button>,
+        canWrite && <button key="modify" type="button" className="primary" onClick={() => { setEditError(""); setEditing(propertyForm(property)) }}>Modify</button>,
+      ].filter(Boolean)}
     >
       <div className="property-switch" role="tablist" aria-label="Property sections">
         {tabs.map((tab) => (
@@ -181,7 +187,7 @@ export default function PropertyDetailPage({ params }) {
                 <ul className="property-draws">
                   {loans.map((loan) => (
                     <li key={loan.id}>
-                      <span>{loan.lenderId ? <Link href={`/loans/lenders/${loan.lenderId}`}>{loan.lender}</Link> : loan.lender}{loan.label ? ` · ${loan.label}` : ""}</span>
+                      <span>{loan.lenderId ? <Link href={`/loans/lenders/${loan.lenderId}`}>{loan.lender}</Link> : loan.lender}{loan.label ? ` · ${loan.label}` : ""} <StatusPill>{loan.status || "Current"}</StatusPill></span>
                       <b>{money(loan.balance)}</b>
                     </li>
                   ))}
@@ -313,22 +319,7 @@ export default function PropertyDetailPage({ params }) {
       )}
 
       {section === "financing" && (
-        <section className="panel property-card">
-          <h2>Financing</h2>
-          {loans.length === 0 && <p className="property-missing">No lender is recorded for this house.</p>}
-          <ul className="property-scope">
-            {loans.map((loan) => (
-              <li key={loan.id}>
-                <div>
-                  <strong>{loan.lenderId ? <Link href={`/loans/lenders/${loan.lenderId}`}>{loan.lender}</Link> : loan.lender}</strong>
-                  <em>{[loan.label, loan.loanNumber, loan.maturity && `Matures ${loan.maturity}`, loan.payment != null && `${money(loan.payment)} a month`, loan.lenderTerms].filter(Boolean).join(" · ")}</em>
-                </div>
-                <span>{money(loan.balance)}</span>
-                <StatusPill>{loan.termsStatus || "Recorded"}</StatusPill>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <FinancingSection propertyId={id} loans={loans} writable={Boolean(canWrite)} onChanged={() => detail.reload()} />
       )}
 
       {editing && (
@@ -347,6 +338,9 @@ export default function PropertyDetailPage({ params }) {
             rentMarket: editing.rentMarket,
             purchasePrice: blankNumber(editing.purchasePrice),
             arv: blankNumber(editing.arv),
+            sqft: blankNumber(editing.sqft),
+            beds: blankNumber(editing.beds),
+            baths: blankNumber(editing.baths),
             rehabBudget: blankNumber(editing.rehabBudget),
             actualRent: blankNumber(editing.actualRent),
             marketRent: blankNumber(editing.marketRent),
@@ -369,6 +363,10 @@ export default function PropertyDetailPage({ params }) {
             <label className="field"><span>Strategy</span><select value={editing.strategy} onChange={(event) => setEditing({ ...editing, strategy: event.target.value })}><option value="">Not set</option>{STRATEGIES.map((item) => <option key={item}>{item}</option>)}</select></label>
             <label className="field"><span>Purchase price</span><input value={editing.purchasePrice} onChange={(event) => setEditing({ ...editing, purchasePrice: event.target.value })} /></label>
             <label className="field"><span>ARV</span><input value={editing.arv} onChange={(event) => setEditing({ ...editing, arv: event.target.value })} /></label>
+            <label className="field"><span>Square feet</span><input inputMode="numeric" value={editing.sqft} onChange={(event) => setEditing({ ...editing, sqft: event.target.value })} /></label>
+            <label className="field"><span>Beds</span><input inputMode="decimal" value={editing.beds} onChange={(event) => setEditing({ ...editing, beds: event.target.value })} /></label>
+            <label className="field"><span>Baths</span><input inputMode="decimal" value={editing.baths} onChange={(event) => setEditing({ ...editing, baths: event.target.value })} /></label>
+            <p className="chat-form-hint wide">To work out the ARV from comparable sales, open the ARV tab.</p>
             <label className="field"><span>Rehab budget</span><input value={editing.rehabBudget} onChange={(event) => setEditing({ ...editing, rehabBudget: event.target.value })} /></label>
             <label className="field"><span>Actual rent</span><input value={editing.actualRent} onChange={(event) => setEditing({ ...editing, actualRent: event.target.value })} /></label>
             <label className="field"><span>Rent status</span><input value={editing.rentStatus} onChange={(event) => setEditing({ ...editing, rentStatus: event.target.value })} /></label>
@@ -380,6 +378,12 @@ export default function PropertyDetailPage({ params }) {
           </div>
         </FormSheet>
       )}
+
+      {section === "arv" && (
+        <ArvSection property={property} writable={Boolean(canWrite)} onChanged={() => detail.reload()} />
+      )}
+
+      {reporting && <ReportSheet property={property} detail={detail.data} onClose={() => setReporting(false)} />}
 
       {section === "draws" && (
         <section className="panel property-card">
@@ -539,6 +543,9 @@ function propertyForm(property) {
     strategy: property.strategy || "",
     purchasePrice: property.purchasePrice ?? "",
     arv: property.arv ?? "",
+    sqft: property.sqft ?? "",
+    beds: property.beds ?? "",
+    baths: property.baths ?? "",
     rehabBudget: property.rehabBudget ?? "",
     actualRent: property.actualRent ?? "",
     marketRent: property.marketRent ?? "",
@@ -638,6 +645,7 @@ function lineKey(title) {
 }
 
 function isOpenDraw(draw) {
+  if (typeof draw.open === "boolean") return draw.open
   return !["funded", "partial", "received", "paid"].includes(String(draw.status || "").toLowerCase()) && !(Number(draw.fundedAmount ?? draw.pulled) > 0)
 }
 
@@ -660,8 +668,10 @@ function scopeRows(scopeLines, draws, costs, requests) {
     const open = isOpenDraw(draw)
     let lined = 0
     for (const line of draw.lines || []) {
+      // Contractor draws carry no amounts; any line listed still links the draw.
+      const hidden = line.amount === undefined
       const amount = Number(line.amount) || 0
-      if (!amount) continue
+      if (!amount && !hidden) continue
       const item = row(line)
       if (!item.description && line.description) item.description = line.description
       if (open) item.requested += amount
@@ -669,7 +679,7 @@ function scopeRows(scopeLines, draws, costs, requests) {
       if (!item.draws.includes(draw)) item.draws.push(draw)
       lined += amount
     }
-    const rest = (Number(draw.amount) || 0) - lined
+    const rest = draw.amount === undefined ? 0 : (Number(draw.amount) || 0) - lined
     if (rest > 0.5) {
       if (open) looseRequested += rest
       else loose += rest
@@ -683,7 +693,7 @@ function scopeRows(scopeLines, draws, costs, requests) {
   return rows
 }
 
-function ScopeOfWork({ scopeLines, draws, costs, requests, showBudget, canPost, canRequest, propertyId, onSaved }) {
+function ScopeOfWork({ scopeLines, draws, costs, requests, showBudget, showMoney = true, canPost, canRequest, propertyId, onSaved }) {
   const rows = scopeRows(scopeLines, draws, costs, requests)
   const released = rows.reduce((sum, item) => sum + item.released, 0)
   const requested = rows.reduce((sum, item) => sum + item.requested, 0)
@@ -691,18 +701,18 @@ function ScopeOfWork({ scopeLines, draws, costs, requests, showBudget, canPost, 
     <div className="scope-work">
       <div className="scope-work-summary">
         <span><small>Line items</small><b>{rows.filter((item) => !item.other).length}</b></span>
-        <span><small>Released</small><b>{money(released)}</b></span>
-        {requested > 0 && <span className="is-pending"><small>Requested</small><b>{money(requested)}</b></span>}
+        {showMoney && <span><small>Released</small><b>{money(released)}</b></span>}
+        {showMoney && requested > 0 && <span className="is-pending"><small>Requested</small><b>{money(requested)}</b></span>}
       </div>
       {!rows.length && <p className="property-missing">No line items on this house yet.</p>}
       {rows.map((item) => (
-        <ScopeLine key={item.key} item={item} showBudget={showBudget} canPost={canPost} canRequest={canRequest} propertyId={propertyId} onSaved={onSaved} />
+        <ScopeLine key={item.key} item={item} showBudget={showBudget} showMoney={showMoney} canPost={canPost} canRequest={canRequest} propertyId={propertyId} onSaved={onSaved} />
       ))}
     </div>
   )
 }
 
-function ScopeLine({ item, showBudget, canPost, canRequest, propertyId, onSaved }) {
+function ScopeLine({ item, showBudget, showMoney, canPost, canRequest, propertyId, onSaved }) {
   const [open, setOpen] = useState(false)
   const [adding, setAdding] = useState(false)
   const [proofs, setProofs] = useState([])
@@ -741,23 +751,25 @@ function ScopeLine({ item, showBudget, canPost, canRequest, propertyId, onSaved 
 
   return (
     <article className={`scope-line${open ? " is-open" : ""}${item.other ? " is-other" : ""}`}>
-      <button type="button" className="scope-line-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+      <button type="button" className={showMoney ? "scope-line-head" : "scope-line-head no-money"} aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <span className="scope-line-name">
           <b>{item.title}</b>
           <small>{[item.status && !item.other ? item.status : "", item.description].filter(Boolean).join(" · ") || "Tap to see costs"}</small>
         </span>
-        <span className="scope-line-money">
-          <b>{money(item.released)}</b>
-          <small>{item.requested > 0 ? `${money(item.requested)} requested` : "released"}</small>
-        </span>
+        {showMoney && (
+          <span className="scope-line-money">
+            <b>{money(item.released)}</b>
+            <small>{item.requested > 0 ? `${money(item.requested)} requested` : "released"}</small>
+          </span>
+        )}
         <i aria-hidden="true">⌄</i>
       </button>
       {open && (
         <div className="scope-line-body">
           <dl className="scope-line-facts">
             {showBudget && item.budget != null && <div><dt>Budget</dt><dd>{money(item.budget)}</dd></div>}
-            <div><dt>Released</dt><dd>{money(item.released)}</dd></div>
-            <div><dt>Requested</dt><dd>{money(item.requested)}</dd></div>
+            {showMoney && <div><dt>Released</dt><dd>{money(item.released)}</dd></div>}
+            {showMoney && <div><dt>Requested</dt><dd>{money(item.requested)}</dd></div>}
             {left != null && <div><dt>Left</dt><dd className={left < -0.5 ? "is-over" : undefined}>{money(left)}</dd></div>}
             <div><dt>Costs filed</dt><dd>{money(spent)}</dd></div>
           </dl>

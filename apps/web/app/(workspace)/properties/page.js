@@ -7,7 +7,6 @@ import { PROPERTY_LABELS, can, STAGES, STRATEGIES } from "@synergifund/shared"
 import { DrawImport } from "../../../components/draws/DrawImport"
 import { FormSheet } from "../../../components/ui/FormSheet"
 import { StatusPill } from "../../../components/ui/StatusPill"
-import { RowMenu } from "../../../components/ui/RowMenu"
 import { WorkspacePage } from "../../../components/ui/WorkspacePage"
 import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
@@ -127,17 +126,9 @@ function PropertiesScreen() {
           ...(contractor ? [] : [
             { key: "nextAction", label: "Next step", render: (row) => row.nextAction || "Set the next action" },
             { key: "strategy", label: "Goal", render: (row) => row.strategy || "Not set" },
+            { key: "loanStatus", label: "Loan status", render: (row) => <StatusPill>{row.loanStatus || "No loan"}</StatusPill> },
+            { key: "loanBalance", label: "Loan balance", className: "num", render: (row) => row.loanBalance == null ? "—" : money(row.loanBalance) },
           ]),
-          { key: "actions", label: "", pin: "right", className: "menu-col", render: (row) => (
-            <RowMenu
-              label={`Actions for ${row.address}`}
-              items={[
-                { label: "Open", onClick: () => router.push(`/properties/${row.id}`) },
-                writable && { label: "Modify", onClick: () => router.push(`/properties/${row.id}?edit=1`) },
-                writable && { label: "Delete", danger: true, onClick: async () => { if (!window.confirm(`Delete ${row.address}?`)) return; await api(`/properties/${row.id}`, { method: "DELETE" }); list.reload() } },
-              ]}
-            />
-          ) },
         ]}
         rows={rows}
         reorder={writable && !contractor ? { onMove: moveProperties } : undefined}

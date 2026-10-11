@@ -29,7 +29,7 @@ documentsRouter.get(
   "/",
   requirePermission("documents.read"),
   asyncHandler(async (req, res) => {
-    const filter = { kind: { $ne: "chat" } }
+    const filter = { kind: { $nin: ["chat", "comp"] } }
     if (req.user.role === "contractor") {
       const properties = await Property.find(propertyFilter(req.user)).select("_id")
       filter.propertyId = { $in: properties.map((property) => property._id) }

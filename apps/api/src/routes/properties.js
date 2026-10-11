@@ -1,14 +1,16 @@
 import { Router } from "express"
 import { z } from "zod"
-import { STAGES } from "@synergifund/shared"
+import { loanSummary, STAGES } from "@synergifund/shared"
 import { Activity, Bill, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
 import { propertyFilter, ownsProperty } from "../services/access.js"
 import { deleteStoredFile, publicFileUrl, saveUploadedFile, upload, withProofUrls } from "../services/files.js"
 import { ensureLenders } from "../services/lenders.js"
+import { loanFields } from "../services/loans.js"
 import { removePropertyRoom } from "../services/chat.js"
 import { orderProperties } from "../services/propertyOrder.js"
+import { geocode } from "../services/geocode.js"
 import { emitToUsers } from "../services/chatHub.js"
 import { changeSummary, notifyPropertyAccess, recordActivity } from "../services/notify.js"
 import { presentContractorDraw, presentDraw } from "./draws.js"
@@ -26,6 +28,10 @@ const PROPERTY_FIELDS = [
   ["purchasePrice", "Purchase price", true],
   ["purchaseDate", "Purchase date"],
   ["arv", "ARV", true],
+  ["arvMethod", "ARV method"],
+  ["sqft", "Square feet"],
+  ["beds", "Beds"],
+  ["baths", "Baths"],
   ["rehabBudget", "Rehab budget", true],
   ["marketRent", "Market rent", true],
   ["actualRent", "Actual rent", true],
@@ -50,6 +56,11 @@ const writable = z.object({
   purchaseDate: z.string().optional().default(""),
   dealSource: z.string().optional().default(""),
   arv: z.number().nullable().optional(),
+  arvDate: z.string().optional(),
+  arvMethod: z.string().max(200).optional(),
+  sqft: z.number().nonnegative().nullable().optional(),
+  beds: z.number().nonnegative().nullable().optional(),
+  baths: z.number().nonnegative().nullable().optional(),
   marketRent: z.number().nullable().optional(),
   actualRent: z.number().nullable().optional(),
   rentStatus: z.string().optional().default(""),
@@ -72,7 +83,188 @@ propertiesRouter.get(
       query.where({ $or: [{ address: expression }, { city: expression }, { ownerEntity: expression }] })
     }
     const items = orderProperties(await query)
-    res.json({ items: items.map((item) => presentProperty(item, req.user)) })
+    if (req.user.role === "contractor") {
+      res.json({ items: items.map((item) => presentProperty(item, req.user)) })
+      return
+    }
+    const loans = await Loan.find({ propertyId: { $in: items.map((item) => item._id) } }).select("propertyId status balance payment")
+    res.json({
+      items: items.map((item) => {
+        const summary = loanSummary(loans.filter((loan) => String(loan.propertyId) === String(item._id)))
+        return { ...presentProperty(item, req.user), loanStatus: summary.status, loanBalance: summary.balance }
+      }),
+    })
+  }),
+)
+
+const COMP_TEXT = ["address", "city", "saleDate", "purchaseDate", "zillowUrl", "notes"]
+const COMP_NUMBERS = ["salePrice", "purchasePrice", "beds", "baths", "sqft"]
+
+function compFields(body) {
+  const fields = {}
+  for (const key of COMP_TEXT) {
+    if (key in body) fields[key] = String(body[key] ?? "").trim().slice(0, key === "notes" ? 1000 : 300)
+  }
+  for (const key of COMP_NUMBERS) {
+    if (!(key in body)) continue
+    const raw = String(body[key] ?? "").replace(/[$,\s]/g, "")
+    if (!raw) {
+      fields[key] = undefined
+      continue
+    }
+    const value = Number(raw)
+    if (!Number.isFinite(value) || value < 0) return { error: `Enter a valid number for ${key === "salePrice" ? "sale price" : key === "purchasePrice" ? "purchase price" : key}.` }
+    fields[key] = value
+  }
+  for (const key of ["saleDate", "purchaseDate"]) {
+    if (fields[key] && !/^\d{4}-\d{2}-\d{2}$/.test(fields[key])) return { error: "Dates need to be in YYYY-MM-DD form." }
+  }
+  if (fields.zillowUrl && !/^https:\/\/(www\.)?zillow\.com\//i.test(fields.zillowUrl)) return { error: "The Zillow link needs to start with https://www.zillow.com/." }
+  if ("include" in body) fields.include = Boolean(body.include)
+  return { fields }
+}
+
+async function loadForComps(req, res) {
+  const property = /^[a-f0-9]{24}$/.test(String(req.params.id)) ? await Property.findById(req.params.id) : null
+  if (!property || !ownsProperty(req.user, property)) {
+    sendError(res, 404, "That property is not available.")
+    return null
+  }
+  return property
+}
+
+async function placeComp(comp, property) {
+  const spot = await geocode(comp.address, comp.city || property.city)
+  comp.lat = spot?.lat
+  comp.lng = spot?.lng
+}
+
+propertiesRouter.get(
+  "/:id/location",
+  requirePermission("properties.read"),
+  asyncHandler(async (req, res) => {
+    const property = await loadForComps(req, res)
+    if (!property) return
+    if (property.lat == null || property.lng == null) {
+      const spot = await geocode(property.address, property.city)
+      if (spot) {
+        await Property.updateOne({ _id: property._id }, { $set: { lat: spot.lat, lng: spot.lng } }, { timestamps: false })
+        property.lat = spot.lat
+        property.lng = spot.lng
+      }
+    }
+    const missing = (property.comps || []).filter((comp) => comp.lat == null || comp.lng == null).slice(0, 10)
+    for (const comp of missing) {
+      const spot = await geocode(comp.address, comp.city || property.city)
+      if (!spot) continue
+      await Property.updateOne({ _id: property._id, "comps._id": comp._id }, { $set: { "comps.$.lat": spot.lat, "comps.$.lng": spot.lng } }, { timestamps: false })
+      comp.lat = spot.lat
+      comp.lng = spot.lng
+    }
+    res.json({
+      subject: property.lat != null ? { lat: property.lat, lng: property.lng } : null,
+      comps: (property.comps || []).map((comp) => ({ id: String(comp._id), lat: comp.lat ?? null, lng: comp.lng ?? null })),
+    })
+  }),
+)
+
+propertiesRouter.post(
+  "/:id/comps",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const property = await loadForComps(req, res)
+    if (!property) return
+    const { fields, error } = compFields(req.body)
+    if (error) return sendError(res, 400, error)
+    if (!fields.address) return sendError(res, 400, "Enter the comp's address.")
+    if ((property.comps || []).length >= 25) return sendError(res, 400, "A property can have up to 25 comps.")
+    property.comps.push(fields)
+    const comp = property.comps[property.comps.length - 1]
+    await placeComp(comp, property)
+    await property.save()
+    await recordActivity({ user: req.user, title: "Comp added", detail: `${property.address}: ${comp.address}${comp.salePrice ? ` sold for $${comp.salePrice.toLocaleString("en-US")}` : ""}`, propertyId: property._id })
+    res.status(201).json({ property: presentProperty(property, req.user) })
+  }),
+)
+
+propertiesRouter.patch(
+  "/:id/comps/:compId",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const property = await loadForComps(req, res)
+    if (!property) return
+    const comp = property.comps.id(req.params.compId)
+    if (!comp) return sendError(res, 404, "That comp is not on this property.")
+    const { fields, error } = compFields(req.body)
+    if (error) return sendError(res, 400, error)
+    if ("address" in fields && !fields.address) return sendError(res, 400, "Enter the comp's address.")
+    const moved = ("address" in fields && fields.address !== comp.address) || ("city" in fields && fields.city !== comp.city)
+    comp.set(fields)
+    if (moved) await placeComp(comp, property)
+    await property.save()
+    await recordActivity({ user: req.user, title: "Comp updated", detail: `${property.address}: ${comp.address}`, propertyId: property._id })
+    res.json({ property: presentProperty(property, req.user) })
+  }),
+)
+
+propertiesRouter.delete(
+  "/:id/comps/:compId",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const property = await loadForComps(req, res)
+    if (!property) return
+    const comp = property.comps.id(req.params.compId)
+    if (!comp) return sendError(res, 404, "That comp is not on this property.")
+    const files = await DocumentFile.find({ _id: { $in: comp.photoFileIds || [] }, kind: "comp" })
+    await Promise.all(files.map((file) => deleteStoredFile(file).catch(() => {})))
+    await DocumentFile.deleteMany({ _id: { $in: files.map((file) => file._id) } })
+    const address = comp.address
+    comp.deleteOne()
+    await property.save()
+    await recordActivity({ user: req.user, title: "Comp removed", detail: `${property.address}: ${address}`, propertyId: property._id })
+    res.json({ property: presentProperty(property, req.user) })
+  }),
+)
+
+propertiesRouter.post(
+  "/:id/comps/:compId/photos",
+  requirePermission("properties.write"),
+  upload.array("photos", 12),
+  asyncHandler(async (req, res) => {
+    const property = await loadForComps(req, res)
+    if (!property) return
+    const comp = property.comps.id(req.params.compId)
+    if (!comp) return sendError(res, 404, "That comp is not on this property.")
+    const images = (req.files || []).filter((file) => /^image\/(jpeg|png|webp|gif|heic|avif)$/i.test(file.mimetype || ""))
+    if (!images.length) return sendError(res, 400, "Choose at least one photo (JPG, PNG, WEBP or HEIC).")
+    if ((comp.photoFileIds || []).length + images.length > 20) return sendError(res, 400, "A comp can have up to 20 photos.")
+    for (const file of images) {
+      const saved = await saveUploadedFile(file, req.user, { propertyId: property._id, kind: "comp" })
+      comp.photoFileIds.push(saved._id)
+    }
+    await property.save()
+    res.status(201).json({ property: presentProperty(property, req.user) })
+  }),
+)
+
+propertiesRouter.delete(
+  "/:id/comps/:compId/photos/:fileId",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const property = await loadForComps(req, res)
+    if (!property) return
+    const comp = property.comps.id(req.params.compId)
+    if (!comp) return sendError(res, 404, "That comp is not on this property.")
+    const keep = (comp.photoFileIds || []).filter((id) => String(id) !== String(req.params.fileId))
+    if (keep.length === (comp.photoFileIds || []).length) return sendError(res, 404, "That photo is not on this comp.")
+    comp.photoFileIds = keep
+    const file = await DocumentFile.findOne({ _id: req.params.fileId, kind: "comp" })
+    if (file) {
+      await deleteStoredFile(file).catch(() => {})
+      await file.deleteOne()
+    }
+    await property.save()
+    res.json({ property: presentProperty(property, req.user) })
   }),
 )
 
@@ -242,6 +434,10 @@ propertiesRouter.patch(
     if (!req.permissions.includes("internal.pricing")) delete parsed.data.houseBoughtPrice
     const before = property.toObject()
     Object.assign(property, parsed.data, { updatedBy: req.user.name })
+    if (("address" in parsed.data && parsed.data.address !== before.address) || ("city" in parsed.data && parsed.data.city !== before.city)) {
+      property.lat = undefined
+      property.lng = undefined
+    }
     if ("labels" in req.body) property.labels = cleanLabelList(parseList(req.body.labels))
     if ("scopeLines" in req.body) {
       property.scopeLines = parseList(req.body.scopeLines).flatMap((line) => {
@@ -334,6 +530,7 @@ async function presentPropertyLoans(loans) {
       payment: loan.payment ?? null,
       maturity: loan.maturity || "",
       termsStatus: loan.termsStatus || "",
+      ...loanFields(loan),
     }
   })
 }

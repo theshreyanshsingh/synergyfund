@@ -19,8 +19,9 @@ export async function lenderForName(name) {
 }
 
 export function presentLender(lender, loans = []) {
-  const balance = loans.reduce((total, loan) => total + Number(loan.balance || 0), 0)
-  const payment = loans.reduce((total, loan) => total + Number(loan.payment || 0), 0)
+  const open = loans.filter((loan) => loan.status !== "Paid off")
+  const balance = open.reduce((total, loan) => total + Number(loan.balance || 0), 0)
+  const payment = open.reduce((total, loan) => total + Number(loan.payment || 0), 0)
   return {
     id: String(lender._id),
     name: lender.name,

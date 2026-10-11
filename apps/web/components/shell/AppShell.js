@@ -9,6 +9,7 @@ import { Sidebar } from "./Sidebar"
 import { CommandPalette } from "./CommandPalette"
 import { Loader } from "../ui/Loader"
 import { Icon } from "../ui/Icon"
+import { InstallCard } from "../pwa/InstallCard"
 import { api } from "../../lib/api"
 
 const NARROW = "(max-width: 1100px)"
@@ -69,7 +70,10 @@ export function AppShell({ children }) {
           <ThemeToggle />
           <button type="button" className="tool" onClick={async () => { await api("/auth/logout", { method: "POST" }); router.replace("/login"); router.refresh() }}>Logout</button>
         </header>
-        <main className="main">{children}</main>
+        <main className="main">
+          <InstallCard className="bar-install" />
+          {children}
+        </main>
       </div>
     )
   }

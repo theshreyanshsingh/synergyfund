@@ -2,7 +2,8 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { LOAN_LABELS, can } from "@synergifund/shared"
+import { can } from "@synergifund/shared"
+import { LoanFields } from "../../../components/loans/LoanFields"
 import { FormSheet } from "../../../components/ui/FormSheet"
 import { StatusPill } from "../../../components/ui/StatusPill"
 import { WorkspacePage } from "../../../components/ui/WorkspacePage"
@@ -73,8 +74,8 @@ export default function LoansPage() {
           underTitle={switcher}
           action={writable ? { label: "Add loan", onClick: () => { setError(""); setOpen("loan") } } : null}
           stats={[
-            { label: "Reported balances", value: money(items.reduce((sum, item) => sum + Number(item.balance || 0), 0)), hint: "From the loan records" },
-            { label: "Monthly payments", value: money(items.reduce((sum, item) => sum + Number(item.payment || 0), 0)), hint: "Same figure as Overview" },
+            { label: "Reported balances", value: money(items.filter((item) => item.status !== "Paid off").reduce((sum, item) => sum + Number(item.balance || 0), 0)), hint: "Open loans, from the loan records" },
+            { label: "Monthly payments", value: money(items.filter((item) => item.status !== "Paid off").reduce((sum, item) => sum + Number(item.payment || 0), 0)), hint: "Same figure as Overview" },
             { label: "Loan records", value: String(items.length), hint: "One loan, one property" },
             { label: "Lenders", value: String(lenders.length), hint: "Shared lender records" },
           ]}
@@ -84,7 +85,8 @@ export default function LoansPage() {
             { key: "balance", label: "Balance", render: (row) => money(row.balance) },
             { key: "payment", label: "Payment", render: (row) => money(row.payment) },
             { key: "maturity", label: "Maturity", render: (row) => row.maturity || "No date" },
-            { key: "termsStatus", label: "Status", render: (row) => <StatusPill>{row.termsStatus}</StatusPill> },
+            { key: "status", label: "Loan status", render: (row) => <StatusPill>{row.status || "Current"}</StatusPill> },
+            { key: "termsStatus", label: "Terms", render: (row) => <StatusPill>{row.termsStatus}</StatusPill> },
           ]}
           rows={items}
           important={(row) => row.termsStatus === "Needs verification"}
@@ -123,41 +125,5 @@ export default function LoansPage() {
         </FormSheet>
       )}
     </>
-  )
-}
-
-export function LoanFields({ lenders, properties, loan }) {
-  return (
-    <div className="form-grid">
-      <label className="field wide"><span>Lender</span>
-        <select name="lenderId" required defaultValue={loan?.lenderId || ""}>
-          <option value="">Choose</option>
-          {lenders.map((lender) => <option key={lender.id} value={lender.id}>{lender.name}</option>)}
-        </select>
-      </label>
-      <label className="field wide"><span>Property</span>
-        <select name="propertyId" required defaultValue={loan?.propertyId || ""}>
-          <option value="">Choose</option>
-          {properties.map((property) => <option key={property.id} value={property.id}>{property.address}</option>)}
-        </select>
-      </label>
-      <label className="field"><span>Nature</span>
-        <input name="label" list="loan-labels" defaultValue={loan?.label || "Financed"} />
-        <datalist id="loan-labels">{LOAN_LABELS.map((label) => <option key={label} value={label} />)}</datalist>
-      </label>
-      <label className="field"><span>Loan number</span><input name="loanNumber" defaultValue={loan?.loanNumber || ""} /></label>
-      <label className="field"><span>Balance</span><input name="balance" inputMode="decimal" defaultValue={loan?.balance ?? ""} /></label>
-      <label className="field"><span>Monthly payment</span><input name="payment" inputMode="decimal" defaultValue={loan?.payment ?? ""} /></label>
-      <label className="field"><span>Payment day of month</span><input name="paymentDay" type="number" min="1" max="31" inputMode="numeric" placeholder="1 to 31" defaultValue={loan?.paymentDay ?? ""} /></label>
-      <label className="field"><span>Original amount</span><input name="originalAmount" inputMode="decimal" defaultValue={loan?.originalAmount ?? ""} /></label>
-      <label className="field"><span>Maturity</span><input name="maturity" type="date" defaultValue={loan?.maturity || ""} /></label>
-      <label className="field"><span>Terms status</span>
-        <select name="termsStatus" defaultValue={loan?.termsStatus || "Needs verification"}>
-          <option>Needs verification</option>
-          <option>Verified</option>
-        </select>
-      </label>
-      <label className="field wide"><span>Terms for this property</span><textarea name="terms" defaultValue={loan?.terms || ""} placeholder="Anything specific to this house" /></label>
-    </div>
   )
 }

@@ -186,6 +186,28 @@ export const TASK_LABELS = ["EMD", "Mortgage payment", "Draw", "Verify", "Inspec
 export const PROPERTY_LABELS = ["Financed", "Refinanced", "Flip", "Hold", "Rent"]
 
 export const LOAN_LABELS = ["Financed", "Refinanced", "Construction", "Bridge", "Seller financing"]
+export const LOAN_STATUSES = ["Current", "Late", "In default", "Paid off"]
+export const INSURANCE_FREQUENCIES = ["Monthly", "Quarterly", "Every 6 months", "Yearly"]
+
+// One status and one open balance per property, from its loans. Paid-off loans carry no balance.
+export function loanSummary(loans = []) {
+  if (!loans.length) return { count: 0, status: "No loan", balance: null, payment: null }
+  const open = loans.filter((loan) => (loan.status || "Current") !== "Paid off")
+  if (!open.length) return { count: loans.length, status: "Paid off", balance: 0, payment: 0 }
+  const rank = ["Current", "Late", "In default"]
+  const status = open.reduce((worst, loan) => {
+    const current = rank.includes(loan.status) ? loan.status : "Current"
+    return rank.indexOf(current) > rank.indexOf(worst) ? current : worst
+  }, "Current")
+  const known = open.filter((loan) => loan.balance != null && loan.balance !== "")
+  const paying = open.filter((loan) => loan.payment != null && loan.payment !== "")
+  return {
+    count: loans.length,
+    status,
+    balance: known.length ? known.reduce((sum, loan) => sum + Number(loan.balance || 0), 0) : null,
+    payment: paying.length ? paying.reduce((sum, loan) => sum + Number(loan.payment || 0), 0) : null,
+  }
+}
 
 export function ensureTaskPermissions(list = []) {
   const selected = knownPermissions(list)
@@ -243,6 +265,7 @@ export const NAV = [
   { href: "/documents", label: "Documents", icon: "file", permission: PERMISSIONS.documentsRead, section: "Records" },
   { href: "/activity", label: "Team activity", icon: "pulse", permission: PERMISSIONS.activityRead, section: "Records" },
   { href: "/members", label: "Members", icon: "users", permission: PERMISSIONS.membersManage, section: "Team" },
+  { href: "/settings", label: "Settings", icon: "settings", section: "Team" },
 ]
 
 const CONTRACTOR_NAV = new Set(["/properties", "/expenses", "/chat"])
@@ -375,4 +398,62 @@ export function drawHealth(figures) {
   if (figures.budgetEstimated) return "In progress"
   if (figures.fundsAvailable != null && figures.fundsAvailable < 0.15) return "Low funds"
   return "In progress"
+}
+
+export const MIN_COMPS = 3
+
+export function daysBetween(start, end) {
+  if (!start || !end) return null
+  const from = new Date(`${String(start).slice(0, 10)}T12:00:00`)
+  const to = new Date(`${String(end).slice(0, 10)}T12:00:00`)
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return null
+  return Math.round((to - from) / 86400000)
+}
+
+function middle(values) {
+  if (!values.length) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const half = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? sorted[half] : (sorted[half - 1] + sorted[half]) / 2
+}
+
+export function compStats(comps = [], subjectSqft = null) {
+  const used = comps.filter((comp) => comp.include !== false && Number(comp.salePrice) > 0)
+  const prices = used.map((comp) => Number(comp.salePrice))
+  const perSqft = used.filter((comp) => Number(comp.sqft) > 0).map((comp) => Number(comp.salePrice) / Number(comp.sqft))
+  const days = used.map((comp) => daysBetween(comp.purchaseDate, comp.saleDate)).filter((value) => value != null && value >= 0)
+  const sqft = Number(subjectSqft) > 0 ? Number(subjectSqft) : null
+  const median = middle(prices)
+  const average = prices.length ? prices.reduce((sum, value) => sum + value, 0) / prices.length : null
+  const ppsfMedian = middle(perSqft)
+  const bySqft = sqft && perSqft.length >= MIN_COMPS ? ppsfMedian * sqft : null
+  const round = (value) => (value == null ? null : Math.round(value / 100) * 100)
+  const methods = [
+    bySqft != null && { key: "sqft", label: `Median $${Math.round(ppsfMedian).toLocaleString("en-US")}/sq ft × ${sqft.toLocaleString("en-US")} sq ft`, value: round(bySqft) },
+    median != null && { key: "median", label: `Median of ${prices.length} comp sales`, value: round(median) },
+    average != null && { key: "average", label: `Average of ${prices.length} comp sales`, value: round(average) },
+  ].filter(Boolean)
+  return {
+    count: used.length,
+    ready: used.length >= MIN_COMPS,
+    low: prices.length ? Math.min(...prices) : null,
+    high: prices.length ? Math.max(...prices) : null,
+    median,
+    average,
+    ppsfMedian,
+    averageDays: days.length ? Math.round(days.reduce((sum, value) => sum + value, 0) / days.length) : null,
+    methods,
+    suggested: used.length >= MIN_COMPS ? methods[0] || null : null,
+  }
+}
+
+export function zillowLink(address, city = "") {
+  const text = [address, city].map((part) => String(part || "").trim()).filter(Boolean).join(" ")
+  if (!text) return ""
+  return `https://www.zillow.com/homes/${text.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "")}_rb/`
+}
+
+export function mapsLink(address, city = "") {
+  const text = [address, city].map((part) => String(part || "").trim()).filter(Boolean).join(", ")
+  return text ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(text)}` : ""
 }

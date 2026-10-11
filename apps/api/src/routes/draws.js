@@ -1,8 +1,8 @@
 import { Router } from "express"
-import { drawPulled } from "@synergifund/shared"
+import { drawPulled, isPendingDraw } from "@synergifund/shared"
 import xlsx from "xlsx"
 import { DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, ImportJob, PhotoReport, Property } from "../models/index.js"
-import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
+import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { propertyFilter } from "../services/access.js"
 import { comparePhotosForDraw } from "../services/agent.js"
 import { DRAW_FIELD_ALIASES, appendNewDrawRows, classifyDrawRows, importPortfolioRecords, parsePortfolioWorkbook, readWorkbook } from "../services/drawImport.js"
@@ -66,17 +66,19 @@ export function presentDraw(item) {
 }
 
 export function presentContractorDraw(item) {
-  const draw = presentDraw(item)
+  // No dollar amounts: contractors only see which line items a draw covers.
   return {
-    id: draw.id,
-    propertyId: draw.propertyId,
-    title: draw.title,
-    status: draw.status,
-    amount: draw.amount,
-    pulled: draw.pulled,
-    remaining: draw.remaining,
-    requestedDate: draw.requestedDate,
-    lines: draw.lines,
+    id: String(item._id),
+    propertyId: String(item.propertyId),
+    title: item.title,
+    status: item.status,
+    requestedDate: item.requestedDate || "",
+    open: isPendingDraw(item),
+    lines: (item.lines || []).filter((line) => Number(line.amount) > 0).map((line) => ({
+      id: String(line._id),
+      title: line.title || "",
+      description: line.description || "",
+    })),
   }
 }
 
@@ -154,6 +156,7 @@ drawsRouter.get(
 drawsRouter.get(
   "/imports",
   requirePermission("draws.read"),
+  blockContractors,
   asyncHandler(async (req, res) => {
     const jobs = await ImportJob.find({ type: "draws" }).sort({ createdAt: -1 }).limit(12)
     const files = await DocumentFile.find({ _id: { $in: jobs.map((job) => job.fileId) } })
@@ -173,6 +176,7 @@ drawsRouter.get(
 drawsRouter.get(
   "/imports/:id",
   requirePermission("draws.read"),
+  blockContractors,
   asyncHandler(async (req, res) => {
     const job = await ImportJob.findById(req.params.id)
     if (!job || job.type !== "draws") {
@@ -508,6 +512,7 @@ drawsRouter.post(
 drawsRouter.get(
   "/export",
   requirePermission("draws.read"),
+  blockContractors,
   asyncHandler(async (req, res) => {
     const allowed = await Property.find(propertyFilter(req.user)).select("address city rehabBudget scopeLines")
     const allowedIds = new Set(allowed.map((property) => String(property._id)))

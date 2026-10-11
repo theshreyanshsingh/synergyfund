@@ -1,4 +1,9 @@
 const tones = {
+  Current: "good",
+  Late: "warn",
+  "In default": "bad",
+  "Paid off": "neutral",
+  "No loan": "neutral",
   "Under contract": "neutral",
   "Lender search": "warn",
   Renovation: "good",

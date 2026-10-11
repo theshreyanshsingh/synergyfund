@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { can, drawFigures, drawPulled, ensureTaskPermissions, resolveBudget, isRole, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
+import { can, drawFigures, drawPulled, ensureTaskPermissions, resolveBudget, INSURANCE_FREQUENCIES, isRole, LOAN_STATUSES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
 import {
   Activity,
   AgentThread,
@@ -18,13 +18,14 @@ import {
   Task,
   User,
 } from "../models/index.js"
-import { asyncHandler, requireAnyPermission, requirePermission, sendError } from "../lib/http.js"
+import { asyncHandler, blockContractors, requireAnyPermission, requirePermission, sendError } from "../lib/http.js"
 import { publicUser } from "../lib/serialize.js"
 import { propertyFilter } from "../services/access.js"
 import { presentDraw, refreshRehabRemaining } from "./draws.js"
-import { loanPaymentDates, nextPaymentDate, paymentDates } from "../services/schedule.js"
+import { insuranceDates, loanPaymentDates, nextPaymentDate, paymentDates } from "../services/schedule.js"
 import { saveUploadedFile, upload } from "../services/files.js"
 import { ensureLenders, lenderForName, presentLender } from "../services/lenders.js"
+import { loanFields } from "../services/loans.js"
 import { changeSummary, notify, notifyPropertyAccess, recordActivity } from "../services/notify.js"
 import { unreadTotal, usesChat } from "../services/chat.js"
 import { disconnectChat, refreshChat } from "../services/chatHub.js"
@@ -39,8 +40,12 @@ const LOAN_FIELDS = [
   ["balance", "Balance", true],
   ["payment", "Monthly payment", true],
   ["paymentDay", "Payment day"],
-  ["originalAmount", "Original amount", true],
+  ["originalAmount", "Total loan", true],
   ["maturity", "Maturity"],
+  ["status", "Loan status"],
+  ["insurancePayment", "Insurance payment", true],
+  ["insuranceFrequency", "Insurance repeats"],
+  ["insuranceDue", "Insurance due"],
   ["termsStatus", "Terms"],
   ["terms", "Property terms"],
 ]
@@ -59,8 +64,8 @@ workspaceRouter.get(
     const ids = properties.map((property) => property._id)
     const [loans, budgets, draws, expenses, tasks] = await Promise.all([
       Loan.find({ propertyId: { $in: ids } }),
-      req.permissions.includes("draws.read") ? DrawBudget.find({ propertyId: { $in: ids } }) : [],
-      req.permissions.includes("draws.read") ? Draw.find({ propertyId: { $in: ids } }) : [],
+      (req.permissions.includes("draws.read") && req.user.role !== "contractor") ? DrawBudget.find({ propertyId: { $in: ids } }) : [],
+      (req.permissions.includes("draws.read") && req.user.role !== "contractor") ? Draw.find({ propertyId: { $in: ids } }) : [],
       req.permissions.includes("expenses.read") ? Expense.find({ propertyId: { $in: ids } }) : [],
       Task.find({ $or: [{ propertyId: { $in: ids } }, { propertyId: null }] }),
     ])
@@ -68,7 +73,7 @@ workspaceRouter.get(
     const arv = sum(properties, "arv")
     const rehab = sum(properties, "rehabBudget")
     const rent = sum(properties, "actualRent")
-    const monthlyMortgage = loans.reduce((total, loan) => total + Number(loan.payment || 0), 0)
+    const monthlyMortgage = loans.filter((loan) => loan.status !== "Paid off").reduce((total, loan) => total + Number(loan.payment || 0), 0)
     const drawTotals = properties.reduce((total, property) => {
       const budget = budgets.find((item) => String(item.propertyId) === String(property._id))
       const own = draws.filter((draw) => String(draw.propertyId) === String(property._id))
@@ -100,7 +105,7 @@ workspaceRouter.get(
         series("ARV", properties.filter((property) => property.arv != null).map((property) => ({ at: property.arvDate || property.createdAt, amount: Number(property.arv) })), months, days),
       ]),
     ]
-    if (req.permissions.includes("draws.read")) {
+    if ((req.permissions.includes("draws.read") && req.user.role !== "contractor")) {
       cards.push(lineCard("Draws", currency(received), "Lender cash received on the funded date", `${currency(drawTotals.remaining)} budget remaining`, true, [
         series("Received", draws.filter((draw) => drawPulled(draw) > 0).map((draw) => ({ at: draw.fundedDate || draw.createdAt, amount: drawPulled(draw) })), months, days),
       ]))
@@ -536,6 +541,11 @@ workspaceRouter.post(
   "/loans",
   requirePermission("properties.write"),
   asyncHandler(async (req, res) => {
+    const problem = loanProblem(req.body)
+    if (problem) {
+      sendError(res, 400, problem)
+      return
+    }
     const lender = req.body.lenderId ? await Lender.findById(req.body.lenderId) : await lenderForName(req.body.lender)
     if (!lender) {
       sendError(res, 400, "Choose a lender.")
@@ -563,6 +573,10 @@ workspaceRouter.post(
       originalAmount: optionalNumber(req.body.originalAmount),
       maturity: String(req.body.maturity || ""),
       termsStatus: req.body.termsStatus === "Verified" ? "Verified" : "Needs verification",
+      status: loanStatus(req.body.status),
+      insurancePayment: optionalNumber(req.body.insurancePayment),
+      insuranceFrequency: insuranceFrequency(req.body.insuranceFrequency),
+      insuranceDue: dateKey(req.body.insuranceDue),
     })
     await recordActivity({ user: req.user, title: "Loan recorded", detail: `${lender.name} · ${property.address}`, propertyId: property._id })
     res.status(201).json({ loan: presentLoan(loan, new Map([[String(property._id), property]]), [lender]) })
@@ -581,6 +595,11 @@ workspaceRouter.patch(
     const property = await Property.findOne({ _id: loan.propertyId, ...propertyFilter(req.user) })
     if (!property) {
       sendError(res, 404, "That property is not available.")
+      return
+    }
+    const problem = loanProblem(req.body, loan)
+    if (problem) {
+      sendError(res, 400, problem)
       return
     }
     const before = loan.toObject()
@@ -602,6 +621,10 @@ workspaceRouter.patch(
     if ("originalAmount" in req.body) loan.originalAmount = optionalNumber(req.body.originalAmount)
     if ("maturity" in req.body) loan.maturity = String(req.body.maturity || "")
     if ("termsStatus" in req.body) loan.termsStatus = req.body.termsStatus === "Verified" ? "Verified" : "Needs verification"
+    if ("status" in req.body) loan.status = loanStatus(req.body.status)
+    if ("insurancePayment" in req.body) loan.insurancePayment = optionalNumber(req.body.insurancePayment)
+    if ("insuranceFrequency" in req.body) loan.insuranceFrequency = insuranceFrequency(req.body.insuranceFrequency)
+    if ("insuranceDue" in req.body) loan.insuranceDue = dateKey(req.body.insuranceDue)
     if (req.body.propertyId && String(req.body.propertyId) !== String(loan.propertyId)) {
       const next = await Property.findOne({ _id: req.body.propertyId, ...propertyFilter(req.user) })
       if (!next) {
@@ -627,6 +650,7 @@ workspaceRouter.patch(
 workspaceRouter.get(
   "/construction",
   requirePermission("draws.read"),
+  blockContractors,
   asyncHandler(async (req, res) => {
     const items = await ConstructionProject.find()
     const totals = items.reduce(
@@ -971,7 +995,7 @@ workspaceRouter.get(
         $or: [{ propertyId: { $in: propertyIds } }, { propertyId: null }],
       }),
       Loan.find({ propertyId: { $in: propertyIds } }),
-      req.permissions.includes("draws.read") ? Draw.find({ propertyId: { $in: propertyIds } }) : [],
+      (req.permissions.includes("draws.read") && req.user.role !== "contractor") ? Draw.find({ propertyId: { $in: propertyIds } }) : [],
     ])
     const today = todayKey()
     const soon = shiftKey(today, 7)
@@ -999,7 +1023,7 @@ workspaceRouter.get(
           }
         })
       }),
-      ...loans.filter((loan) => loan.maturity).map((loan) => {
+      ...loans.filter((loan) => loan.maturity && loan.status !== "Paid off").map((loan) => {
         const date = dateKey(loan.maturity)
         const passed = date < today
         const dueSoon = !passed && date <= monthOut
@@ -1030,6 +1054,21 @@ workspaceRouter.get(
           urgent: dueSoon,
           tone: dueSoon ? "warn" : "neutral",
           detail: date < today ? "Monthly payment, past" : dueSoon ? "Monthly payment due this week" : "Monthly payment",
+        }
+      })),
+      ...loans.flatMap((loan) => insuranceDates(loan, shiftKey(today, -60), shiftKey(today, 365)).map((date) => {
+        const dueSoon = date >= today && date <= soon
+        return {
+          id: `loan-insurance-${loan._id}-${date}`,
+          kind: "loan",
+          title: "Insurance payment",
+          date,
+          amount: loan.insurancePayment ?? null,
+          status: "Scheduled",
+          property: names.get(String(loan.propertyId || "")) || "",
+          urgent: dueSoon,
+          tone: dueSoon ? "warn" : "neutral",
+          detail: date < today ? `Insurance, ${String(loan.insuranceFrequency || "Yearly").toLowerCase()}, past` : dueSoon ? "Insurance due this week" : `Insurance, ${String(loan.insuranceFrequency || "Yearly").toLowerCase()}`,
         }
       })),
       ...draws.flatMap((item) => {
@@ -1145,8 +1184,36 @@ function presentLoan(loan, names, lenders = []) {
     originalAmount: loan.originalAmount ?? null,
     maturity: loan.maturity || "",
     termsStatus: loan.termsStatus,
+    ...loanFields(loan),
     importSource: loan.importSource || null,
   }
+}
+
+const LOAN_MONEY = [["balance", "Balance"], ["payment", "Monthly payment"], ["originalAmount", "Total loan"], ["insurancePayment", "Insurance payment"]]
+
+// Returns a message for the first field that cannot be saved as entered, so nothing is dropped silently.
+function loanProblem(body, loan = null) {
+  for (const [key, label] of LOAN_MONEY) {
+    if (!(key in body) || body[key] === "" || body[key] == null) continue
+    const number = optionalNumber(body[key])
+    if (number === undefined || number < 0) return `Enter ${label.toLowerCase()} as a dollar amount.`
+  }
+  if ("paymentDay" in body && body.paymentDay !== "" && body.paymentDay != null && dayOfMonth(body.paymentDay) == null) return "Payment due day must be a day of the month from 1 to 31."
+  for (const [key, label] of [["insuranceDue", "Insurance due date"], ["maturity", "Maturity"]]) {
+    if (key in body && body[key] && !/^\d{4}-\d{2}-\d{2}$/.test(String(body[key]))) return `${label} must be a date.`
+  }
+  const insurance = "insurancePayment" in body ? optionalNumber(body.insurancePayment) : loan?.insurancePayment
+  const insuranceDue = "insuranceDue" in body ? dateKey(body.insuranceDue) : loan?.insuranceDue
+  if (insurance > 0 && !insuranceDue) return "Add the insurance due date so the payment shows on the calendar."
+  return ""
+}
+
+function loanStatus(value) {
+  return LOAN_STATUSES.includes(value) ? value : "Current"
+}
+
+function insuranceFrequency(value) {
+  return INSURANCE_FREQUENCIES.includes(value) ? value : "Yearly"
 }
 
 function cleanLoanLabel(value) {
@@ -1161,7 +1228,7 @@ function dayOfMonth(value) {
 
 function optionalNumber(value) {
   if (value === "" || value == null) return undefined
-  const number = Number(value)
+  const number = Number(String(value).replace(/[$,\s]/g, ""))
   return Number.isFinite(number) ? number : undefined
 }
 
@@ -1310,22 +1377,24 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
     })
   }
   for (const loan of loans) {
-    if (!(Number(loan.payment) > 0)) continue
+    if (loan.status === "Paid off" || !(Number(loan.payment) > 0)) continue
     const hasDatedBill = bills.some((bill) => {
       const mortgage = bill.category === "Mortgage" || /mortgage/i.test(bill.title || "")
       const due = dateKey(bill.due)
       return mortgage && bill.status !== "Paid" && due && due <= month && String(bill.propertyId || "") === String(loan.propertyId || "")
     })
     if (hasDatedBill) continue
+    const nextDue = loanPaymentDates(loan, today, month)[0] || ""
+    if (loan.paymentDay && !nextDue) continue
     items.push({
       id: `loan-payment-${loan._id}`,
       kind: "Mortgage",
       title: loan.lender && loan.lender !== "Not provided" ? `${loan.lender} payment` : "Monthly mortgage payment",
       property: names.get(String(loan.propertyId || "")) || "",
-      date: "",
+      date: nextDue,
       amount: loan.payment,
-      tone: "warn",
-      detail: "Due within 30 days · payment date not recorded",
+      tone: nextDue && nextDue <= week ? "bad" : "warn",
+      detail: nextDue ? (nextDue <= week ? "Due this week" : "Due within 30 days") : "Due within 30 days · payment date not recorded",
       href: "/loans",
     })
   }

@@ -7,6 +7,7 @@ import { can, initials, navFor, PERMISSIONS } from "@synergifund/shared"
 import { api } from "../../lib/api"
 import { useChatEvents } from "../../lib/chatSocket"
 import { Icon } from "../ui/Icon"
+import { InstallCard } from "../pwa/InstallCard"
 
 export const Sidebar = memo(function Sidebar({ user, onSearch, onToggle, onNavigate }) {
   const router = useRouter()
@@ -35,6 +36,7 @@ export const Sidebar = memo(function Sidebar({ user, onSearch, onToggle, onNavig
           <Icon name="menu" size={16} />
         </button>
       </div>
+      <InstallCard className="sidebar-install" />
       <button type="button" className="quick" onClick={onSearch}>
         <Icon name="search" size={15} />
         <span>Quick Actions</span>

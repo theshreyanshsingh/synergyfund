@@ -1,6 +1,7 @@
 import { Inter } from "next/font/google"
 import { Providers } from "../components/shell/Providers"
 import { NoZoom } from "../components/shell/NoZoom"
+import { INSTALL_CAPTURE } from "../lib/pwaCapture"
 import "./globals.css"
 
 const inter = Inter({ subsets: ["latin"], variable: "--font" })
@@ -34,6 +35,7 @@ export default function RootLayout({ children }) {
     <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
         <script dangerouslySetInnerHTML={{ __html: "try{var t=localStorage.getItem('synergifund-theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t}catch(e){}" }} />
+        <script dangerouslySetInnerHTML={{ __html: INSTALL_CAPTURE }} />
         <NoZoom />
         <Providers>{children}</Providers>
       </body>

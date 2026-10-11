@@ -16,6 +16,15 @@ export function requirePermission(permission) {
   }
 }
 
+// Contractors may see draws as line items, never the dollar figures.
+export function blockContractors(req, res, next) {
+  if (req.user?.role === "contractor") {
+    sendError(res, 403, "You do not have permission for that action.")
+    return
+  }
+  next()
+}
+
 export function requireAnyPermission(...permissions) {
   return (req, res, next) => {
     if (!permissions.some((permission) => req.permissions.includes(permission))) {

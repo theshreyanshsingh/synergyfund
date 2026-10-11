@@ -3,6 +3,7 @@ function key(date) {
 }
 
 export function loanPaymentDates(loan, from, to) {
+  if (loan?.status === "Paid off") return []
   const day = Number(loan?.paymentDay)
   if (!Number.isInteger(day) || day < 1 || day > 31 || !(Number(loan?.payment) > 0)) return []
   const [fromYear, fromMonth] = from.split("-").map(Number)
@@ -24,6 +25,7 @@ const STEPS = {
   "Every 2 weeks": { days: 14 },
   Monthly: { months: 1 },
   Quarterly: { months: 3 },
+  "Every 6 months": { months: 6 },
   Yearly: { months: 12 },
 }
 
@@ -66,4 +68,19 @@ export function nextPaymentDate(bill) {
     if (date > due) return date
   }
   return ""
+}
+
+// Insurance repeats from its next due date; it stops when the loan is paid off.
+export function insuranceDates(loan, from, to) {
+  if (loan?.status === "Paid off" || !(Number(loan?.insurancePayment) > 0)) return []
+  const due = String(loan?.insuranceDue || "").slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) return []
+  const step = STEPS[loan.insuranceFrequency] || STEPS.Yearly
+  const dates = []
+  for (let index = 0; index < 600; index += 1) {
+    const date = occurrence(due, step, index)
+    if (date > to) break
+    if (date >= from) dates.push(date)
+  }
+  return dates
 }

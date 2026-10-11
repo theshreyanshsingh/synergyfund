@@ -1,0 +1,2 @@
+// Runs before React loads so the browser's one-time install offer is never missed.
+export const INSTALL_CAPTURE = "try{window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();window.__sfInstall=e;window.dispatchEvent(new Event('sf-pwa'))});window.addEventListener('appinstalled',function(){window.__sfInstall=null;try{localStorage.setItem('synergifund-installed','1')}catch(x){}window.dispatchEvent(new Event('sf-pwa'))})}catch(e){}"

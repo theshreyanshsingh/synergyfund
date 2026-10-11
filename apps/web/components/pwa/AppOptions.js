@@ -1,73 +1,44 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useSession } from "../shell/Providers"
 import { api } from "../../lib/api"
+import { disablePush, enablePush, installApp, installSteps, usePwa } from "../../lib/pwa"
 
 export function AppOptions() {
   const session = useSession()
   const admin = session?.user?.role === "admin"
-  const [installEvent, setInstallEvent] = useState(null)
-  const [installed, setInstalled] = useState(false)
-  const [pushOn, setPushOn] = useState(false)
-  const [supported, setSupported] = useState(true)
-  const [iosHint, setIosHint] = useState(false)
+  const pwa = usePwa()
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
   const [pending, setPending] = useState(false)
+  const [steps, setSteps] = useState(false)
   const [notice, setNotice] = useState({ title: "", body: "", href: "/notifications" })
-
-  useEffect(() => {
-    const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true
-    setInstalled(standalone)
-    const ios = /iphone|ipad|ipod/i.test(window.navigator.userAgent)
-    setIosHint(ios && !standalone)
-    setSupported("serviceWorker" in navigator && "PushManager" in window && "Notification" in window)
-    function rememberInstall(event) {
-      event.preventDefault()
-      setInstallEvent(event)
-    }
-    window.addEventListener("beforeinstallprompt", rememberInstall)
-    navigator.serviceWorker?.register("/sw.js").then((registration) => registration.pushManager.getSubscription()).then((subscription) => {
-      setPushOn(Boolean(subscription))
-    }).catch(() => {})
-    return () => window.removeEventListener("beforeinstallprompt", rememberInstall)
-  }, [])
+  const installed = pwa.installed
+  const iosHint = pwa.platform === "ios" && !pwa.standalone
 
   async function install() {
-    if (!installEvent) return
-    installEvent.prompt()
-    const choice = await installEvent.userChoice
-    setInstallEvent(null)
-    if (choice.outcome === "accepted") setInstalled(true)
-  }
-
-  async function enablePush() {
-    setError("")
-    setMessage("")
-    if (!supported) {
-      setError("This browser cannot receive push notifications.")
+    if (!pwa.installEvent) {
+      setSteps(true)
       return
     }
+    await installApp()
+  }
+
+  async function turnOn() {
+    setError("")
+    setMessage("")
     if (iosHint) {
       setError("Add SynergiFund to the Home Screen first, then open it from the icon and turn notifications on.")
       return
     }
-    const permission = await Notification.requestPermission()
-    if (permission !== "granted") {
-      setError("Notifications stay off until the browser is allowed to show them.")
+    if (!pwa.pushSupported) {
+      setError("This browser cannot receive push notifications.")
       return
     }
     setPending(true)
     try {
-      const registration = await navigator.serviceWorker.ready
-      const { publicKey } = await api("/push/vapid-public-key")
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
-      })
-      await api("/push/subscribe", { method: "POST", body: subscription.toJSON() })
-      setPushOn(true)
+      await enablePush()
       setMessage("This device will receive notifications.")
     } catch (err) {
       setError(err.message || "Notifications could not be turned on.")
@@ -76,18 +47,12 @@ export function AppOptions() {
     }
   }
 
-  async function disablePush() {
+  async function turnOff() {
     setError("")
     setMessage("")
     setPending(true)
     try {
-      const registration = await navigator.serviceWorker.ready
-      const subscription = await registration.pushManager.getSubscription()
-      if (subscription) {
-        await api("/push/subscribe", { method: "DELETE", body: { endpoint: subscription.endpoint } })
-        await subscription.unsubscribe()
-      }
-      setPushOn(false)
+      await disablePush()
       setMessage("Notifications are off on this device.")
     } catch (err) {
       setError(err.message || "Notifications could not be turned off.")
@@ -117,19 +82,19 @@ export function AppOptions() {
       <div className="settings-row">
         <div>
           <h2>Home screen</h2>
-          <p>{installed ? "This device is already using the installed app." : iosHint ? "On iPhone, use Share, then Add to Home Screen." : "Install SynergiFund so it opens from your home screen."}</p>
+          <p>{installed ? "SynergiFund is installed on this device." : !pwa.installable ? "This browser cannot install apps. Use Chrome, Edge or Safari to install SynergiFund." : steps || iosHint ? installSteps(pwa) : "Install SynergiFund so it opens from your home screen or dock."}</p>
         </div>
-        {installEvent && !installed && <button type="button" className="primary" onClick={install}>Install</button>}
+        {!installed && pwa.installable && !iosHint && !steps && <button type="button" className="primary" onClick={install}>Install</button>}
       </div>
       <div className="settings-row">
         <div>
           <h2>Notifications</h2>
-          <p>{pushOn ? "This device will receive notifications." : "Turn them on for this device."}</p>
+          <p>{pwa.pushOn ? "This device will receive notifications." : pwa.permission === "denied" ? "Notifications are blocked. Allow them for this site in the browser settings." : "Turn them on for this device."}</p>
         </div>
-        {pushOn ? (
-          <button type="button" className="tool" disabled={pending} onClick={disablePush}>Turn off</button>
+        {pwa.pushOn ? (
+          <button type="button" className="tool" disabled={pending} onClick={turnOff}>Turn off</button>
         ) : (
-          <button type="button" className="primary" disabled={pending || !supported} onClick={enablePush}>{pending ? "Saving…" : "Turn on"}</button>
+          <button type="button" className="primary" disabled={pending || !pwa.ready || pwa.permission === "denied"} onClick={turnOn}>{pending ? "Saving…" : "Turn on"}</button>
         )}
       </div>
       {(error || message) && <p className={error ? "banner" : "settings-note"}>{error || message}</p>}
@@ -147,11 +112,4 @@ export function AppOptions() {
       )}
     </section>
   )
-}
-
-function urlBase64ToUint8Array(value) {
-  const padding = "=".repeat((4 - (value.length % 4)) % 4)
-  const base64 = (value + padding).replace(/-/g, "+").replace(/_/g, "/")
-  const raw = atob(base64)
-  return Uint8Array.from(raw, (char) => char.charCodeAt(0))
 }
