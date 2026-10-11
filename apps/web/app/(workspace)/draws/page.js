@@ -208,7 +208,7 @@ export default function DrawsPage() {
         <article className="stat"><div className="stat-label">Remaining</div><div className="stat-value">{cash(totals.remaining)}</div><div className="stat-hint">Budget left after drawn and pending</div></article>
         <article className="stat"><div className="stat-label">Forecasted</div><div className="stat-value">{cash(totals.forecast)}</div><div className="stat-hint">{cash(totals.pending)} requested, not funded yet</div></article>
         <article className="stat"><div className="stat-label">Received</div><div className="stat-value">{cash(totals.received)}</div><div className="stat-hint">{cash(totals.available)} available to withdraw</div></article>
-        <article className="stat"><div className="stat-label">Total budget</div><div className="stat-value">{cash(totals.budget)}</div><div className="stat-hint">{totals.estimated ? `${totals.estimated} ${totals.estimated === 1 ? "property" : "properties"} estimated from line items` : `${cash(totals.drawn)} drawn · ${Math.round(totals.used * 100)}% used`}</div></article>
+        <article className="stat"><div className="stat-label">Total budget</div><div className="stat-value">{cash(totals.budget)}</div><div className="stat-hint">{cash(totals.drawn)} drawn · {Math.round(totals.used * 100)}% used</div></article>
       </div>
 
       <div className="panel draws-toolbar">
@@ -377,11 +377,10 @@ function DrawProperty({ project, open, onToggle, selecting, checked, onCheck, ..
           </span>
         </span>
         <span className="draw-figures">
-          <Figure label={figures.budgetEstimated ? "Remaining · est." : "Remaining"} value={figures.remaining} tone="strong" />
-          <Figure label={figures.budgetEstimated ? "Total budget · est." : "Total budget"} value={figures.budget} />
-          <Figure label="Drawn" value={figures.drawn} />
+          <Figure label="Remaining" value={figures.remaining} tone="good" />
+          <Figure label="Total budget" value={figures.budget} />
           <Figure label="Pulled" value={figures.received} tone="good" />
-          <Figure label="Pending" value={figures.pending} tone={figures.pending > 0 ? "warn" : "quiet"} />
+          <Figure label="Pending" value={figures.pending} tone="warn" />
         </span>
         <i className="draw-property-chevron" aria-hidden="true"><Icon name="chevron" size={16} /></i>
       </button>
@@ -512,7 +511,7 @@ function LineSheet({ sheet, onDraw, onScope }) {
               <th className="row-number">{item.other ? "" : index + 1}</th>
               <td className="pin-col">{item.title}</td>
               {described && <td className="line-description" title={item.description}>{item.description || ""}</td>}
-              <td className={item.estimated ? "num is-estimate" : "num"} title={item.estimated ? "No budget set for this line. Showing what has been drawn so far." : undefined}>{cell(item.budget)}</td>
+              <td className="num">{cell(item.budget)}</td>
               {draws.map((draw) => (
                 <td key={draw.id} className={isPendingDraw(draw) ? "num is-pending" : "num"}>{cell(item.amounts[draw.id])}</td>
               ))}
@@ -539,7 +538,7 @@ function LineSheet({ sheet, onDraw, onScope }) {
             <th className="row-number" />
             <td className="pin-col">TOTAL</td>
             {described && <td className="line-description" />}
-            <td className={total.estimated ? "num is-estimate" : "num"} title={total.estimated ? "Estimated from line items. Add line budgets for exact figures." : undefined}>{cash(total.budget)}{total.estimated ? " est." : ""}</td>
+            <td className="num">{cash(total.budget)}</td>
             {draws.map((draw) => (
               <td key={draw.id} className={isPendingDraw(draw) ? "num is-pending" : "num"}>{cash(draw.amount)}</td>
             ))}
@@ -790,7 +789,6 @@ function drawLabel(draw) {
 }
 
 function healthTone(health) {
-  if (/budget missing/i.test(health)) return "is-warn"
   if (/low funds/i.test(health)) return "is-bad"
   if (/pending/i.test(health)) return "is-warn"
   if (/not started/i.test(health)) return "is-quiet"

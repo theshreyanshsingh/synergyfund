@@ -370,9 +370,9 @@ export function resolveBudget({ rehabBudget, recordBudget, scopeLines = [], draw
 }
 
 export function drawHealth(figures) {
-  if (figures.budgetEstimated && !figures.pending) return "Budget missing"
   if (figures.pending > 0) return "Pending draw"
   if (!figures.drawn) return "Not started"
+  if (figures.budgetEstimated) return "In progress"
   if (figures.fundsAvailable != null && figures.fundsAvailable < 0.15) return "Low funds"
   return "In progress"
 }

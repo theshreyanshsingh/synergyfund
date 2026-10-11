@@ -1220,7 +1220,7 @@ a { color: inherit; text-decoration: none; }
 .draw-progress-bar { flex: 1; display: flex; min-width: 40px; height: 6px; overflow: hidden; border-radius: 999px; background: var(--neutral-bg); }
 .draw-progress-bar i { display: block; flex: none; height: 100%; background: var(--good); }
 .draw-progress-bar i.is-pending { background: var(--warn); }
-.draw-figures { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+.draw-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; min-width: 0; }
 .draw-figure { display: grid; gap: 3px; min-width: 0; }
 .draw-figure small { color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; }
 .draw-figure b { overflow: hidden; font-size: 15px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
@@ -1333,8 +1333,7 @@ a { color: inherit; text-decoration: none; }
   .draw-property-name { grid-column: 1; }
   .draw-property-chevron { grid-column: 2; grid-row: 1; align-self: start; margin-top: 2px; }
   .draw-figures { grid-column: 1 / -1; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--line); }
-  .draw-figures .draw-figure { grid-column: span 2; }
-  .draw-figures .draw-figure:nth-child(-n+2) { grid-column: span 3; }
+  .draw-figures .draw-figure { grid-column: span 3; }
   .draw-figure { padding: 8px 12px; background: var(--white); }
   .draw-property-progress { max-width: 420px; }
 }
@@ -1751,4 +1750,3 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .import-save, .import-trigger, .workspace-top .import-button[aria-busy] { display: inline-flex; align-items: center; gap: 8px; }
 .import-button:disabled, .import-save:disabled { cursor: not-allowed; opacity: .6; }
 .import-button[aria-busy], .import-save[aria-busy="true"] { cursor: progress; }
-.line-sheet td.is-estimate { color: var(--faint); font-style: italic; }
