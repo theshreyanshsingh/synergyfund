@@ -1,12 +1,14 @@
 "use client"
 
 import Link from "next/link"
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { can, drawFigures, drawHealth, drawPulled, isPendingDraw, resolveBudget } from "@synergifund/shared"
 import { DrawEditor, ScopeEditor } from "../../../components/draws/DrawEditor"
 import { DrawImport } from "../../../components/draws/DrawImport"
 import { FormSheet, InfoSheet } from "../../../components/ui/FormSheet"
 import { HeaderActions } from "../../../components/ui/HeaderActions"
+import { SortableList, useSortableRow } from "../../../components/ui/Sortable"
+import { useChatEvents } from "../../../lib/chatSocket"
 import { Icon } from "../../../components/ui/Icon"
 import { PageSpinner } from "../../../components/ui/Spinner"
 import { useSession } from "../../../components/shell/Providers"
@@ -26,7 +28,9 @@ export default function DrawsPage() {
   const [workbook, setWorkbook] = useState(null)
   const [view, setView] = useState("properties")
   const [moneyView, setMoneyView] = useState("calendar")
-  const [sort, setSort] = useState("pending")
+  const [sort, setSort] = useState({ key: "custom", dir: "asc" })
+  const [orderOverride, setOrderOverride] = useState(null)
+  const moving = useRef(false)
   const [query, setQuery] = useState("")
   const [selecting, setSelecting] = useState(false)
   const [selected, setSelected] = useState([])
@@ -41,8 +45,8 @@ export default function DrawsPage() {
   })
 
   const projects = useMemo(
-    () => sortProjects(buildProjects(data.data), sort, query),
-    [data.data, sort, query],
+    () => sortProjects(buildProjects(data.data), sort, query, orderOverride),
+    [data.data, sort, query, orderOverride],
   )
   const totals = useMemo(() => sumProjects(projects), [projects])
 
@@ -68,6 +72,29 @@ export default function DrawsPage() {
     if (zero && draw && (draw.status === "Funded" || draw.status === "Partial") && !window.confirm(`Set ${draw.title} to $0 received? It will move back to pending.`)) return
     await api(`/draws/${id}`, { method: "PATCH", body: { fundedAmount } })
     data.reload()
+  }
+
+  const dragEnabled = Boolean(canDeleteProperty) && sort.key === "custom" && !query.trim() && !selecting
+
+  useChatEvents({
+    "properties:reordered": () => {
+      if (!moving.current) data.reload()
+    },
+  }, Boolean(session?.user && can(session.user, "chat.use")))
+
+  async function moveProperties(ids) {
+    moving.current = true
+    setOrderOverride(ids)
+    setBulkNote(null)
+    try {
+      await api("/properties/order", { method: "PUT", body: { ids } })
+      await data.reload()
+    } catch (err) {
+      setBulkNote({ ok: false, text: `The new order was not saved. ${err.message}` })
+    } finally {
+      setOrderOverride(null)
+      moving.current = false
+    }
   }
 
   function toggleSelected(id) {
@@ -240,12 +267,7 @@ export default function DrawsPage() {
               <Icon name="search" size={14} />
               <input value={query} placeholder="Search properties" aria-label="Search properties" onChange={(event) => setQuery(event.target.value)} />
             </label>
-            <select value={sort} aria-label="Sort properties" onChange={(event) => setSort(event.target.value)}>
-              <option value="pending">Pending first</option>
-              <option value="remaining">Most remaining</option>
-              <option value="available">Lowest funds</option>
-              <option value="address">Address</option>
-            </select>
+            <SortMenu value={sort} onChange={setSort} />
             {(writable || canDeleteProperty) && projects.length > 0 && (
               <button type="button" className="import-button" onClick={() => { setSelecting(true); setBulkNote(null) }}>Select</button>
             )}
@@ -279,6 +301,8 @@ export default function DrawsPage() {
           selected={selected}
           onSelect={toggleSelected}
           onChanged={data.reload}
+          dragEnabled={dragEnabled}
+          onMove={moveProperties}
           projects={projects}
           writable={writable}
           canDelete={canDeleteProperty}
@@ -321,15 +345,18 @@ export default function DrawsPage() {
   )
 }
 
-function DrawBoard({ projects, selecting, selected, onSelect, onChanged, writable, canDelete, onSave, onRemove, onForecast, onPull, onPulled }) {
+function DrawBoard({ projects, selecting, selected, onSelect, onChanged, dragEnabled, onMove, writable, canDelete, onSave, onRemove, onForecast, onPull, onPulled }) {
   const [openIds, setOpenIds] = useState([])
   const toggle = (id) => setOpenIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
   if (!projects.length) return <p className="draws-empty">No draw data yet. Import a workbook to add it.</p>
+  const ids = projects.map((project) => project.id)
   return (
-    <div className="draw-board">
+    <SortableList ids={ids} onMove={onMove}>
+    <div className={dragEnabled ? "draw-board can-drag" : "draw-board"}>
       {projects.map((project) => (
-        <DrawProperty
+        <SortableDrawProperty
           key={project.id}
+          dragEnabled={dragEnabled}
           project={project}
           open={openIds.includes(project.id)}
           onToggle={() => (selecting ? onSelect(project.id) : toggle(project.id))}
@@ -347,17 +374,24 @@ function DrawBoard({ projects, selecting, selected, onSelect, onChanged, writabl
         />
       ))}
     </div>
+    </SortableList>
   )
 }
 
-function DrawProperty({ project, open, onToggle, selecting, checked, onCheck, ...actions }) {
+function SortableDrawProperty({ dragEnabled, ...props }) {
+  const sortable = useSortableRow(props.project.id, dragEnabled)
+  return <DrawProperty {...props} sortable={sortable} />
+}
+
+function DrawProperty({ project, open, onToggle, selecting, checked, onCheck, sortable, ...actions }) {
   const figures = project.figures
   const used = figures.budget ? Math.min(1, figures.drawn / figures.budget) : 0
   const queued = figures.budget ? Math.min(1 - used, figures.pending / figures.budget) : 0
   const count = project.draws.filter((draw) => !isPendingDraw(draw)).length
   return (
-    <article className={`draw-property${open && !selecting ? " is-open" : ""}${selecting ? " is-selecting" : ""}${checked ? " is-checked" : ""}`}>
+    <article ref={sortable?.ref} style={sortable?.style} className={`draw-property${open && !selecting ? " is-open" : ""}${selecting ? " is-selecting" : ""}${checked ? " is-checked" : ""}${sortable?.dragging ? " is-dragging" : ""}`}>
       <div className="draw-property-row">
+      {sortable?.handle && <span className="draw-drag">{sortable.handle}</span>}
       {selecting && (
         <label className="draw-select">
           <input type="checkbox" checked={checked} onChange={onCheck} aria-label={`Select ${project.address}`} />
@@ -507,9 +541,9 @@ function LineSheet({ sheet, onDraw, onScope }) {
         </thead>
         <tbody>
           {rows.map((item, index) => (
-            <tr key={item.key} className={item.other ? "is-other" : undefined}>
+            <tr key={item.key} className={item.other ? "is-other" : item.complete ? "is-complete" : undefined}>
               <th className="row-number">{item.other ? "" : index + 1}</th>
-              <td className="pin-col">{item.title}</td>
+              <td className="pin-col">{item.title}{item.complete && <span className="line-done">Fully drawn</span>}</td>
               {described && <td className="line-description" title={item.description}>{item.description || ""}</td>}
               <td className="num">{cell(item.budget)}</td>
               {draws.map((draw) => (
@@ -606,10 +640,10 @@ function LineCard({ item, draws }) {
   const scale = Math.max(budget, item.drawn + item.pending)
   const shares = draws.filter((draw) => item.amounts[draw.id])
   return (
-    <div className={open ? "line-card is-open" : "line-card"}>
+    <div className={`line-card${open ? " is-open" : ""}${item.complete ? " is-complete" : ""}`}>
       <button type="button" className="line-card-head" aria-expanded={open} onClick={() => setOpen((current) => !current)} disabled={!shares.length && !item.description}>
         <span>
-          <b>{item.title}</b>
+          <b>{item.title}{item.complete && <span className="line-done">Fully drawn</span>}</b>
           <small>{item.budget != null ? `Budget ${cash(item.budget)}` : "No budget"} · Drawn {cash(item.drawn)}{item.pending ? ` · Pending ${cash(item.pending)}` : ""}</small>
         </span>
         <span className={item.remaining < -0.5 ? "line-card-left is-over" : "line-card-left"}><small>Remaining</small>{item.remaining == null ? "—" : cash(item.remaining)}</span>
@@ -764,10 +798,16 @@ function lineSheet(project) {
   }
   for (const item of rows) {
     item.remaining = item.budget == null ? null : item.budget - item.drawn - item.pending
+    item.complete = !item.other && !item.estimated && item.budget != null && item.drawn > 0 && item.pending <= 0.5 && item.remaining <= 0.5
   }
+  const ordered = [
+    ...rows.filter((item) => !item.other && !item.complete),
+    ...rows.filter((item) => !item.other && item.complete),
+    ...rows.filter((item) => item.other),
+  ]
   return {
     draws,
-    rows,
+    rows: ordered,
     total: {
       estimated: figures.budgetEstimated,
       budget: figures.budget,
@@ -950,17 +990,105 @@ function buildProjects(payload) {
   })
 }
 
-const SORTS = {
-  pending: (a, b) => b.figures.pending - a.figures.pending || (b.figures.remaining || 0) - (a.figures.remaining || 0),
-  remaining: (a, b) => (b.figures.remaining || 0) - (a.figures.remaining || 0),
-  available: (a, b) => (a.figures.fundsAvailable ?? 2) - (b.figures.fundsAvailable ?? 2),
-  address: (a, b) => String(a.address).localeCompare(String(b.address), undefined, { numeric: true }),
-}
+const SORT_FIELDS = [
+  { key: "custom", label: "Custom order", custom: true },
+  { key: "pending", label: "Pending", value: (project) => project.figures.pending },
+  { key: "remaining", label: "Remaining", value: (project) => project.figures.remaining },
+  { key: "budget", label: "Total budget", value: (project) => project.figures.budget },
+  { key: "received", label: "Pulled", value: (project) => project.figures.received },
+  { key: "used", label: "% used", value: (project) => project.figures.budgetUsed },
+  { key: "address", label: "Address", text: true, value: (project) => project.address || "" },
+]
 
-function sortProjects(projects, sort, query) {
+function sortProjects(projects, sort, query, orderOverride) {
   const words = String(query || "").toLowerCase().split(/\s+/).filter(Boolean)
   const found = words.length ? projects.filter((project) => words.every((word) => `${project.address} ${project.city} ${project.health}`.toLowerCase().includes(word))) : projects
-  return [...found].sort(SORTS[sort] || SORTS.pending)
+  const field = SORT_FIELDS.find((item) => item.key === sort?.key) || SORT_FIELDS[0]
+  if (field.custom) {
+    if (!orderOverride) return found
+    const rank = new Map(orderOverride.map((id, index) => [id, index]))
+    return [...found].sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity))
+  }
+  const sign = sort?.dir === "asc" ? 1 : -1
+  const byAddress = (a, b) => String(a.address).localeCompare(String(b.address), undefined, { numeric: true })
+  return [...found].sort((a, b) => {
+    if (field.text) return sign * byAddress(a, b)
+    const left = field.value(a)
+    const right = field.value(b)
+    const missingLeft = left == null || Number.isNaN(Number(left))
+    const missingRight = right == null || Number.isNaN(Number(right))
+    if (missingLeft || missingRight) return missingLeft === missingRight ? byAddress(a, b) : missingLeft ? 1 : -1
+    return sign * (Number(left) - Number(right)) || byAddress(a, b)
+  })
+}
+
+function SortMenu({ value, onChange }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const field = SORT_FIELDS.find((item) => item.key === value.key) || SORT_FIELDS[0]
+  const orders = field.text
+    ? [{ dir: "asc", label: "A → Z" }, { dir: "desc", label: "Z → A" }]
+    : [{ dir: "desc", label: "High → low" }, { dir: "asc", label: "Low → high" }]
+  const current = field.custom ? null : orders.find((order) => order.dir === value.dir) || orders[0]
+
+  useEffect(() => {
+    if (!open) return undefined
+    const close = (event) => {
+      if (!ref.current?.contains(event.target)) setOpen(false)
+    }
+    const escape = (event) => {
+      if (event.key === "Escape") setOpen(false)
+    }
+    document.addEventListener("pointerdown", close)
+    document.addEventListener("keydown", escape)
+    return () => {
+      document.removeEventListener("pointerdown", close)
+      document.removeEventListener("keydown", escape)
+    }
+  }, [open])
+
+  function pick(key) {
+    const next = SORT_FIELDS.find((item) => item.key === key)
+    onChange({ key, dir: next?.text || next?.custom ? "asc" : value.key === key ? value.dir : "desc" })
+    if (next?.custom) setOpen(false)
+  }
+
+  return (
+    <div className="sort-menu" ref={ref}>
+      <button type="button" className="sort-menu-button" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <Icon name="sliders" size={14} />
+        <span>{field.label}</span>
+        {current && <em>{current.label}</em>}
+      </button>
+      {open && (
+        <div className="sort-menu-pop" role="dialog" aria-label="Sort properties">
+          <p>Sort by</p>
+          <div className="sort-menu-fields">
+            {SORT_FIELDS.map((item) => (
+              <button key={item.key} type="button" className={item.key === field.key ? "is-on" : undefined} aria-pressed={item.key === field.key} onClick={() => pick(item.key)}>
+                {item.label}
+                {item.key === field.key && <Icon name="tick" size={14} />}
+              </button>
+            ))}
+          </div>
+          {field.custom ? (
+            <p className="sort-menu-note">Drag the handle on the left of a property to move it. Everyone sees the same order.</p>
+          ) : (
+          <>
+          <p>Order</p>
+          <div className="sort-menu-order">
+            {orders.map((order) => (
+              <button key={order.dir} type="button" className={order.dir === current.dir ? "is-on" : undefined} aria-pressed={order.dir === current.dir} onClick={() => { onChange({ key: field.key, dir: order.dir }); setOpen(false) }}>
+                {order.label}
+              </button>
+            ))}
+          </div>
+          </>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function sumProjects(projects) {

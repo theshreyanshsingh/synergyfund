@@ -8,6 +8,7 @@ import { propertyFilter, ownsProperty } from "../services/access.js"
 import { deleteStoredFile, publicFileUrl, saveUploadedFile, upload, withProofUrls } from "../services/files.js"
 import { ensureLenders } from "../services/lenders.js"
 import { removePropertyRoom } from "../services/chat.js"
+import { orderProperties } from "../services/propertyOrder.js"
 import { emitToUsers } from "../services/chatHub.js"
 import { changeSummary, notifyPropertyAccess, recordActivity } from "../services/notify.js"
 import { presentContractorDraw, presentDraw } from "./draws.js"
@@ -65,13 +66,46 @@ propertiesRouter.get(
     const filter = propertyFilter(req.user)
     if (req.query.stage) filter.stage = req.query.stage
     if (req.query.important === "1") filter.health = "Needs attention"
-    const query = Property.find(filter).sort({ updatedAt: -1 })
+    const query = Property.find(filter)
     if (req.query.q) {
       const expression = new RegExp(String(req.query.q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
       query.where({ $or: [{ address: expression }, { city: expression }, { ownerEntity: expression }] })
     }
-    const items = await query
+    const items = orderProperties(await query)
     res.json({ items: items.map((item) => presentProperty(item, req.user)) })
+  }),
+)
+
+propertiesRouter.put(
+  "/order",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const wanted = (Array.isArray(req.body.ids) ? req.body.ids : []).map(String).filter((id) => /^[a-f0-9]{24}$/.test(id))
+    if (!wanted.length) {
+      sendError(res, 400, "Send the properties in their new order.")
+      return
+    }
+    const all = orderProperties(await Property.find(propertyFilter(req.user)).select("_id address position createdAt"))
+    const byId = new Map(all.map((property) => [String(property._id), property]))
+    const seen = new Set()
+    const ordered = []
+    for (const id of wanted) {
+      if (byId.has(id) && !seen.has(id)) {
+        seen.add(id)
+        ordered.push(byId.get(id))
+      }
+    }
+    for (const property of all) if (!seen.has(String(property._id))) ordered.push(property)
+    const changes = ordered
+      .map((property, index) => ({ property, index }))
+      .filter(({ property, index }) => property.position !== index)
+    if (changes.length) {
+      await Property.bulkWrite(changes.map(({ property, index }) => ({ updateOne: { filter: { _id: property._id }, update: { $set: { position: index } }, timestamps: false } })))
+      await recordActivity({ user: req.user, title: "Properties reordered", detail: `New order starts with ${ordered.slice(0, 3).map((property) => property.address).join(", ")}` })
+      const users = await User.find().select("_id")
+      emitToUsers(users.map((user) => String(user._id)), "properties:reordered", { ids: ordered.map((property) => String(property._id)) })
+    }
+    res.json({ ids: ordered.map((property) => String(property._id)) })
   }),
 )
 

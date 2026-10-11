@@ -7,6 +7,7 @@ import { propertyFilter } from "../services/access.js"
 import { comparePhotosForDraw } from "../services/agent.js"
 import { DRAW_FIELD_ALIASES, appendNewDrawRows, classifyDrawRows, importPortfolioRecords, parsePortfolioWorkbook, readWorkbook } from "../services/drawImport.js"
 import { materializeStoredFile, receiveFile, saveUploadedFile } from "../services/files.js"
+import { orderProperties } from "../services/propertyOrder.js"
 import { changeSummary, notify, recordActivity } from "../services/notify.js"
 
 export const drawsRouter = Router()
@@ -83,7 +84,7 @@ drawsRouter.get(
   "/",
   requirePermission("draws.read"),
   asyncHandler(async (req, res) => {
-    const properties = await Property.find(propertyFilter(req.user)).select("_id address city stage strategy rehabBudget rehabRemaining scopeLines")
+    const properties = orderProperties(await Property.find(propertyFilter(req.user)).select("_id address city stage strategy rehabBudget rehabRemaining scopeLines position createdAt"))
     const ids = properties.map((property) => property._id)
     const [budgets, draws, expenses, requests, reports] = await Promise.all([
       DrawBudget.find({ propertyId: { $in: ids } }),

@@ -68,6 +68,7 @@ export const Property = register(
         },
       ],
       assignedUserIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      position: Number,
       importSource: sourceSchema,
       updatedBy: String,
     },

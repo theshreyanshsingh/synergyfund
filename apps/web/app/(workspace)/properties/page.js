@@ -13,6 +13,7 @@ import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
 import { money } from "../../../lib/format"
 import { useApi } from "../../../lib/useApi"
+import { useChatEvents } from "../../../lib/chatSocket"
 
 function PropertiesScreen() {
   const router = useRouter()
@@ -33,6 +34,32 @@ function PropertiesScreen() {
   const canImport = session?.user && can(session.user, "imports.run") && can(session.user, "draws.write")
   const contractor = session?.user?.role === "contractor"
   const canMembers = session?.user && can(session.user, "members.manage")
+  const [orderOverride, setOrderOverride] = useState(null)
+  const [orderError, setOrderError] = useState("")
+  const moving = useRef(false)
+  const items = list.data?.items || []
+  const rows = orderOverride ? orderOverride.map((id) => items.find((item) => item.id === id)).filter(Boolean) : items
+
+  useChatEvents({
+    "properties:reordered": () => {
+      if (!moving.current) list.reload()
+    },
+  }, Boolean(session?.user && can(session.user, "chat.use")))
+
+  async function moveProperties(ids) {
+    moving.current = true
+    setOrderOverride(ids)
+    setOrderError("")
+    try {
+      await api("/properties/order", { method: "PUT", body: { ids } })
+      await list.reload()
+    } catch (err) {
+      setOrderError(`The new order was not saved. ${err.message}`)
+    } finally {
+      setOrderOverride(null)
+      moving.current = false
+    }
+  }
 
   useEffect(() => {
     if (!open || !canMembers) return
@@ -70,16 +97,21 @@ function PropertiesScreen() {
         title="Properties"
         secondary={canImport ? { label: importBusy === "reading" ? "Reading…" : importBusy === "saving" ? "Saving…" : "Import Excel", busy: Boolean(importBusy), disabled: Boolean(importBusy), onClick: () => { if (!importBusy) importInput.current?.click() } } : null}
         action={writable ? { label: "New property", onClick: () => setOpen(true) } : null}
-        lead={canImport ? (
-          <DrawImport
-            job={workbook}
-            inputRef={importInput}
-            onBusy={setImportBusy}
-            onOpen={setWorkbook}
-            onChange={setWorkbook}
-            onReload={list.reload}
-          />
-        ) : null}
+        lead={(
+          <>
+            {orderError && <p className="banner reorder-error">{orderError}</p>}
+            {canImport && (
+              <DrawImport
+                job={workbook}
+                inputRef={importInput}
+                onBusy={setImportBusy}
+                onOpen={setWorkbook}
+                onChange={setWorkbook}
+                onReload={list.reload}
+              />
+            )}
+          </>
+        )}
         selectable={false}
         compact
         filters={[
@@ -107,7 +139,8 @@ function PropertiesScreen() {
             />
           ) },
         ]}
-        rows={list.data?.items || []}
+        rows={rows}
+        reorder={writable && !contractor ? { onMove: moveProperties } : undefined}
         important={contractor ? undefined : (row) => row.health === "Needs attention" || !row.purchasePrice}
         onRow={(row) => router.push(`/properties/${row.id}`)}
         empty={list.error || "No properties yet."}
