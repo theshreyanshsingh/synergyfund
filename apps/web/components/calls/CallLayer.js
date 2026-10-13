@@ -27,29 +27,18 @@ import {
   useCalls,
 } from "../../lib/calls"
 import { Icon } from "../ui/Icon"
+import { formatClock, statusText, Tile, useNow } from "./CallParts"
+import { MiniBar } from "./MiniBar"
+import { openCallPip, pipSupported, useAutoPip, usePipOpen } from "./CallPip"
 
-export function formatClock(ms) {
-  const total = Math.max(0, Math.floor(ms / 1000))
-  const hours = Math.floor(total / 3600)
-  const minutes = Math.floor((total % 3600) / 60)
-  const seconds = total % 60
-  return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}` : `${minutes}:${String(seconds).padStart(2, "0")}`
-}
-
-function useNow(active) {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (!active) return undefined
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
-  }, [active])
-  return now
-}
+export { formatClock }
 
 // Listens for calls everywhere in the app and shows the ringing card and the call window.
 export function CallLayer({ user }) {
   const calls = useCalls()
   useChatEvents(callEvents, Boolean(user))
+  // Switching to another tab or app during a call opens a floating call window (Chrome and Edge on computers).
+  useAutoPip(Boolean(calls.current), user?.name || "You")
 
   useEffect(() => {
     setCallUser(user?.id || "")
@@ -122,17 +111,9 @@ function IncomingCall({ call, me }) {
   )
 }
 
-function statusText(current, now) {
-  const others = (current.peers || []).length
-  if (!others) return current.call?.answered ? "Waiting for others…" : "Ringing…"
-  if (!(current.peers || []).some((peer) => peer.status === "connected")) {
-    return (current.peers || []).every((peer) => peer.status === "failed") ? "Couldn’t connect" : "Connecting…"
-  }
-  return formatClock(now - (current.connectedAt || current.startedAt))
-}
-
 function ActiveCall({ current, me, myName, audioBlocked }) {
   const now = useNow(true)
+  const pip = usePipOpen()
   const [adding, setAdding] = useState(false)
   const screen = useRef(null)
   const expanded = !current.minimized
@@ -184,15 +165,7 @@ function ActiveCall({ current, me, myName, audioBlocked }) {
         </button>
       )}
       {current.minimized ? (
-        <div className="call-mini" role="region" aria-label="Call in progress">
-          <button type="button" className="call-mini-open" onClick={() => setMinimized(false)} title="Open the call">
-            <span className="call-live-dot" aria-hidden="true" />
-            <span className="call-mini-copy"><strong>{title}</strong><em>{status}</em></span>
-            <Icon name="expand" size={15} />
-          </button>
-          <button type="button" className={current.muted ? "call-round is-small is-off" : "call-round is-small"} onClick={toggleMute} aria-label={current.muted ? "Unmute" : "Mute"}><Icon name={current.muted ? "micOff" : "mic"} size={16} /></button>
-          <button type="button" className="call-round is-small is-danger" onClick={leaveCall} aria-label="Leave call"><Icon name="phoneOff" size={16} /></button>
-        </div>
+        <MiniBar current={current} title={title} status={current.rejoining ? "Reconnecting…" : status} myName={myName} />
       ) : (
         <div className="call-screen" role="dialog" aria-modal="true" aria-label={`Call with ${title}`} ref={screen} tabIndex={-1}>
           <header className="call-top">
@@ -200,6 +173,9 @@ function ActiveCall({ current, me, myName, audioBlocked }) {
               <strong>{title}</strong>
               <span>{current.media === "video" ? "Video call" : "Voice call"} · {current.rejoining ? "Reconnecting…" : status}{peers.length ? ` · ${peers.length + 1} people` : ""}</span>
             </div>
+            {pipSupported() && !pip && (
+              <button type="button" className="call-icon-button" onClick={() => openCallPip({ myName })} title="Pop out: keep the call on top of other tabs and apps" aria-label="Pop out the call"><Icon name="popout" size={18} /></button>
+            )}
             <button type="button" className="call-icon-button" onClick={() => setMinimized(true)} title="Keep the call in a small window and use the app" aria-label="Minimize call"><Icon name="shrink" size={18} /></button>
           </header>
           <div className={sharing ? "call-stage is-spotlight" : `call-stage call-grid count-${Math.min(peers.length + 1, 9)}`}>
@@ -225,7 +201,7 @@ function ActiveCall({ current, me, myName, audioBlocked }) {
           <footer className="call-controls">
             <ControlButton on={!current.muted} icon={current.muted ? "micOff" : "mic"} label={current.micLost ? "Mic stopped" : current.muted ? "Unmute" : "Mute"} onClick={toggleMute} />
             <ControlButton on={current.camera} icon={current.camera ? "video" : "videoOff"} label={current.camera ? "Stop video" : "Start video"} onClick={toggleCamera} />
-            {canShareScreen() && <ControlButton on={current.screen} icon="screen" label={current.screen ? "Stop sharing" : "Share screen"} onClick={toggleScreen} active={current.screen} />}
+            <ControlButton on={current.screen} icon="screen" label={current.screen ? "Stop sharing" : "Share screen"} onClick={toggleScreen} active={current.screen} unavailable={!canShareScreen()} />
             <ControlButton on icon="userPlus" label="Add people" onClick={() => setAdding(true)} />
             <button type="button" className="call-control is-leave" onClick={leaveCall}>
               <span className="call-round is-danger"><Icon name="phoneOff" size={20} /></span>
@@ -253,34 +229,12 @@ function ActiveCall({ current, me, myName, audioBlocked }) {
   )
 }
 
-function ControlButton({ on, icon, label, onClick, active = false }) {
+function ControlButton({ on, icon, label, onClick, active = false, unavailable = false }) {
   return (
-    <button type="button" className="call-control" onClick={onClick} aria-pressed={active || undefined}>
+    <button type="button" className={unavailable ? "call-control is-unavailable" : "call-control"} onClick={onClick} aria-pressed={active || undefined} title={unavailable ? "Screen sharing works from a computer" : undefined}>
       <span className={`call-round${on ? "" : " is-off"}${active ? " is-active" : ""}`}><Icon name={icon} size={20} /></span>
       <em>{label}</em>
     </button>
-  )
-}
-
-function Tile({ self = false, name, avatarName, stream, version, video, screen = false, muted, speaking, status }) {
-  const ref = useRef(null)
-  const hasVideo = Boolean(video && stream?.getVideoTracks().some((track) => track.readyState === "live" && (self || !track.muted)))
-  useEffect(() => {
-    const element = ref.current
-    if (!element) return
-    if (element.srcObject !== stream) element.srcObject = stream || null
-    if (stream) element.play?.().catch(() => {})
-  }, [stream, version, hasVideo])
-  return (
-    <div className={`call-tile${self ? " is-self" : ""}${speaking && !muted ? " is-speaking" : ""}${screen ? " is-screen" : ""}`}>
-      <video ref={ref} className={hasVideo ? (self && !screen ? "is-mirrored" : "") : "is-hidden"} autoPlay playsInline muted />
-      {!hasVideo && <span className="call-avatar">{initials(avatarName || name || "?")}</span>}
-      <span className="call-tile-name">
-        {muted && <Icon name="micOff" size={13} />}
-        {name}{screen ? " · sharing screen" : ""}
-      </span>
-      {status && status !== "connected" && <span className={status === "failed" ? "call-tile-status is-failed" : "call-tile-status"}>{status === "failed" ? "Couldn’t connect" : status === "reconnecting" ? "Reconnecting…" : "Connecting…"}</span>}
-    </div>
   )
 }
 

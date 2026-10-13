@@ -2153,13 +2153,11 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .call-audio { display: none; }
 
 .call-mini { position: fixed; right: 16px; bottom: 16px; z-index: 1100; display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 16px; background: #15181e; color: #f4f4f5; box-shadow: 0 14px 40px rgba(0, 0, 0, .35); max-width: calc(100vw - 32px); }
-.call-mini-open { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 4px 8px; border: 0; border-radius: 10px; background: transparent; color: inherit; text-align: left; }
-.call-mini-open:hover { background: rgba(255, 255, 255, .08); }
 .call-mini-copy { display: grid; min-width: 0; }
 .call-mini-copy strong { overflow: hidden; max-width: 180px; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .call-mini-copy em { color: #a1a1aa; font-size: 12px; font-style: normal; font-variant-numeric: tabular-nums; }
 
-.call-notice { position: fixed; left: 50%; bottom: 20px; z-index: 1120; display: flex; align-items: center; gap: 10px; max-width: min(520px, calc(100vw - 32px)); padding: 10px 12px 10px 14px; border-radius: 12px; background: #15181e; color: #f4f4f5; box-shadow: 0 14px 40px rgba(0, 0, 0, .3); font-size: 13.5px; transform: translateX(-50%); }
+.call-notice { position: fixed; left: 50%; bottom: 20px; z-index: 1120; display: flex; align-items: center; gap: 10px; width: max-content; max-width: min(520px, calc(100vw - 32px)); box-sizing: border-box; padding: 10px 12px 10px 14px; border-radius: 12px; background: #15181e; color: #f4f4f5; box-shadow: 0 14px 40px rgba(0, 0, 0, .3); font-size: 13.5px; transform: translateX(-50%); }
 .call-notice.is-bad { background: #7f1d1d; }
 .call-notice button { display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 7px; background: rgba(255, 255, 255, .1); color: inherit; }
 
@@ -2225,7 +2223,6 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .call-strip .call-tile { flex-basis: 130px; }
   /* On phones the small call bar sits at the top so it never covers the chat box or sheet buttons. */
   .call-mini { top: max(8px, env(safe-area-inset-top)); bottom: auto; left: 50%; right: auto; transform: translateX(-50%); padding: 5px; gap: 6px; border-radius: 999px; }
-  .call-mini-open { padding: 2px 6px; }
   .call-mini-copy strong { max-width: 110px; }
   .call-mini .call-round.is-small { width: 32px; height: 32px; }
   .calls-row { grid-template-columns: auto minmax(0, 1fr); }
@@ -2325,3 +2322,36 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .call-check-list li { grid-template-columns: 20px minmax(0, 1fr); }
   .call-check-list li em { grid-column: 2; }
 }
+/* Shown on phones so people know the option exists; tapping explains it works from a computer. */
+.call-control.is-unavailable .call-round { opacity: .45; }
+.call-control.is-unavailable em { opacity: .6; }
+
+/* Small call bar: drag it anywhere */
+.call-mini { touch-action: none; user-select: none; -webkit-user-select: none; }
+.call-mini.is-dragging { cursor: grabbing; box-shadow: 0 20px 50px rgba(0, 0, 0, .45); }
+.call-mini-handle { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 6px 4px 2px; border-radius: 10px; cursor: grab; outline: none; }
+.call-mini-handle:hover { background: rgba(255, 255, 255, .06); }
+.call-mini-handle:focus-visible { box-shadow: 0 0 0 2px #60a5fa; }
+.call-mini-grip { display: grid; place-items: center; color: #71717a; }
+.call-mini-icon { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 9px; background: transparent; color: #e4e4e7; }
+.call-mini-icon:hover { background: rgba(255, 255, 255, .1); }
+@media (max-width: 760px) {
+  .call-mini-grip { display: none; }
+  .call-mini .call-mini-icon { width: 30px; height: 30px; }
+}
+
+/* Floating call window (picture-in-picture) */
+.call-pip-body { margin: 0; height: 100vh; overflow: hidden; background: #0d0f13; color: #f4f4f5; }
+.call-pip-host { height: 100%; }
+.call-pip { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; height: 100%; padding: 10px; box-sizing: border-box; }
+.call-pip header { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.call-pip header > div { display: grid; min-width: 0; }
+.call-pip header strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.call-pip header em { color: #a1a1aa; font-size: 11.5px; font-style: normal; font-variant-numeric: tabular-nums; }
+.call-pip-tiles { display: grid; gap: 6px; min-height: 0; grid-auto-rows: minmax(0, 1fr); }
+.call-pip-tiles.count-2, .call-pip-tiles.count-3, .call-pip-tiles.count-4, .call-pip-tiles.count-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.call-pip .call-tile { border-radius: 10px; }
+.call-pip .call-avatar { width: 48px; height: 48px; font-size: 16px; }
+.call-pip .call-tile-name { left: 6px; bottom: 6px; padding: 2px 6px; font-size: 11px; }
+.call-pip footer { display: flex; justify-content: center; gap: 10px; }
+.call-pip.is-over { display: grid; place-items: center; color: #a1a1aa; }

@@ -667,12 +667,20 @@ export async function toggleCamera() {
   }
 }
 
+// Phone browsers (iPhone Safari, Android Chrome) do not let websites share the screen; computers do.
+// Checks what the browser can actually do rather than guessing from the device name.
 export function canShareScreen() {
-  return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getDisplayMedia) && !/iphone|ipad|android|mobile/i.test(navigator.userAgent)
+  return typeof navigator !== "undefined" && typeof navigator.mediaDevices?.getDisplayMedia === "function"
 }
+
+const SCREEN_NOT_ON_PHONE = "Screen sharing works from a computer. iPhone and Android browsers do not let websites share the screen, but you can still see a screen someone else shares."
 
 export async function toggleScreen() {
   if (!state.current || screenPending) return
+  if (!canShareScreen()) {
+    notice(SCREEN_NOT_ON_PHONE)
+    return
+  }
   if (screenTrack) {
     screenTrack.stop()
     screenTrack = null
@@ -680,6 +688,7 @@ export async function toggleScreen() {
     return
   }
   screenPending = true
+  const askedAt = Date.now()
   try {
     const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: false })
     if (!state.current) {
@@ -696,7 +705,11 @@ export async function toggleScreen() {
     }
     await sendVideo()
   } catch (error) {
-    if (error?.name !== "NotAllowedError" && error?.name !== "AbortError") notice("Screen sharing could not start.", "bad")
+    // Some phone browsers have the feature in name only and refuse instantly, before any prompt could appear.
+    const phone = /iphone|ipad|android|mobile/i.test(navigator.userAgent || "")
+    if (phone && Date.now() - askedAt < 400) notice(SCREEN_NOT_ON_PHONE)
+    else if (error?.name === "NotSupportedError" || error?.name === "TypeError") notice(SCREEN_NOT_ON_PHONE)
+    else if (error?.name !== "NotAllowedError" && error?.name !== "AbortError") notice("Screen sharing could not start.", "bad")
   } finally {
     screenPending = false
   }
