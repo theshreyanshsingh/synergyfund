@@ -72,10 +72,18 @@ export function attachChatSockets(server) {
     if (!before) announce(id, user.role === "admin", true)
 
     socket.on("presence:get", () => socket.emit("presence", { online: visibleTo() }))
-    // Whether the app is on screen on this device; calls push to phones when nothing is on screen.
-    socket.data.visible = true
+    // What this device is showing: on screen or not, which chat is open, and its push address.
+    // Devices check in every ~15 seconds while on screen; a frozen or locked phone stops checking in and soon counts as away.
+    socket.data.visible = false
+    socket.data.visibleAt = 0
+    socket.data.endpoint = ""
+    socket.data.channelId = ""
     socket.on("presence:visible", (data) => {
-      socket.data.visible = Boolean(data && data.visible)
+      const info = data && typeof data === "object" ? data : {}
+      socket.data.visible = Boolean(info.visible)
+      socket.data.visibleAt = Date.now()
+      socket.data.endpoint = typeof info.endpoint === "string" && info.endpoint.length < 1000 ? info.endpoint : ""
+      socket.data.channelId = typeof info.channelId === "string" && /^[a-f0-9]{24}$/i.test(info.channelId) ? info.channelId : ""
     })
     registerCallHandlers(socket)
 
@@ -106,11 +114,33 @@ export function attachChatSockets(server) {
   return io
 }
 
+const FRESH_MS = 35000
+
+function onScreen(socket) {
+  return Boolean(socket.data.visible) && Date.now() - (socket.data.visibleAt || 0) < FRESH_MS
+}
+
 // True when the person has SynergiFund open and on screen on some device right now.
 export async function hasVisibleDevice(userId) {
   if (!io) return false
   const sockets = await io.in(`user:${userId}`).fetchSockets()
-  return sockets.some((socket) => socket.data.visible !== false)
+  return sockets.some(onScreen)
+}
+
+// Push addresses of this person's devices that are on screen right now, optionally only those showing one chat.
+// Those devices already show the message or call in the app, so they are left out of the push.
+export async function screenEndpoints(userIds, channelId = "") {
+  const endpoints = new Set()
+  if (!io) return endpoints
+  for (const userId of userIds) {
+    const sockets = await io.in(`user:${userId}`).fetchSockets()
+    for (const socket of sockets) {
+      if (!onScreen(socket) || !socket.data.endpoint) continue
+      if (channelId && socket.data.channelId !== String(channelId)) continue
+      endpoints.add(socket.data.endpoint)
+    }
+  }
+  return endpoints
 }
 
 export function chatIo() {

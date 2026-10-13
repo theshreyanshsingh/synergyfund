@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto"
 import mongoose from "mongoose"
 import { Call, ChatChannel, ChatMessage, ChatRead, Notification, User } from "../models/index.js"
 import { audience, isGuest, loadChannel, presentChannel, presentMessage, usesChat, visibleChannels } from "./chat.js"
-import { chatIo, emitToUsers } from "./chatHub.js"
+import { chatIo, emitToUsers, screenEndpoints } from "./chatHub.js"
 import { pushToUsers } from "./push.js"
 
 // Everyone in a call connects to everyone else (a mesh), which stays smooth up to about eight people.
@@ -298,6 +298,8 @@ async function pushRing(state, userIds, invitedBy) {
   const place = placeName(state)
   const kind = state.media === "video" ? "video" : "voice"
   const added = invitedBy && invitedBy !== state.startedByName
+  // A device that is on screen already shows the ringing card; every other device rings by notification.
+  const ringingOnScreen = await screenEndpoints(userIds)
   await pushToUsers(userIds, {
     kind: "call",
     callId: state.id,
@@ -306,7 +308,7 @@ async function pushRing(state, userIds, invitedBy) {
     title: added ? `${invitedBy} is adding you to a ${kind} call` : `${state.startedByName} is calling you`,
     body: `${kind === "video" ? "Video" : "Voice"} call${added ? ` with ${state.startedByName}` : ""}${place ? ` · ${place}` : ""}`,
     href: `/calls?join=${state.id}`,
-  }, { TTL: Math.round(RING_MS / 1000), urgency: "high", topic: `c${state.id}` })
+  }, { TTL: Math.round(RING_MS / 1000), urgency: "high", topic: `c${state.id}` }, ringingOnScreen)
 }
 
 // Missed calls also land in the Notifications list.
@@ -338,7 +340,8 @@ async function pushCallOver(state) {
     await pushToUsers(missed, { kind: "call-over", callId: state.id, tag: `call-${state.id}`, title: `Missed ${kind} call from ${state.startedByName}`, body: place || "Tap to call back", href: "/calls" }, options)
   }
   if (done.length) {
-    await pushToUsers(done, { kind: "call-over", quiet: true, callId: state.id, tag: `call-${state.id}`, title: `${kind === "video" ? "Video" : "Voice"} call ended`, body: `${state.startedByName}${place ? ` · ${place}` : ""}`, href: "/calls" }, options)
+    // Only devices that rang by notification need it replaced; on-screen devices never showed one.
+    await pushToUsers(done, { kind: "call-over", quiet: true, callId: state.id, tag: `call-${state.id}`, title: `${kind === "video" ? "Video" : "Voice"} call ended`, body: `${state.startedByName}${place ? ` · ${place}` : ""}`, href: "/calls" }, options, await screenEndpoints(done))
   }
 }
 

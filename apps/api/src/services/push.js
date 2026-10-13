@@ -27,8 +27,10 @@ export async function sendPush(subscriptions, { title, body, href, ...extra }, o
   return { sent, failed }
 }
 
-export async function pushToUsers(userIds, message, options = {}) {
+// skipEndpoints: devices that already show this in the app right now.
+export async function pushToUsers(userIds, message, options = {}, skipEndpoints = null) {
   if (!userIds.length || !configurePush()) return { sent: 0, failed: 0 }
-  const subscriptions = await PushSubscription.find({ userId: { $in: userIds } })
+  const skip = skipEndpoints ? [...skipEndpoints] : []
+  const subscriptions = await PushSubscription.find({ userId: { $in: userIds }, ...(skip.length ? { endpoint: { $nin: skip } } : {}) })
   return sendPush(subscriptions, message, options)
 }

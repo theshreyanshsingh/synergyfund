@@ -17,7 +17,7 @@ import {
   usesChat,
   visibleChannels,
 } from "../services/chat.js"
-import { emitToUsers, hasVisibleDevice, isOnline, onlineIds, socketToken } from "../services/chatHub.js"
+import { emitToUsers, isOnline, onlineIds, screenEndpoints, socketToken } from "../services/chatHub.js"
 import { pushToUsers } from "../services/push.js"
 import { recheckCalls } from "../services/calls.js"
 import { receiveFile, saveUploadedFile, sendStoredFile } from "../services/files.js"
@@ -96,10 +96,11 @@ async function alertPeople({ channel, property, message, author, people, parent 
   const body = preview.length > 280 ? `${preview.slice(0, 280)}…` : preview
   const href = chatHref(channel, message.parentId)
   const groupDirect = direct && (channel.memberIds || []).length > 2
-  // Every message pings the phone or computer of anyone who does not have SynergiFund on screen right now.
+  // Every message notifies every device of the people it is for, like the Settings notification does,
+  // except a device that has this very conversation open on screen right now.
   // One notification per conversation is kept and updated, so a burst of messages does not pile up.
-  const away = []
-  for (const id of recipients) if (!(await hasVisibleDevice(id))) away.push(id)
+  const away = [...recipients]
+  const watching = await screenEndpoints(away, String(channel._id))
   if (away.length) {
     pushToUsers(away, {
       kind: "message",
@@ -107,7 +108,7 @@ async function alertPeople({ channel, property, message, author, people, parent 
       title: direct ? (groupDirect ? `${author.name} · ${where}` : author.name) : message.parentId && !message.mentionsChannel ? `${author.name} replied in ${where}` : `${author.name} mentioned you in ${where}`,
       body,
       href,
-    }, { TTL: 24 * 3600, urgency: "high" }).catch((error) => console.error("Chat push failed", error))
+    }, { TTL: 24 * 3600, urgency: "high" }, watching).catch((error) => console.error("Chat push failed", error))
   }
   // The Notifications list and email stay calm: people who are fully offline, at most once per conversation every 15 minutes.
   const offline = [...recipients].filter((id) => {

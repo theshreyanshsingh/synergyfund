@@ -8,7 +8,7 @@ import { FormSheet } from "../ui/FormSheet"
 import { Icon } from "../ui/Icon"
 import { PageSpinner, Spinner } from "../ui/Spinner"
 import { api } from "../../lib/api"
-import { emitChat, useChatEvents, useChatStatus } from "../../lib/chatSocket"
+import { emitChat, setActiveChat, useChatEvents, useChatStatus } from "../../lib/chatSocket"
 import { Avatar, ChatComposer } from "./ChatComposer"
 import { ChatMessages } from "./ChatMessages"
 import { channelTitle, clock, dayLabel, nameOf, plain, sameDay } from "./chatFormat"
@@ -98,6 +98,12 @@ export function ChatApp() {
   const me = boot?.me || session?.user?.id || ""
   const isAdmin = session?.user?.role === "admin"
   activeRef.current = activeId
+
+  // Lets the server skip the notification only on this device, and only for the chat open here.
+  useEffect(() => {
+    setActiveChat(activeId)
+    return () => setActiveChat("")
+  }, [activeId])
   visibleRef.current = visible
   threadRef.current = threadId
 

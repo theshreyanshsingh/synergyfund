@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react"
 import { api } from "./api"
+import { refreshPushEndpoint } from "./chatSocket"
 
 const INSTALLED_KEY = "synergifund-installed"
 const listeners = new Set()
@@ -150,6 +151,7 @@ export async function enablePush() {
   await api("/push/subscribe", { method: "POST", body: subscription.toJSON() })
   pushOn = true
   emit()
+  refreshPushEndpoint()
 }
 
 export async function disablePush() {
@@ -161,6 +163,7 @@ export async function disablePush() {
   }
   pushOn = false
   emit()
+  refreshPushEndpoint()
 }
 
 function urlBase64ToUint8Array(value) {

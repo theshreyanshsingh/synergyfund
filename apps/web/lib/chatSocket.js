@@ -44,15 +44,47 @@ function dispatch(event, payload) {
   }
 }
 
-// Tells the server whether the app is on screen, so calls ring this device in the app or by phone notification.
+// Tells the server what this device shows: on screen or not, which chat is open, and its push address.
+// The server skips notifications only for a device showing that very chat (or the ringing card),
+// and only while this device keeps checking in, so a locked or frozen phone is never left out.
+let activeChannel = ""
+let pushEndpoint = ""
+let heartbeat = null
+
+async function readEndpoint() {
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration()
+    const subscription = await registration?.pushManager?.getSubscription()
+    pushEndpoint = subscription?.endpoint || ""
+  } catch {
+    pushEndpoint = ""
+  }
+}
+
 function reportVisible() {
-  if (socket?.connected && typeof document !== "undefined") socket.emit("presence:visible", { visible: document.visibilityState === "visible" })
+  if (!socket?.connected || typeof document === "undefined") return
+  const visible = document.visibilityState === "visible"
+  socket.emit("presence:visible", { visible, endpoint: pushEndpoint, channelId: visible ? activeChannel : "" })
+  clearInterval(heartbeat)
+  heartbeat = visible ? setInterval(reportVisible, 15000) : null
+}
+
+// The chat screen calls this with the open conversation ("" when none).
+export function setActiveChat(channelId) {
+  activeChannel = channelId || ""
+  reportVisible()
+}
+
+// Called after notifications are turned on or off on this device.
+export function refreshPushEndpoint() {
+  readEndpoint().then(reportVisible)
 }
 
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", reportVisible)
   window.addEventListener("pagehide", () => {
-    if (socket?.connected) socket.emit("presence:visible", { visible: false })
+    clearInterval(heartbeat)
+    if (socket?.connected) socket.emit("presence:visible", { visible: false, endpoint: pushEndpoint, channelId: "" })
   })
 }
 
@@ -100,7 +132,7 @@ async function start() {
     socket.on("connect", () => {
       retries = 0
       setStatus("live")
-      reportVisible()
+      readEndpoint().then(reportVisible)
       dispatch("reconnect", {})
     })
     socket.on("disconnect", (reason) => {
@@ -119,6 +151,8 @@ async function start() {
 }
 
 function stop() {
+  clearInterval(heartbeat)
+  heartbeat = null
   clearTimeout(retryTimer)
   retries = 0
   socket?.disconnect()
