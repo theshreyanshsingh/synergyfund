@@ -66,7 +66,7 @@ function reportVisible() {
   const visible = document.visibilityState === "visible"
   socket.emit("presence:visible", { visible, endpoint: pushEndpoint, channelId: visible ? activeChannel : "" })
   clearInterval(heartbeat)
-  heartbeat = visible ? setInterval(reportVisible, 15000) : null
+  heartbeat = visible ? setInterval(reportVisible, 10000) : null
 }
 
 // The chat screen calls this with the open conversation ("" when none).

@@ -114,7 +114,8 @@ export function attachChatSockets(server) {
   return io
 }
 
-const FRESH_MS = 35000
+// Devices check in every 10 seconds while on screen; after 20 seconds without one, the device counts as away.
+const FRESH_MS = 20000
 
 function onScreen(socket) {
   return Boolean(socket.data.visible) && Date.now() - (socket.data.visibleAt || 0) < FRESH_MS
