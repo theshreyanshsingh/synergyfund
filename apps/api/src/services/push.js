@@ -10,21 +10,45 @@ export function configurePush() {
   return true
 }
 
+function serviceName(endpoint) {
+  try {
+    const host = new URL(endpoint).hostname
+    if (host.endsWith("push.apple.com")) return "Apple"
+    if (host.includes("googleapis.com")) return "Google"
+    if (host.includes("mozilla")) return "Mozilla"
+    if (host.includes("windows") || host.includes("microsoft")) return "Microsoft"
+    return host
+  } catch {
+    return "unknown"
+  }
+}
+
 // Extra fields (kind, tag, callId, media) travel to the service worker, which uses them for call notifications.
+// Never pass a "topic" option: Apple's push service rejects every push that has a Topic header.
 export async function sendPush(subscriptions, { title, body, href, ...extra }, options = {}) {
   const payload = JSON.stringify({ ...extra, title, body, href: href || "/notifications" })
+  const { topic, ...safe } = options
   let sent = 0
   let failed = 0
+  const errors = []
   for (const subscription of subscriptions) {
     try {
-      await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, payload, options)
+      await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, payload, safe)
       sent += 1
     } catch (error) {
       failed += 1
-      if (error.statusCode === 404 || error.statusCode === 410) await subscription.deleteOne().catch(() => {})
+      const service = serviceName(subscription.endpoint)
+      const reason = `${error.statusCode || "no answer"} ${String(error.body || error.message || "").trim().slice(0, 200)}`.trim()
+      errors.push({ service, reason })
+      if (error.statusCode === 404 || error.statusCode === 410) {
+        // The device turned notifications off or the app was removed; forget it.
+        await subscription.deleteOne().catch(() => {})
+      } else {
+        console.error(`Push to ${service} failed (${extra.kind || "notification"}): ${reason}`)
+      }
     }
   }
-  return { sent, failed }
+  return { sent, failed, errors }
 }
 
 // skipEndpoints: devices that already show this in the app right now.

@@ -30,6 +30,21 @@ export function CallCheck({ admin }) {
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  const [ring, setRing] = useState(null)
+  const [ringing, setRinging] = useState(false)
+
+  async function testRing() {
+    setRinging(true)
+    setRing(null)
+    try {
+      const reply = await api("/calls/test-notification", { method: "POST", body: {} })
+      setRing(reply)
+    } catch (err) {
+      setRing({ error: err.message })
+    } finally {
+      setRinging(false)
+    }
+  }
 
   async function run() {
     setBusy(true)
@@ -65,7 +80,7 @@ export function CallCheck({ admin }) {
     <div className="settings-row call-check">
       <div>
         <h2>Call connection</h2>
-        <p>Test whether calls can connect from this device and network.</p>
+        <p>Test whether calls can connect from this device and network, and whether incoming calls ring your devices.</p>
         {error && <p className="banner">{error}</p>}
         {result && (
           <ul className="call-check-list">
@@ -77,6 +92,15 @@ export function CallCheck({ admin }) {
               </li>
             ))}
           </ul>
+        )}
+        {ring && (
+          <p className={ring.error || ring.failed ? "banner" : "settings-note"}>
+            {ring.error
+              ? ring.error
+              : ring.failed
+                ? `Sent to ${ring.sent} of ${ring.devices} devices. ${ring.errors.map((item) => `${item.service}: ${item.reason}`).join(" · ")}`
+                : `Sent to ${ring.devices} ${ring.devices === 1 ? "device" : "devices"}. A call notification with Answer and Decline should appear now.`}
+          </p>
         )}
         {admin && result && !result.relayConfigured && (
           <div className="call-check-help">
@@ -90,7 +114,10 @@ export function CallCheck({ admin }) {
           </div>
         )}
       </div>
-      <button type="button" className="primary" disabled={busy} onClick={run}>{busy ? "Testing…" : result ? "Test again" : "Test"}</button>
+      <div className="call-check-actions">
+        <button type="button" className="primary" disabled={busy} onClick={run}>{busy ? "Testing…" : result ? "Test again" : "Test"}</button>
+        <button type="button" className="import-button" disabled={ringing} onClick={testRing}>{ringing ? "Sending…" : "Test call notification"}</button>
+      </div>
     </div>
   )
 }

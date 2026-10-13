@@ -36,7 +36,7 @@ self.addEventListener("push", (event) => {
         { action: "answer", title: payload.media === "video" ? "Answer video" : "Answer" },
         { action: "decline", title: "Decline" },
       ],
-      data: { kind: "call", callId: payload.callId, href: payload.href || "/calls" },
+      data: { kind: "call", callId: payload.callId, href: payload.href || "/calls", test: Boolean(payload.test) },
     }))
     return
   }
@@ -81,6 +81,11 @@ function openApp(path) {
 self.addEventListener("notificationclick", (event) => {
   const data = event.notification.data || {}
   event.notification.close()
+  if (data.test) {
+    // The Settings test call: Decline just closes it; anything else opens Settings.
+    if (event.action !== "decline") event.waitUntil(openApp("/settings"))
+    return
+  }
   if (data.kind === "call" && event.action === "decline") {
     event.waitUntil(fetch(`/api/calls/${encodeURIComponent(data.callId)}/decline`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {}))
     return

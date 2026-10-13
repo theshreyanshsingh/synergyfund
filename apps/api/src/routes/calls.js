@@ -1,6 +1,7 @@
 import { Router } from "express"
-import { Call } from "../models/index.js"
+import { Call, PushSubscription } from "../models/index.js"
 import { asyncHandler, sendError } from "../lib/http.js"
+import { configurePush, sendPush } from "../services/push.js"
 import { presentChannel, usesChat, visibleChannels } from "../services/chat.js"
 import { declineCallFor, liveCall, liveCallsFor, network, relayProvider } from "../services/calls.js"
 
@@ -71,5 +72,26 @@ callsRouter.get(
   "/network",
   asyncHandler(async (req, res) => {
     res.json({ ...(await network()), provider: relayProvider() })
+  }),
+)
+
+// Settings › App: sends a call-style notification to your own devices and reports what each push service said.
+callsRouter.post(
+  "/test-notification",
+  asyncHandler(async (req, res) => {
+    if (!configurePush()) return sendError(res, 503, "Push notifications are not set up on the server (VAPID keys are missing).")
+    const subscriptions = await PushSubscription.find({ userId: req.user._id })
+    if (!subscriptions.length) return sendError(res, 400, "No device has notifications turned on for your account. Turn them on above, then try again.")
+    const result = await sendPush(subscriptions, {
+      kind: "call",
+      test: true,
+      callId: "test",
+      media: "audio",
+      tag: "call-test",
+      title: "SynergiFund is calling you",
+      body: "Test call notification. If you can see this, calls will ring here.",
+      href: "/settings",
+    }, { TTL: 60, urgency: "high" })
+    res.json({ devices: subscriptions.length, sent: result.sent, failed: result.failed, errors: result.errors })
   }),
 )

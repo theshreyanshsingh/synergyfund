@@ -308,7 +308,9 @@ async function pushRing(state, userIds, invitedBy) {
     title: added ? `${invitedBy} is adding you to a ${kind} call` : `${state.startedByName} is calling you`,
     body: `${kind === "video" ? "Video" : "Voice"} call${added ? ` with ${state.startedByName}` : ""}${place ? ` · ${place}` : ""}`,
     href: `/calls?join=${state.id}`,
-  }, { TTL: Math.round(RING_MS / 1000), urgency: "high", topic: `c${state.id}` }, ringingOnScreen)
+    // No "Topic" header: Apple's push service (iPhone, Safari) refuses every push that has one.
+    // The notification tag already makes "Missed call" replace the ringing notification on the device.
+  }, { TTL: Math.max(60, Math.round(RING_MS / 1000)), urgency: "high" }, ringingOnScreen)
 }
 
 // Missed calls also land in the Notifications list.
@@ -335,7 +337,7 @@ async function pushCallOver(state) {
   const missed = people.filter((userId) => !state.joinedIds.has(userId) && !state.declined.has(userId))
   const done = people.filter((userId) => !missed.includes(userId))
   const place = placeName(state)
-  const options = { TTL: 24 * 3600, urgency: "normal", topic: `c${state.id}` }
+  const options = { TTL: 24 * 3600, urgency: "normal" }
   if (missed.length) {
     await pushToUsers(missed, { kind: "call-over", callId: state.id, tag: `call-${state.id}`, title: `Missed ${kind} call from ${state.startedByName}`, body: place || "Tap to call back", href: "/calls" }, options)
   }

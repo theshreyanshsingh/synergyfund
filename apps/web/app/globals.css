@@ -2355,3 +2355,8 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .call-pip .call-tile-name { left: 6px; bottom: 6px; padding: 2px 6px; font-size: 11px; }
 .call-pip footer { display: flex; justify-content: center; gap: 10px; }
 .call-pip.is-over { display: grid; place-items: center; color: #a1a1aa; }
+.call-check-actions { display: grid; gap: 8px; justify-items: end; flex: none; }
+.call-check-actions .primary { margin-left: 0; }
+@media (max-width: 760px) {
+  .call-check-actions { justify-items: start; grid-auto-flow: column; }
+}
