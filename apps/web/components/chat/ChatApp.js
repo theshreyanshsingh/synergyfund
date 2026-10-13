@@ -259,7 +259,9 @@ export function ChatApp() {
     const author = message.userName || "Someone"
     const where = channel?.kind === "direct" ? "Direct message" : channel?.kind === "property" ? channel.name : `#${channel?.name || "chat"}`
     try {
-      const note = new Notification(`${author} · ${where}`, { body: plain(message.text, people).slice(0, 180) || "Shared a file", tag: message.id })
+      const title = channel?.kind === "direct" ? author : `${author} · ${where}`
+    // Same tag as the push notification for this conversation, so one replaces the other instead of doubling up.
+    const note = new Notification(title, { body: plain(message.text, people).slice(0, 180) || "Shared a file", tag: `chat-${message.channelId}`, renotify: true })
       note.onclick = () => {
         window.focus()
         open(message.channelId, { thread: message.parentId })
@@ -586,10 +588,6 @@ function ChatNav({ channels, people, peopleList, me, online, activeId, status, f
         {filter && <button type="submit" className="chat-nav-search-go">Search</button>}
       </form>
       <div className="chat-nav-list">
-        {section("channels", "Channels", rooms, (channel) => row(channel, <Icon name={channel.private ? "lock" : "hash"} size={15} />), canCreate && (
-          <button type="button" className="chat-nav-add" aria-label="Create a channel" title="Create a channel" onClick={onCreate}><Icon name="plus" size={14} /></button>
-        ))}
-        {section("properties", "Properties", properties, (channel) => row(channel, <Icon name="building" size={15} />))}
         {section("direct", "Direct messages", directs, (channel) => {
           const others = channel.memberIds.filter((id) => id !== me)
           const first = others[0] || me
@@ -597,6 +595,10 @@ function ChatNav({ channels, people, peopleList, me, online, activeId, status, f
         }, (
           <button type="button" className="chat-nav-add" aria-label="New message" title="New message" onClick={onDirect}><Icon name="plus" size={14} /></button>
         ))}
+        {section("channels", "Channels", rooms, (channel) => row(channel, <Icon name={channel.private ? "lock" : "hash"} size={15} />), canCreate && (
+          <button type="button" className="chat-nav-add" aria-label="Create a channel" title="Create a channel" onClick={onCreate}><Icon name="plus" size={14} /></button>
+        ))}
+        {section("properties", "Properties", properties, (channel) => row(channel, <Icon name="building" size={15} />))}
         {suggestions.length > 0 && (
           <div className="chat-nav-section">
             <div className="chat-nav-heading"><span className="chat-nav-sub">People</span></div>

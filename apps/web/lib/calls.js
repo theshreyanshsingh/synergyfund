@@ -790,7 +790,10 @@ export const callEvents = {
     refreshTone()
     if (typeof document !== "undefined" && document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
       try {
-        const note = new Notification(`${call.startedByName} is calling`, { body: `${call.media === "video" ? "Video" : "Voice"} call`, tag: `call-${call.id}` })
+        const added = invitedBy && invitedBy !== call.startedByName
+        const kind = call.media === "video" ? "video" : "voice"
+        // Same tag as the phone notification, so the two replace each other instead of doubling up.
+        const note = new Notification(added ? `${invitedBy} is adding you to a ${kind} call` : `${call.startedByName} is calling you`, { body: `${kind === "video" ? "Video" : "Voice"} call`, tag: `call-${call.id}`, renotify: true, requireInteraction: true })
         note.onclick = () => {
           window.focus()
           note.close()

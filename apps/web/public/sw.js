@@ -56,10 +56,12 @@ self.addEventListener("push", (event) => {
     }))
     return
   }
+  // Messages from the same conversation share a tag, so the newest replaces the last one and still alerts.
   event.waitUntil(self.registration.showNotification(payload.title, {
     body: payload.body,
     icon: "/icon-192.png",
     badge: "/icon-192.png",
+    ...(payload.tag ? { tag: payload.tag, renotify: true } : {}),
     data: { href: payload.href || "/notifications" },
   }))
 })

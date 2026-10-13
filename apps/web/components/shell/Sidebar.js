@@ -106,7 +106,10 @@ function SidebarNav({ primary, sections, onNavigate, chat, me }) {
     if (!message || message.userId === me) return
     if (channel?.kind === "direct" || message.mentionsChannel || (message.mentionIds || []).includes(me)) refreshChat()
   }
-  useChatEvents({ "message:new": onMessage, read: refreshChat, "channel:remove": refreshChat, "chat:refresh": refreshChat, reconnect: refreshChat }, chat)
+  function onNotification() {
+    setCounts((current) => ({ ...current, notifications: (current.notifications || 0) + 1 }))
+  }
+  useChatEvents({ "message:new": onMessage, read: refreshChat, "channel:remove": refreshChat, "chat:refresh": refreshChat, reconnect: refreshChat, "notification:new": onNotification }, chat)
   return (
     <nav className="nav">
       {primary.map((item) => (

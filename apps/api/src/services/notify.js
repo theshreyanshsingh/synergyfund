@@ -1,6 +1,7 @@
 import { Resend } from "resend"
 import { User, Notification, MailMessage, Activity } from "../models/index.js"
 import { pushToUsers } from "./push.js"
+import { emitToUsers } from "./chatHub.js"
 
 const BATCH_SIZE = 100
 const MAX_ATTEMPTS = 3
@@ -114,7 +115,7 @@ export async function sendMail({ people, title, body, details, href, event }) {
   return { status: record.status, error: record.error, sent: record.sentCount }
 }
 
-export async function notify({ roles = [], userIds = [], title, body, details, href, event }) {
+export async function notify({ roles = [], userIds = [], title, body, details, href, event, push = true }) {
   try {
     const roleUsers = roles.length ? await User.find({ role: { $in: roles } }).select("_id email name") : []
     const direct = userIds.length ? await User.find({ _id: { $in: userIds.filter(Boolean) } }).select("_id email name") : []
@@ -127,10 +128,11 @@ export async function notify({ roles = [], userIds = [], title, body, details, h
     })
     if (!people.length) return { status: "Skipped", error: "Nobody to notify.", sent: 0 }
     await Notification.insertMany(people.map((person) => ({ userId: person._id, title, body, href, event })))
-    const pushed = pushToUsers(people.map((person) => person._id), { title, body, href }).catch((error) => {
+    emitToUsers(people.map((person) => String(person._id)), "notification:new", { title, href })
+    const pushed = push ? pushToUsers(people.map((person) => person._id), { title, body, href }).catch((error) => {
       console.error("Push notification failed", error)
       return { sent: 0, failed: 0 }
-    })
+    }) : Promise.resolve({ sent: 0, failed: 0 })
     const mail = await sendMail({ people, title, body, details, href, event })
     await pushed
     if (mail.status !== "Sent") console.error(`Email for ${event} ${mail.status}: ${mail.error}`)

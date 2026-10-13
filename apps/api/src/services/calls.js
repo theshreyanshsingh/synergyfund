@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto"
 import mongoose from "mongoose"
-import { Call, ChatChannel, ChatMessage, ChatRead, User } from "../models/index.js"
+import { Call, ChatChannel, ChatMessage, ChatRead, Notification, User } from "../models/index.js"
 import { audience, isGuest, loadChannel, presentChannel, presentMessage, usesChat, visibleChannels } from "./chat.js"
-import { chatIo, emitToUsers, hasVisibleDevice } from "./chatHub.js"
+import { chatIo, emitToUsers } from "./chatHub.js"
 import { pushToUsers } from "./push.js"
 
 // Everyone in a call connects to everyone else (a mesh), which stays smooth up to about eight people.
@@ -196,6 +196,7 @@ async function endCall(state, reason) {
   state.ringing.clear()
   const outcome = state.answered ? "completed" : reason === "declined" ? "declined" : "missed"
   pushCallOver(state).catch(() => {})
+  recordMissed(state).catch((error) => console.error("Missed call note failed", error))
   const io = chatIo()
   for (const peerId of state.peers.keys()) io?.to(peerId).emit("call:ended", { callId: state.id, reason, outcome })
   emitToUsers(state.invitedIds, "call:ring-stop", { callId: state.id })
@@ -289,23 +290,39 @@ function placeName(state) {
   return state.channel.kind === "property" ? state.channel.name : `#${state.channel.name}`
 }
 
-// Phones get a call-style notification when SynergiFund is not open on screen anywhere for that person.
+// Every device with notifications on rings with "Name is calling you", like a phone,
+// even if SynergiFund is open somewhere else (that screen also shows the ringing card).
 async function pushRing(state, userIds, invitedBy) {
-  const targets = []
-  for (const userId of userIds) if (!(await hasVisibleDevice(userId))) targets.push(userId)
-  if (!targets.length) return
-  for (const userId of targets) state.pushed.add(userId)
+  if (!userIds.length) return
+  for (const userId of userIds) state.pushed.add(userId)
   const place = placeName(state)
   const kind = state.media === "video" ? "video" : "voice"
-  await pushToUsers(targets, {
+  const added = invitedBy && invitedBy !== state.startedByName
+  await pushToUsers(userIds, {
     kind: "call",
     callId: state.id,
     media: state.media,
     tag: `call-${state.id}`,
-    title: invitedBy && invitedBy !== state.startedByName ? `${invitedBy} added you to a ${kind} call` : `Incoming ${kind} call`,
-    body: `${state.startedByName}${place ? ` · ${place}` : ""}`,
+    title: added ? `${invitedBy} is adding you to a ${kind} call` : `${state.startedByName} is calling you`,
+    body: `${kind === "video" ? "Video" : "Voice"} call${added ? ` with ${state.startedByName}` : ""}${place ? ` · ${place}` : ""}`,
     href: `/calls?join=${state.id}`,
   }, { TTL: Math.round(RING_MS / 1000), urgency: "high", topic: `c${state.id}` })
+}
+
+// Missed calls also land in the Notifications list.
+async function recordMissed(state) {
+  const missed = state.invitedIds.filter((userId) => !state.joinedIds.has(userId) && !state.declined.has(userId))
+  if (!missed.length) return
+  const kind = state.media === "video" ? "video" : "voice"
+  const place = placeName(state)
+  await Notification.insertMany(missed.map((userId) => ({
+    userId: new mongoose.Types.ObjectId(userId),
+    title: `Missed ${kind} call from ${state.startedByName}`,
+    body: place ? `In ${place}` : "",
+    href: "/calls",
+    event: "call.missed",
+  })))
+  emitToUsers(missed, "notification:new", { title: `Missed ${kind} call from ${state.startedByName}`, href: "/calls" })
 }
 
 // Replaces the ringing notification on phones once the call is over.
@@ -318,7 +335,7 @@ async function pushCallOver(state) {
   const place = placeName(state)
   const options = { TTL: 24 * 3600, urgency: "normal", topic: `c${state.id}` }
   if (missed.length) {
-    await pushToUsers(missed, { kind: "call-over", callId: state.id, tag: `call-${state.id}`, title: `Missed ${kind} call`, body: `${state.startedByName}${place ? ` · ${place}` : ""}`, href: "/calls" }, options)
+    await pushToUsers(missed, { kind: "call-over", callId: state.id, tag: `call-${state.id}`, title: `Missed ${kind} call from ${state.startedByName}`, body: place || "Tap to call back", href: "/calls" }, options)
   }
   if (done.length) {
     await pushToUsers(done, { kind: "call-over", quiet: true, callId: state.id, tag: `call-${state.id}`, title: `${kind === "video" ? "Video" : "Voice"} call ended`, body: `${state.startedByName}${place ? ` · ${place}` : ""}`, href: "/calls" }, options)

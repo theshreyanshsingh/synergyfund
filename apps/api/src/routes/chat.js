@@ -17,7 +17,8 @@ import {
   usesChat,
   visibleChannels,
 } from "../services/chat.js"
-import { emitToUsers, isOnline, onlineIds, socketToken } from "../services/chatHub.js"
+import { emitToUsers, hasVisibleDevice, isOnline, onlineIds, socketToken } from "../services/chatHub.js"
+import { pushToUsers } from "../services/push.js"
 import { recheckCalls } from "../services/calls.js"
 import { receiveFile, saveUploadedFile, sendStoredFile } from "../services/files.js"
 import { notify, recordActivity } from "../services/notify.js"
@@ -89,6 +90,26 @@ async function alertPeople({ channel, property, message, author, people, parent 
     const mentioned = message.mentionIds.some((mention) => String(mention) === id) || message.mentionsChannel
     if (direct || mentioned || followers.has(id)) recipients.add(id)
   }
+  if (!recipients.size) return
+  const where = channelLabel(channel, property, author, people)
+  const preview = plainText(message.text, people) || (message.attachments.length ? `Shared ${message.attachments.length === 1 ? "a file" : `${message.attachments.length} files`}` : "")
+  const body = preview.length > 280 ? `${preview.slice(0, 280)}…` : preview
+  const href = chatHref(channel, message.parentId)
+  const groupDirect = direct && (channel.memberIds || []).length > 2
+  // Every message pings the phone or computer of anyone who does not have SynergiFund on screen right now.
+  // One notification per conversation is kept and updated, so a burst of messages does not pile up.
+  const away = []
+  for (const id of recipients) if (!(await hasVisibleDevice(id))) away.push(id)
+  if (away.length) {
+    pushToUsers(away, {
+      kind: "message",
+      tag: `chat-${channel._id}`,
+      title: direct ? (groupDirect ? `${author.name} · ${where}` : author.name) : message.parentId && !message.mentionsChannel ? `${author.name} replied in ${where}` : `${author.name} mentioned you in ${where}`,
+      body,
+      href,
+    }, { TTL: 24 * 3600, urgency: "high" }).catch((error) => console.error("Chat push failed", error))
+  }
+  // The Notifications list and email stay calm: people who are fully offline, at most once per conversation every 15 minutes.
   const offline = [...recipients].filter((id) => {
     if (isOnline(id)) return false
     const key = `${id}:${channel._id}`
@@ -98,15 +119,14 @@ async function alertPeople({ channel, property, message, author, people, parent 
     return true
   })
   if (!offline.length) return
-  const where = channelLabel(channel, property, author, people)
-  const preview = plainText(message.text, people) || (message.attachments.length ? `Shared ${message.attachments.length === 1 ? "a file" : `${message.attachments.length} files`}` : "")
   await notify({
     userIds: offline,
     title: direct ? `New message from ${author.name}` : message.parentId && !message.mentionsChannel ? `${author.name} replied in ${where}` : `${author.name} mentioned you in ${where}`,
-    body: preview.length > 280 ? `${preview.slice(0, 280)}…` : preview,
+    body,
     details: [["From", author.name], ["Conversation", direct ? "Direct message" : where]],
-    href: chatHref(channel, message.parentId),
+    href,
     event: direct ? "chat.direct" : "chat.mention",
+    push: false,
   })
 }
 
