@@ -12,6 +12,7 @@ import { emitChat, useChatEvents, useChatStatus } from "../../lib/chatSocket"
 import { Avatar, ChatComposer } from "./ChatComposer"
 import { ChatMessages } from "./ChatMessages"
 import { channelTitle, clock, dayLabel, nameOf, plain, sameDay } from "./chatFormat"
+import { CallButtons } from "../calls/CallButtons"
 
 const NARROW = "(max-width: 900px)"
 const TYPING_TTL = 5000
@@ -748,6 +749,7 @@ function Conversation({ channel, feed, people, me, isAdmin, online, members, unr
           <p>{subtitle(channel, members, people, me, online)}</p>
         </div>
         <div className="chat-head-actions">
+          <CallButtons channel={channel} />
           {channel.kind === "property" && channel.propertyId && (
             <Link href={`/properties/${channel.propertyId}`} className="import-button chat-head-link">Open property</Link>
           )}

@@ -1,17 +1,27 @@
 "use client"
 
+import { useState } from "react"
 import { INSURANCE_FREQUENCIES, LOAN_LABELS, LOAN_STATUSES } from "@synergifund/shared"
 
-// One loan form for the Loans page and a property's Financing tab.
+const NEW_LENDER = "__new"
+
+// One loan form for the Loans page and a property's Financing tab. The lender is optional.
 export function LoanFields({ lenders, properties = [], loan, propertyId = "" }) {
+  // Keep the loan's current lender even if it is missing from the list, so saving never drops it.
+  const [choice, setChoice] = useState(loan?.lenderId || "")
+  const missing = loan?.lenderId && !lenders.some((lender) => lender.id === loan.lenderId) ? { id: loan.lenderId, name: loan.lender || "Current lender" } : null
   return (
     <div className="form-grid">
-      <label className="field wide"><span>Lender</span>
-        <select name="lenderId" required defaultValue={loan?.lenderId || ""}>
-          <option value="">Choose</option>
+      <label className={choice === NEW_LENDER ? "field" : "field wide"}><span>Lender <em>· optional</em></span>
+        <select value={choice} onChange={(event) => setChoice(event.target.value)}>
+          <option value="">No lender</option>
+          {missing && <option value={missing.id}>{missing.name}</option>}
           {lenders.map((lender) => <option key={lender.id} value={lender.id}>{lender.name}</option>)}
+          <option value={NEW_LENDER}>New lender…</option>
         </select>
       </label>
+      <input type="hidden" name="lenderId" value={choice === NEW_LENDER ? "" : choice} />
+      {choice === NEW_LENDER && <label className="field"><span>New lender name</span><input name="lender" required maxLength={120} autoFocus /></label>}
       {propertyId ? (
         <input type="hidden" name="propertyId" value={propertyId} />
       ) : (

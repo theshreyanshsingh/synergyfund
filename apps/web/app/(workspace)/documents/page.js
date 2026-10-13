@@ -1,60 +1,55 @@
 "use client"
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { Suspense, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { can } from "@synergifund/shared"
-import { StatusPill } from "../../../components/ui/StatusPill"
+import { DocumentLibrary, fileType } from "../../../components/documents/DocumentLibrary"
+import { PageSpinner } from "../../../components/ui/Spinner"
 import { WorkspacePage } from "../../../components/ui/WorkspacePage"
 import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
-import { when } from "../../../lib/format"
 import { useApi } from "../../../lib/useApi"
 
-function fileType(file) {
-  const name = (file.name || "").toLowerCase()
-  if (name.endsWith(".xlsx") || name.endsWith(".xls")) return "Excel"
-  if (name.endsWith(".docx") || name.endsWith(".doc")) return "Word"
-  if (name.endsWith(".pdf")) return "PDF"
-  if (file.mime?.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/.test(name)) return "Photo"
-  if (file.kind === "receipt") return "Receipt"
-  return "File"
+export default function DocumentsPage() {
+  return (
+    <Suspense fallback={<PageSpinner />}>
+      <DocumentsScreen />
+    </Suspense>
+  )
 }
 
-export default function DocumentsPage() {
-  const router = useRouter()
+function DocumentsScreen() {
+  const params = useSearchParams()
   const session = useSession()
   const list = useApi("/documents")
+  const properties = useApi("/properties")
   const [open, setOpen] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [error, setError] = useState("")
-  const [mode, setMode] = useState("library")
   const [importId, setImportId] = useState("")
   const [previewCount, setPreviewCount] = useState(0)
   const writable = session?.user && can(session.user, "documents.write")
+  const canDelete = session?.user && can(session.user, "documents.delete")
   const canImport = session?.user && can(session.user, "imports.run")
   const files = list.data?.items || []
+  const linked = files.filter((file) => file.propertyId)
 
   function closeUpload() {
     setOpen(false)
     setError("")
     setImportId("")
     setPreviewCount(0)
-    setMode("library")
   }
 
   async function upload(event) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
-    form.set("mode", mode)
+    form.set("mode", "import")
     setError("")
     try {
-      if (mode === "import") {
-        const result = await api("/documents/import", { method: "POST", body: form })
-        setImportId(result.import.id)
-        setPreviewCount(result.import.count || 0)
-      } else {
-        await api("/documents", { method: "POST", body: form })
-        closeUpload()
-      }
+      const result = await api("/documents/import", { method: "POST", body: form })
+      setImportId(result.import.id)
+      setPreviewCount(result.import.count || 0)
       list.reload()
     } catch (err) {
       setError(err.message)
@@ -78,73 +73,55 @@ export default function DocumentsPage() {
         views={false}
         loading={!list.data && !list.error}
         title="Documents"
-        action={writable ? { label: "Upload", onClick: () => setOpen(true) } : null}
+        secondary={canImport ? { label: "Import properties", onClick: () => setOpen(true) } : null}
+        action={writable ? { label: "Upload", onClick: () => setUploading(true) } : null}
         stats={[
           { key: "files", label: "Files", value: String(files.length), hint: "In the library" },
-          { key: "excel", label: "Excel", value: String(files.filter((file) => fileType(file) === "Excel").length), hint: "Workbooks" },
-          { key: "word", label: "Word", value: String(files.filter((file) => fileType(file) === "Word").length), hint: "Documents" },
-          { key: "photos", label: "Photos", value: String(files.filter((file) => fileType(file) === "Photo").length), hint: "Images and receipts" },
+          { key: "properties", label: "Properties with files", value: String(new Set(linked.map((file) => file.propertyId)).size), hint: `${linked.length} files linked to a property` },
+          { key: "labeled", label: "Labeled", value: String(files.filter((file) => (file.labels || []).length).length), hint: "Files with at least one label" },
+          { key: "photos", label: "Photos", value: String(files.filter((file) => fileType(file) === "Photo").length), hint: "Site photos and images" },
         ]}
-        columns={[
-          {
-            key: "name",
-            label: "Name",
-            avatar: (row) => row.name,
-            render: (row) => (
-              <span className="person-copy">
-                <strong>{row.name}</strong>
-                <small>{when(row.createdAt)}</small>
-              </span>
-            ),
-          },
-          { key: "type", label: "Type", render: (row) => <StatusPill>{fileType(row)}</StatusPill> },
-          { key: "size", label: "Size", render: (row) => `${Math.max(1, Math.ceil((row.size || 0) / 1024))} KB` },
-          {
-            key: "actions",
-            label: "",
-            pin: "right",
-            render: (row) => (
-              <span className="row-actions">
-                <button type="button" onClick={(event) => { event.stopPropagation(); router.push(`/documents/${row.id}`) }}>Open</button>
-                <a href={`/api/documents/${row.id}/download`}>Download</a>
-              </span>
-            ),
-          },
-        ]}
-        rows={files}
-        onRow={(row) => router.push(`/documents/${row.id}`)}
-        empty="Upload a Word file, Excel workbook, photo, or PDF."
-      />
+      >
+        <section className="panel doc-panel">
+          {list.error ? <p className="banner">{list.error}</p> : !list.data ? <PageSpinner /> : (
+            <DocumentLibrary
+              files={files}
+              properties={(properties.data?.items || []).map((property) => ({ id: property.id, address: property.address }))}
+              initialProperty={params.get("property") || "all"}
+              writable={Boolean(writable)}
+              canDelete={Boolean(canDelete)}
+              requireProperty={session?.user?.role === "contractor"}
+              canEdit={(file) => session?.user?.role !== "contractor" || file.uploadedById === session?.user?.id}
+              onChanged={list.reload}
+              uploadOpen={uploading}
+              onUploadOpenChange={setUploading}
+              toolbarUpload={false}
+              emptyText="Upload a contract, a closing statement, an insurance policy, photos or any other file."
+            />
+          )}
+        </section>
+      </WorkspacePage>
       {open && (
         <div className="sheet-backdrop" onMouseDown={closeUpload}>
           <form className="member-sheet" onSubmit={upload} onMouseDown={(event) => event.stopPropagation()}>
             <header>
               <div>
                 <p>Documents</p>
-                <h2>Upload a file</h2>
-                <span>It opens inside the app. You can also download the original.</span>
+                <h2>Import properties from Excel</h2>
+                <span>Rows become properties and loans. Blank cells stay blank and nothing is overwritten.</span>
               </div>
               <button type="button" className="icon-btn" onClick={closeUpload} aria-label="Close">×</button>
             </header>
             <div className="member-sheet-body">
               {error && <div className="banner">{error}</div>}
-              <label className="field"><span>File</span><input name="file" type="file" required={!importId} /></label>
-              {canImport && (
-                <div className="role-block">
-                  <span>What should happen</span>
-                  <div className="role-pills">
-                    <button type="button" className={mode === "library" ? "role-pill is-on" : "role-pill"} onClick={() => { setMode("library"); setImportId("") }}>Keep in the library</button>
-                    <button type="button" className={mode === "import" ? "role-pill is-on" : "role-pill"} onClick={() => setMode("import")}>Import properties from Excel</button>
-                  </div>
-                </div>
-              )}
+              <label className="field"><span>Workbook</span><input name="file" type="file" accept=".xlsx,.xls" required={!importId} /></label>
               {importId && <p className="muted">{previewCount} rows found. Blank cells stay blank. Nothing is overwritten.</p>}
             </div>
             <footer>
               <button type="button" className="tool" onClick={closeUpload}>Cancel</button>
               {importId
                 ? <button className="primary" type="button" onClick={confirmImport}>Confirm import</button>
-                : <button className="primary" type="submit">Upload</button>}
+                : <button className="primary" type="submit">Read workbook</button>}
             </footer>
           </form>
         </div>

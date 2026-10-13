@@ -58,8 +58,50 @@ export function placedComps(property, location) {
   }))
 }
 
+function compAddress(comp) {
+  const address = String(comp.address || "").trim()
+  const city = String(comp.city || "").trim()
+  if (!city || address.toLowerCase().includes(city.toLowerCase())) return address
+  return `${address}, ${city}`
+}
+
+// Plain text for lenders and appraisers. Only comps ticked "Use in ARV" are copied.
+export function compsCopyText(property, stats) {
+  const used = (property.comps || []).filter((comp) => comp.include !== false)
+  const arv = property.arv ?? stats.suggested?.value ?? null
+  const lines = used.map((comp, index) => `Comp ${index + 1}: ${compAddress(comp)} - ${Number(comp.salePrice) > 0 ? money(comp.salePrice) : "price not entered"}`)
+  return ["Comparable Sales:", ...lines, "", `ARV: ${arv != null ? money(arv) : "not set"}`].join("\n")
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    const area = document.createElement("textarea")
+    area.value = text
+    area.setAttribute("readonly", "")
+    area.style.position = "fixed"
+    area.style.opacity = "0"
+    document.body.appendChild(area)
+    area.select()
+    area.setSelectionRange(0, text.length)
+    const ok = document.execCommand("copy")
+    area.remove()
+    return ok
+  }
+}
+
+function updatedLabel(value) {
+  if (!value) return ""
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  return date.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
+}
+
 export function ArvSection({ property, writable, onChanged }) {
   const [editing, setEditing] = useState(null)
+  const [copied, setCopied] = useState("")
   const [error, setError] = useState("")
   const [busy, setBusy] = useState("")
   const [facts, setFacts] = useState({ sqft: property.sqft ?? "", beds: property.beds ?? "", baths: property.baths ?? "" })
@@ -171,8 +213,26 @@ export function ArvSection({ property, writable, onChanged }) {
           <div>
             <h2>Comparable sales</h2>
             <p className="property-missing">{comps.length ? `${comps.length} ${comps.length === 1 ? "comp" : "comps"}. Untick “Use in ARV” to leave one out of the value.` : "No comps yet."}</p>
+            {comps.length > 0 && updatedLabel(property.compsUpdatedAt) && <p className="comps-updated">Last updated {updatedLabel(property.compsUpdatedAt)}</p>}
           </div>
-          {writable && <button type="button" className="primary" onClick={() => setEditing({ ...BLANK_COMP })}><Icon name="plus" size={14} />Add comp</button>}
+          <div className="comps-actions">
+            {comps.length > 0 && (
+              <button
+                type="button"
+                className="tool"
+                disabled={!comps.some((comp) => comp.include !== false)}
+                title={comps.some((comp) => comp.include !== false) ? "Copy the comps ticked “Use in ARV” and the ARV" : "Tick “Use in ARV” on at least one comp"}
+                onClick={async () => {
+                  const ok = await copyText(compsCopyText(property, stats))
+                  setCopied(ok ? "Copied" : "Copy failed")
+                  setTimeout(() => setCopied(""), 2000)
+                }}
+              >
+                {copied || "Copy all"}
+              </button>
+            )}
+            {writable && <button type="button" className="primary" onClick={() => setEditing({ ...BLANK_COMP })}><Icon name="plus" size={14} />Add comp</button>}
+          </div>
         </div>
         <div className="comp-list">
           {numbered.map((comp) => (

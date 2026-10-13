@@ -90,7 +90,7 @@ export default function LoansPage() {
           ]}
           rows={items}
           important={(row) => row.termsStatus === "Needs verification"}
-          onRow={(row) => row.lenderId && router.push(`/loans/lenders/${row.lenderId}`)}
+          onRow={(row) => router.push(row.lenderId ? `/loans/lenders/${row.lenderId}` : `/properties/${row.propertyId}`)}
           empty="No loans yet. Add a lender, then attach a property."
         />
       ) : (

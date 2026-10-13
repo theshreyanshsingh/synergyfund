@@ -1,4 +1,4 @@
-export function FormSheet({ eyebrow, title, hint, onClose, onSubmit, submitLabel, pending, error, children }) {
+export function FormSheet({ eyebrow, title, hint, onClose, onSubmit, submitLabel, pending, pendingLabel, error, children }) {
   return (
     <div className="sheet-backdrop" onMouseDown={onClose}>
       <form className="member-sheet" onSubmit={onSubmit} onMouseDown={(event) => event.stopPropagation()}>
@@ -17,7 +17,7 @@ export function FormSheet({ eyebrow, title, hint, onClose, onSubmit, submitLabel
         {onSubmit && (
           <footer>
             <button type="button" className="tool" onClick={onClose}>Cancel</button>
-            <button className="primary" type="submit" disabled={pending}>{pending ? "Saving…" : submitLabel}</button>
+            <button className="primary" type="submit" disabled={pending}>{pending ? pendingLabel || "Saving…" : submitLabel}</button>
           </footer>
         )}
       </form>

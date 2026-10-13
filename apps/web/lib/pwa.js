@@ -8,6 +8,12 @@ const listeners = new Set()
 let snapshot = null
 let pushChecked = false
 let pushOn = false
+let standaloneQuery = null
+
+function standaloneMedia() {
+  if (!standaloneQuery) standaloneQuery = window.matchMedia("(display-mode: standalone)")
+  return standaloneQuery
+}
 
 function platform() {
   const agent = navigator.userAgent
@@ -28,7 +34,7 @@ function rememberedInstall() {
 }
 
 function read() {
-  const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true
+  const standalone = standaloneMedia().matches || window.navigator.standalone === true
   if (standalone) {
     try {
       localStorage.setItem(INSTALLED_KEY, "1")
@@ -47,7 +53,8 @@ function read() {
     pushSupported: pushSupported && !(kind === "ios" && !standalone),
     pushOn,
     pushChecked,
-    permission: "Notification" in window ? Notification.permission : "denied",
+    // iPhone Safari has no Notification API until the app is installed; that is "unsupported", not "blocked".
+    permission: "Notification" in window ? Notification.permission : "unsupported",
   }
 }
 
@@ -79,7 +86,7 @@ function subscribe(listener) {
   listeners.add(listener)
   if (listeners.size === 1) {
     window.addEventListener("sf-pwa", emit)
-    window.matchMedia("(display-mode: standalone)").addEventListener?.("change", emit)
+    standaloneMedia().addEventListener?.("change", emit)
     if (!pushChecked) checkPush()
     // Pick up anything that happened before the first subscriber arrived.
     queueMicrotask(emit)
@@ -88,7 +95,7 @@ function subscribe(listener) {
     listeners.delete(listener)
     if (!listeners.size) {
       window.removeEventListener("sf-pwa", emit)
-      window.matchMedia("(display-mode: standalone)").removeEventListener?.("change", emit)
+      standaloneMedia().removeEventListener?.("change", emit)
     }
   }
 }

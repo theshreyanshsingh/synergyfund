@@ -44,6 +44,18 @@ function dispatch(event, payload) {
   }
 }
 
+// Tells the server whether the app is on screen, so calls ring this device in the app or by phone notification.
+function reportVisible() {
+  if (socket?.connected && typeof document !== "undefined") socket.emit("presence:visible", { visible: document.visibilityState === "visible" })
+}
+
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", reportVisible)
+  window.addEventListener("pagehide", () => {
+    if (socket?.connected) socket.emit("presence:visible", { visible: false })
+  })
+}
+
 async function start() {
   if (socket || starting) return starting
   starting = (async () => {
@@ -86,6 +98,7 @@ async function start() {
     socket.on("connect", () => {
       retries = 0
       setStatus("live")
+      reportVisible()
       dispatch("reconnect", {})
     })
     socket.on("disconnect", (reason) => {
@@ -113,6 +126,32 @@ function stop() {
 
 export function emitChat(event, payload) {
   if (socket?.connected) socket.emit(event, payload)
+}
+
+// Sends an event and waits for the server's reply. Waits briefly for the connection if it is still starting.
+export function requestChat(event, payload, timeout = 12000) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeout
+    function attempt() {
+      if (socket?.connected) {
+        socket.timeout(Math.max(1000, deadline - Date.now())).emit(event, payload, (error, reply) => {
+          if (error) reject(new Error("The server did not answer. Check your connection and try again."))
+          else resolve(reply || {})
+        })
+        return
+      }
+      if (Date.now() > deadline) {
+        reject(new Error("Not connected. Check your connection and try again."))
+        return
+      }
+      setTimeout(attempt, 250)
+    }
+    attempt()
+  })
+}
+
+export function chatSocketId() {
+  return socket?.connected ? socket.id : ""
 }
 
 export function useChatEvents(handlers, enabled = true) {

@@ -89,12 +89,12 @@ export function AppOptions() {
       <div className="settings-row">
         <div>
           <h2>Notifications</h2>
-          <p>{pwa.pushOn ? "This device will receive notifications." : pwa.permission === "denied" ? "Notifications are blocked. Allow them for this site in the browser settings." : "Turn them on for this device."}</p>
+          <p>{pwa.pushOn ? "This device will receive notifications." : iosHint ? "Add SynergiFund to the Home Screen, open it from the icon, then turn notifications on." : pwa.permission === "denied" ? "Notifications are blocked. Allow them for this site in the browser settings." : pwa.permission === "unsupported" ? "This browser cannot receive notifications." : "Turn them on for this device."}</p>
         </div>
         {pwa.pushOn ? (
           <button type="button" className="tool" disabled={pending} onClick={turnOff}>Turn off</button>
         ) : (
-          <button type="button" className="primary" disabled={pending || !pwa.ready || pwa.permission === "denied"} onClick={turnOn}>{pending ? "Saving…" : "Turn on"}</button>
+          <button type="button" className="primary" disabled={pending || !pwa.ready || pwa.permission === "denied" || (pwa.permission === "unsupported" && !iosHint)} onClick={turnOn}>{pending ? "Saving…" : "Turn on"}</button>
         )}
       </div>
       {(error || message) && <p className={error ? "banner" : "settings-note"}>{error || message}</p>}

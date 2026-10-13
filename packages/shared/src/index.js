@@ -186,6 +186,32 @@ export const TASK_LABELS = ["EMD", "Mortgage payment", "Draw", "Verify", "Inspec
 export const PROPERTY_LABELS = ["Financed", "Refinanced", "Flip", "Hold", "Rent"]
 
 export const LOAN_LABELS = ["Financed", "Refinanced", "Construction", "Bridge", "Seller financing"]
+export const DOCUMENT_LABELS = ["Purchase contract", "Closing statement", "Title", "Insurance", "Loan", "Appraisal", "Inspection", "Permit", "Invoice", "Lease", "Tax", "Other"]
+
+// Optional labels on a file: trimmed, at most 8, no repeats, matching the standard spelling when one exists.
+export function cleanDocumentLabels(value) {
+  let list = value
+  if (typeof list === "string") {
+    const text = list
+    try {
+      list = JSON.parse(text)
+    } catch {
+      list = null
+    }
+    if (!Array.isArray(list)) list = text.split(",")
+  }
+  const labels = []
+  for (const item of Array.isArray(list) ? list : []) {
+    const text = String(item ?? "").trim().replace(/\s+/g, " ").slice(0, 40)
+    if (!text) continue
+    const standard = DOCUMENT_LABELS.find((label) => label.toLowerCase() === text.toLowerCase())
+    const label = standard || text
+    if (!labels.some((existing) => existing.toLowerCase() === label.toLowerCase())) labels.push(label)
+    if (labels.length === 8) break
+  }
+  return labels
+}
+
 export const LOAN_STATUSES = ["Current", "Late", "In default", "Paid off"]
 export const INSURANCE_FREQUENCIES = ["Monthly", "Quarterly", "Every 6 months", "Yearly"]
 
@@ -252,6 +278,7 @@ export function initials(name = "") {
 export const NAV = [
   { href: "/knowledge", label: "Agent", icon: "spark", permission: PERMISSIONS.agentAsk, badge: "NEW", zone: "primary" },
   { href: "/chat", label: "Chat", icon: "chat", permission: PERMISSIONS.chatUse, zone: "primary", countKey: "chat" },
+  { href: "/calls", label: "Calls", icon: "phone", permission: PERMISSIONS.chatUse, zone: "primary" },
   { href: "/notifications", label: "Notifications", icon: "bell", permission: PERMISSIONS.activityRead, zone: "primary", countKey: "notifications" },
   { href: "/draws", label: "Draws", icon: "layers", permission: PERMISSIONS.drawsRead, zone: "primary" },
   { href: "/overview", label: "Overview", icon: "grid", permission: PERMISSIONS.propertiesRead, section: "Plan your day" },
@@ -268,7 +295,7 @@ export const NAV = [
   { href: "/settings", label: "Settings", icon: "settings", section: "Team" },
 ]
 
-const CONTRACTOR_NAV = new Set(["/properties", "/expenses", "/chat"])
+const CONTRACTOR_NAV = new Set(["/properties", "/expenses", "/chat", "/calls"])
 
 export function navFor(user) {
   const items = NAV.filter((item) => !item.permission || can(user, item.permission))

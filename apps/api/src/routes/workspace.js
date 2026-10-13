@@ -59,6 +59,7 @@ function money(value) {
 workspaceRouter.get(
   "/overview",
   requirePermission("properties.read"),
+  blockContractors,
   asyncHandler(async (req, res) => {
     const properties = await Property.find(propertyFilter(req.user))
     const ids = properties.map((property) => property._id)
@@ -465,12 +466,14 @@ workspaceRouter.post(
 workspaceRouter.get(
   "/loans",
   requirePermission("properties.read"),
+  blockContractors,
   asyncHandler(async (req, res) => {
     await ensureLenders()
     const properties = await Property.find(propertyFilter(req.user)).select("_id address city labels")
     const loans = await Loan.find({ propertyId: { $in: properties.map((property) => property._id) } })
     const names = new Map(properties.map((property) => [String(property._id), property]))
-    const lenders = await Lender.find({ _id: { $in: loans.map((loan) => loan.lenderId).filter(Boolean) } })
+    // Every lender is listed, so a new lender can be picked before it has any loans.
+    const lenders = await Lender.find({ name: { $ne: "Not provided" } }).sort({ name: 1 })
     res.json({
       items: loans.map((loan) => presentLoan(loan, names, lenders)),
       lenders: lenders.map((lender) => presentLender(lender, loans.filter((loan) => String(loan.lenderId) === String(lender._id)))),
@@ -481,9 +484,10 @@ workspaceRouter.get(
 workspaceRouter.get(
   "/lenders/:id",
   requirePermission("properties.read"),
+  blockContractors,
   asyncHandler(async (req, res) => {
     await ensureLenders()
-    const lender = await Lender.findById(req.params.id)
+    const lender = isId(req.params.id) ? await Lender.findById(req.params.id) : null
     if (!lender) {
       sendError(res, 404, "That lender was not found.")
       return
@@ -501,8 +505,13 @@ workspaceRouter.get(
 workspaceRouter.post(
   "/lenders",
   requirePermission("properties.write"),
+  blockContractors,
   asyncHandler(async (req, res) => {
-    const name = String(req.body.name || "").trim()
+    const name = String(req.body.name || "").trim().replace(/\s+/g, " ").slice(0, 120)
+    if (name.toLowerCase() === "not provided") {
+      sendError(res, 400, "Choose a different lender name.")
+      return
+    }
     if (!name) {
       sendError(res, 400, "Enter the lender name.")
       return
@@ -521,16 +530,34 @@ workspaceRouter.post(
 workspaceRouter.patch(
   "/lenders/:id",
   requirePermission("properties.write"),
+  blockContractors,
   asyncHandler(async (req, res) => {
-    const lender = await Lender.findById(req.params.id)
+    const lender = await Lender.findById(req.params.id).catch(() => null)
     if (!lender) {
       sendError(res, 404, "That lender was not found.")
       return
     }
-    if (req.body.name) lender.name = String(req.body.name).trim()
+    const renamed = "name" in req.body && String(req.body.name ?? "").trim().replace(/\s+/g, " ").slice(0, 120) !== lender.name
+    if (renamed) {
+      const name = String(req.body.name ?? "").trim().replace(/\s+/g, " ").slice(0, 120)
+      if (!name) {
+        sendError(res, 400, "Enter the lender name.")
+        return
+      }
+      if (name.toLowerCase() === "not provided") {
+        sendError(res, 400, "Choose a different lender name.")
+        return
+      }
+      const clash = await Lender.findOne({ _id: { $ne: lender._id }, name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") })
+      if (clash) {
+        sendError(res, 409, "Another lender already has that name.")
+        return
+      }
+      lender.name = name
+    }
     if ("terms" in req.body) lender.terms = String(req.body.terms || "")
     await lender.save()
-    if (req.body.name) await Loan.updateMany({ lenderId: lender._id }, { lender: lender.name })
+    if (renamed) await Loan.updateMany({ lenderId: lender._id }, { lender: lender.name })
     const loans = await Loan.find({ lenderId: lender._id })
     await recordActivity({ user: req.user, title: "Lender updated", detail: lender.name })
     res.json({ lender: presentLender(lender, loans) })
@@ -540,30 +567,37 @@ workspaceRouter.patch(
 workspaceRouter.post(
   "/loans",
   requirePermission("properties.write"),
+  blockContractors,
   asyncHandler(async (req, res) => {
     const problem = loanProblem(req.body)
     if (problem) {
       sendError(res, 400, problem)
       return
     }
-    const lender = req.body.lenderId ? await Lender.findById(req.body.lenderId) : await lenderForName(req.body.lender)
-    if (!lender) {
-      sendError(res, 400, "Choose a lender.")
-      return
-    }
     if (!req.body.propertyId) {
       sendError(res, 400, "Choose the property this loan is on.")
       return
     }
-    const property = await Property.findOne({ _id: req.body.propertyId, ...propertyFilter(req.user) })
+    const property = isId(req.body.propertyId) ? await Property.findOne({ _id: req.body.propertyId, ...propertyFilter(req.user) }) : null
     if (!property) {
       sendError(res, 404, "That property is not available.")
       return
     }
+    // A lender is optional: pick one, type a new name, or leave it blank. Checked after the property so a failed save creates nothing.
+    let lender = null
+    if (req.body.lenderId) {
+      lender = isId(req.body.lenderId) ? await Lender.findById(req.body.lenderId) : null
+      if (!lender) {
+        sendError(res, 404, "That lender was not found.")
+        return
+      }
+    } else if (cleanLenderName(req.body.lender)) {
+      lender = await lenderForName(cleanLenderName(req.body.lender))
+    }
     const loan = await Loan.create({
       propertyId: property._id,
-      lenderId: lender._id,
-      lender: lender.name,
+      lenderId: lender?._id,
+      lender: lender?.name || "",
       label: cleanLoanLabel(req.body.label),
       terms: String(req.body.terms || "").trim(),
       loanNumber: String(req.body.loanNumber || "").trim(),
@@ -578,16 +612,17 @@ workspaceRouter.post(
       insuranceFrequency: insuranceFrequency(req.body.insuranceFrequency),
       insuranceDue: dateKey(req.body.insuranceDue),
     })
-    await recordActivity({ user: req.user, title: "Loan recorded", detail: `${lender.name} · ${property.address}`, propertyId: property._id })
-    res.status(201).json({ loan: presentLoan(loan, new Map([[String(property._id), property]]), [lender]) })
+    await recordActivity({ user: req.user, title: "Loan recorded", detail: [lender?.name || "No lender", money(loan.originalAmount ?? loan.balance), property.address].filter(Boolean).join(" · "), propertyId: property._id })
+    res.status(201).json({ loan: presentLoan(loan, new Map([[String(property._id), property]]), lender ? [lender] : []) })
   }),
 )
 
 workspaceRouter.patch(
   "/loans/:id",
   requirePermission("properties.write"),
+  blockContractors,
   asyncHandler(async (req, res) => {
-    const loan = await Loan.findById(req.params.id)
+    const loan = isId(req.params.id) ? await Loan.findById(req.params.id) : null
     if (!loan) {
       sendError(res, 404, "That loan was not found.")
       return
@@ -603,14 +638,29 @@ workspaceRouter.patch(
       return
     }
     const before = loan.toObject()
+    let moveTo = null
+    if (req.body.propertyId && String(req.body.propertyId) !== String(loan.propertyId)) {
+      moveTo = isId(req.body.propertyId) ? await Property.findOne({ _id: req.body.propertyId, ...propertyFilter(req.user) }) : null
+      if (!moveTo) {
+        sendError(res, 404, "That property is not available.")
+        return
+      }
+    }
     if (req.body.lenderId) {
-      const lender = await Lender.findById(req.body.lenderId)
+      const lender = isId(req.body.lenderId) ? await Lender.findById(req.body.lenderId) : null
       if (!lender) {
         sendError(res, 404, "That lender was not found.")
         return
       }
       loan.lenderId = lender._id
       loan.lender = lender.name
+    } else if (cleanLenderName(req.body.lender)) {
+      const lender = await lenderForName(cleanLenderName(req.body.lender))
+      loan.lenderId = lender._id
+      loan.lender = lender.name
+    } else if ("lenderId" in req.body) {
+      loan.lenderId = undefined
+      loan.lender = ""
     }
     if ("label" in req.body) loan.label = cleanLoanLabel(req.body.label)
     if ("terms" in req.body) loan.terms = String(req.body.terms || "").trim()
@@ -619,20 +669,17 @@ workspaceRouter.patch(
     if ("payment" in req.body) loan.payment = optionalNumber(req.body.payment)
     if ("paymentDay" in req.body) loan.paymentDay = dayOfMonth(req.body.paymentDay)
     if ("originalAmount" in req.body) loan.originalAmount = optionalNumber(req.body.originalAmount)
-    if ("maturity" in req.body) loan.maturity = String(req.body.maturity || "")
+    if ("maturity" in req.body) {
+      // A date field shows older free-text maturities (e.g. "Dec 2027") as blank; a blank save must not erase them.
+      const next = String(req.body.maturity || "")
+      if (next || !loan.maturity || /^\d{4}-\d{2}-\d{2}$/.test(loan.maturity)) loan.maturity = next
+    }
     if ("termsStatus" in req.body) loan.termsStatus = req.body.termsStatus === "Verified" ? "Verified" : "Needs verification"
     if ("status" in req.body) loan.status = loanStatus(req.body.status)
     if ("insurancePayment" in req.body) loan.insurancePayment = optionalNumber(req.body.insurancePayment)
     if ("insuranceFrequency" in req.body) loan.insuranceFrequency = insuranceFrequency(req.body.insuranceFrequency)
     if ("insuranceDue" in req.body) loan.insuranceDue = dateKey(req.body.insuranceDue)
-    if (req.body.propertyId && String(req.body.propertyId) !== String(loan.propertyId)) {
-      const next = await Property.findOne({ _id: req.body.propertyId, ...propertyFilter(req.user) })
-      if (!next) {
-        sendError(res, 404, "That property is not available.")
-        return
-      }
-      loan.propertyId = next._id
-    }
+    if (moveTo) loan.propertyId = moveTo._id
     await loan.save()
     const lender = loan.lenderId ? await Lender.findById(loan.lenderId) : null
     const current = await Property.findById(loan.propertyId).select("address city labels")
@@ -703,9 +750,8 @@ workspaceRouter.get(
   asyncHandler(async (req, res) => {
     const properties = await Property.find(propertyFilter(req.user)).select("_id address")
     const names = new Map(properties.map((property) => [String(property._id), property.address]))
-    const filter = req.user.role === "contractor"
-      ? { $or: [{ actorId: req.user._id }, { propertyId: { $in: properties.map((property) => property._id) } }] }
-      : {}
+    // Contractors see only what they did themselves; other entries can carry draw and loan amounts.
+    const filter = req.user.role === "contractor" ? { actorId: req.user._id } : {}
     const items = await Activity.find(filter).sort({ createdAt: -1 }).limit(300)
     res.json({
       items: items.map((item) => ({
@@ -979,6 +1025,7 @@ workspaceRouter.post(
 workspaceRouter.get(
   "/calendar",
   requirePermission("expenses.read"),
+  blockContractors,
   asyncHandler(async (req, res) => {
     const properties = await Property.find(propertyFilter(req.user)).select("_id address")
     const propertyIds = properties.map((property) => property._id)
@@ -1165,15 +1212,15 @@ function shiftKey(key, days) {
 function presentLoan(loan, names, lenders = []) {
   const property = names.get(String(loan.propertyId || ""))
   const address = typeof property === "string" ? property : property?.address || ""
-  const lender = lenders.find((item) => String(item._id) === String(loan.lenderId || ""))
+  const lender = realLender(lenders.find((item) => String(item._id) === String(loan.lenderId || "")))
   return {
     id: String(loan._id),
     propertyId: loan.propertyId ? String(loan.propertyId) : "",
     address,
     city: typeof property === "string" ? "" : property?.city || "",
     propertyLabels: typeof property === "string" ? [] : property?.labels || [],
-    lenderId: loan.lenderId ? String(loan.lenderId) : "",
-    lender: lender?.name || loan.lender || "Not provided",
+    lenderId: lender ? String(lender._id) : "",
+    lender: lender?.name || (loan.lender && loan.lender !== "Not provided" ? loan.lender : "No lender"),
     lenderTerms: lender?.terms || "",
     label: loan.label || "Financed",
     terms: loan.terms || "",
@@ -1206,6 +1253,20 @@ function loanProblem(body, loan = null) {
   const insuranceDue = "insuranceDue" in body ? dateKey(body.insuranceDue) : loan?.insuranceDue
   if (insurance > 0 && !insuranceDue) return "Add the insurance due date so the payment shows on the calendar."
   return ""
+}
+
+function isId(value) {
+  return /^[a-f0-9]{24}$/i.test(String(value ?? ""))
+}
+
+function cleanLenderName(value) {
+  const name = String(value ?? "").trim().replace(/\s+/g, " ").slice(0, 120)
+  return name.toLowerCase() === "not provided" ? "" : name
+}
+
+// The old "Not provided" placeholder lender counts as no lender.
+function realLender(lender) {
+  return lender && lender.name !== "Not provided" ? lender : null
 }
 
 function loanStatus(value) {

@@ -7,6 +7,7 @@ import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
 import { AppOptions } from "../../../components/pwa/AppOptions"
 import { AgentSettings } from "../../../components/agent/AgentSettings"
+import { PasswordInput } from "../../../components/ui/PasswordInput"
 
 const roleLabel = Object.fromEntries(ROLES.map((role) => [role.id, role.label]))
 
@@ -90,9 +91,9 @@ export default function SettingsPage() {
               </div>
               {error && <div className="banner settings-wide">{error}</div>}
               {message && <p className="settings-note settings-wide">{message}</p>}
-              <label className="field settings-wide"><span>Current password</span><input type="password" autoComplete="current-password" value={form.currentPassword} onChange={(event) => setForm({ ...form, currentPassword: event.target.value })} required /></label>
-              <label className="field"><span>New password</span><input type="password" autoComplete="new-password" value={form.nextPassword} onChange={(event) => setForm({ ...form, nextPassword: event.target.value })} minLength={8} required /></label>
-              <label className="field"><span>Confirm</span><input type="password" autoComplete="new-password" value={form.confirmPassword} onChange={(event) => setForm({ ...form, confirmPassword: event.target.value })} minLength={8} required /></label>
+              <label className="field settings-wide"><span>Current password</span><PasswordInput autoComplete="current-password" value={form.currentPassword} onChange={(event) => setForm({ ...form, currentPassword: event.target.value })} required /></label>
+              <label className="field"><span>New password</span><PasswordInput autoComplete="new-password" value={form.nextPassword} onChange={(event) => setForm({ ...form, nextPassword: event.target.value })} minLength={8} required /></label>
+              <label className="field"><span>Confirm</span><PasswordInput autoComplete="new-password" value={form.confirmPassword} onChange={(event) => setForm({ ...form, confirmPassword: event.target.value })} minLength={8} required /></label>
               <div className="settings-actions"><button className="primary" type="submit" disabled={pending}>{pending ? "Saving…" : "Update password"}</button></div>
             </form>
           </section>

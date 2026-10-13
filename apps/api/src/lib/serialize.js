@@ -15,6 +15,13 @@ export function publicUser(user) {
   }
 }
 
+// When the comps last changed. Older comps fall back to when the newest one was added.
+function compsUpdatedAt(source) {
+  if (source.compsUpdatedAt) return new Date(source.compsUpdatedAt).toISOString()
+  const times = (source.comps || []).map((comp) => comp._id?.getTimestamp?.()?.getTime()).filter(Boolean)
+  return times.length ? new Date(Math.max(...times)).toISOString() : null
+}
+
 export function presentProperty(property, user) {
   const source = property.toObject ? property.toObject() : property
   if (user?.role === "contractor") {
@@ -54,6 +61,7 @@ export function presentProperty(property, user) {
     baths: source.baths ?? null,
     lat: source.lat ?? null,
     lng: source.lng ?? null,
+    compsUpdatedAt: compsUpdatedAt(source),
     comps: (source.comps || []).map((comp) => ({
       id: String(comp._id),
       address: comp.address,

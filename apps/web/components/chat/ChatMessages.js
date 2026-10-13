@@ -21,7 +21,7 @@ export function ChatMessages({ messages, people, me, isAdmin, online, unreadAfte
         const unread = !shownUnread && unreadAfter && message.userId !== me && at > new Date(unreadAfter).getTime()
         if (unread) shownUnread = true
         const compact = !newDay && !unread && message.userId === lastAuthor && at - lastAt < GROUP_GAP && previous && !previous.replyCount
-        lastAuthor = message.userId
+        lastAuthor = message.kind === "call" ? "" : message.userId
         lastAt = at
         return (
           <Fragment key={message.id}>
@@ -53,6 +53,17 @@ function ChatMessage({ message, people, me, compact, canDelete, online, inThread
   const author = people.get(message.userId)?.name || message.userName || "Someone"
   const mine = message.userId === me
   const mentioned = message.mentionsChannel || message.mentionIds.includes(me)
+
+  if (message.kind === "call" && !message.deleted) {
+    const missed = /^Missed|declined$/.test(message.text)
+    return (
+      <div className={missed ? "chat-call-note is-missed" : "chat-call-note"} id={`message-${message.id}`}>
+        <span className="chat-call-icon"><Icon name={/video/i.test(message.text) ? "video" : "phone"} size={14} /></span>
+        <span><b>{author}</b> · {message.text}</span>
+        <time title={new Date(message.createdAt).toLocaleString()}>{clock(message.createdAt)}</time>
+      </div>
+    )
+  }
 
   if (message.deleted) {
     return (

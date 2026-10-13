@@ -1,9 +1,10 @@
 import { Lender, Loan } from "../models/index.js"
 
 export async function ensureLenders() {
-  const loans = await Loan.find({ $or: [{ lenderId: null }, { lenderId: { $exists: false } }] })
+  // Only older loans that name a lender get linked; a loan saved without a lender stays that way.
+  const loans = await Loan.find({ $or: [{ lenderId: null }, { lenderId: { $exists: false } }], lender: { $nin: [null, "", "Not provided"] } })
   for (const loan of loans) {
-    const lender = await lenderForName(loan.lender || "Not provided")
+    const lender = await lenderForName(loan.lender)
     loan.lenderId = lender._id
     loan.lender = lender.name
     if (!loan.label) loan.label = "Financed"

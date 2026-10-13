@@ -4,7 +4,7 @@ import { presentProperty } from "../../lib/serialize.js"
 import { propertyFilter } from "../access.js"
 import { presentContractorDraw, presentDraw } from "../../routes/draws.js"
 import { matchScore, rank } from "./match.js"
-import { loanPaymentDates, paymentDates } from "../schedule.js"
+import { insuranceDates, loanPaymentDates, paymentDates } from "../schedule.js"
 
 const MODEL_RESULT_LIMIT = 12000
 const OPEN_REQUEST_STATUSES = ["Submitted", "Needs information", "Needs second approval"]
@@ -96,12 +96,20 @@ function notFound(reference, matches) {
   }
 }
 
+function lenderName(value) {
+  return value && value !== "Not provided" ? value : "No lender"
+}
+
 function presentLoanRow(loan, names, lenders) {
   const lender = lenders.find((item) => String(item._id) === String(loan.lenderId || ""))
   return {
     id: String(loan._id),
     property: names.get(String(loan.propertyId || "")) || "",
-    lender: lender?.name || loan.lender || "Not provided",
+    lender: lenderName(lender?.name || loan.lender),
+    status: loan.status || "Current",
+    insurancePayment: loan.insurancePayment ?? null,
+    insuranceFrequency: loan.insurancePayment != null ? loan.insuranceFrequency || "Yearly" : "",
+    insuranceDue: loan.insuranceDue || "",
     label: loan.label || "Financed",
     loanNumber: loan.loanNumber || "",
     balance: loan.balance ?? null,
@@ -507,16 +515,20 @@ export const TOOLS = [
           payee: bill.vendor || "",
         })))
         .sort((left, right) => left.due.localeCompare(right.due))
-      const mortgages = loans.filter((loan) => loan.payment).map((loan) => ({
+      const open = loans.filter((loan) => loan.status !== "Paid off")
+      const mortgages = open.filter((loan) => loan.payment).map((loan) => ({
         property: place(loan.propertyId),
-        lender: loan.lender || "Not provided",
+        lender: lenderName(loan.lender),
         monthlyPayment: loan.payment,
         paymentDay: loan.paymentDay ?? null,
         dueDates: loanPaymentDates(loan, today, until),
       }))
-      const maturities = loans
+      const insurance = open
+        .map((loan) => ({ property: place(loan.propertyId), lender: lenderName(loan.lender), amount: loan.insurancePayment ?? null, repeats: loan.insuranceFrequency || "Yearly", dueDates: insuranceDates(loan, today, until) }))
+        .filter((row) => row.dueDates.length)
+      const maturities = open
         .filter((loan) => dateKey(loan.maturity) && dateKey(loan.maturity) <= until)
-        .map((loan) => ({ property: place(loan.propertyId), lender: loan.lender || "Not provided", maturity: dateKey(loan.maturity), balance: loan.balance ?? null, passed: dateKey(loan.maturity) < today }))
+        .map((loan) => ({ property: place(loan.propertyId), lender: lenderName(loan.lender), maturity: dateKey(loan.maturity), balance: loan.balance ?? null, passed: dateKey(loan.maturity) < today }))
       const result = {
         success: true,
         today,
@@ -525,6 +537,7 @@ export const TOOLS = [
         billsTotal: sum(dueBills, (bill) => bill.amount),
         monthlyMortgages: mortgages,
         monthlyMortgageTotal: sum(mortgages, (row) => row.monthlyPayment),
+        insurancePayments: insurance,
         loanMaturities: maturities,
         paymentTasks: tasks
           .filter((task) => dateKey(task.due) && dateKey(task.due) <= until)

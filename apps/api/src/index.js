@@ -16,6 +16,8 @@ import { pushRouter } from "./routes/push.js"
 import { agentRouter } from "./routes/agent.js"
 import { chatRouter } from "./routes/chat.js"
 import { allowedOrigins, attachChatSockets } from "./services/chatHub.js"
+import { closeStaleCalls } from "./services/calls.js"
+import { callsRouter } from "./routes/calls.js"
 import { requireAuth } from "./middleware/auth.js"
 import { trackActivity } from "./middleware/activity.js"
 import { seedIfEmpty } from "./services/seed.js"
@@ -41,6 +43,7 @@ api.use("/documents", documentsRouter)
 api.use("/push", pushRouter)
 api.use("/agent", agentRouter)
 api.use("/chat", chatRouter)
+api.use("/calls", callsRouter)
 api.use(workspaceRouter)
 app.use(api)
 
@@ -56,6 +59,7 @@ app.use((error, req, res, next) => {
 const port = Number(process.env.PORT || 4000)
 await mongoose.connect(process.env.MONGODB_URI)
 await seedIfEmpty()
+await closeStaleCalls()
 const server = http.createServer(app)
 attachChatSockets(server)
 server.listen(port, () => {

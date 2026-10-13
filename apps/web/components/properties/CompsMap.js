@@ -20,8 +20,13 @@ export function CompsMap({ subject, comps, onReady, className = "" }) {
       onReady?.()
       return undefined
     }
+    setState("loading")
     let map = null
     let cancelled = false
+    // Print widens the page; let Leaflet redraw tiles for the new size.
+    const resize = () => map?.invalidateSize()
+    window.addEventListener("beforeprint", resize)
+    window.addEventListener("resize", resize)
     import("leaflet").then(({ default: L }) => {
       if (cancelled || !box.current) return
       map = L.map(box.current, { zoomControl: true, attributionControl: true, scrollWheelZoom: false })
@@ -58,6 +63,8 @@ export function CompsMap({ subject, comps, onReady, className = "" }) {
     })
     return () => {
       cancelled = true
+      window.removeEventListener("beforeprint", resize)
+      window.removeEventListener("resize", resize)
       map?.remove()
     }
     // Rebuild only when the pins change.

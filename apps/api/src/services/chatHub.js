@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken"
 import { Server } from "socket.io"
 import { User } from "../models/index.js"
 import { audience, loadChannel, usesChat } from "./chat.js"
+import { leaveCallsFor, recheckCalls, registerCallHandlers } from "./calls.js"
 
 const SOCKET_PURPOSE = "chat-socket"
 const online = new Map()
@@ -69,6 +70,12 @@ export function attachChatSockets(server) {
     if (!before) announce(id, user.role === "admin", true)
 
     socket.on("presence:get", () => socket.emit("presence", { online: visibleTo() }))
+    // Whether the app is on screen on this device; calls push to phones when nothing is on screen.
+    socket.data.visible = true
+    socket.on("presence:visible", (data) => {
+      socket.data.visible = Boolean(data && data.visible)
+    })
+    registerCallHandlers(socket)
 
     socket.on("typing", async (data = {}) => {
       try {
@@ -85,6 +92,7 @@ export function attachChatSockets(server) {
     })
 
     socket.on("disconnect", () => {
+      leaveCallsFor(socket).catch((error) => console.error("Leaving calls failed", error))
       const left = (online.get(id) || 1) - 1
       if (left > 0) online.set(id, left)
       else {
@@ -93,6 +101,17 @@ export function attachChatSockets(server) {
       }
     })
   })
+  return io
+}
+
+// True when the person has SynergiFund open and on screen on some device right now.
+export async function hasVisibleDevice(userId) {
+  if (!io) return false
+  const sockets = await io.in(`user:${userId}`).fetchSockets()
+  return sockets.some((socket) => socket.data.visible !== false)
+}
+
+export function chatIo() {
   return io
 }
 
@@ -106,6 +125,8 @@ export function isOnline(userId) {
 
 export function refreshChat(userIds) {
   emitToUsers(userIds.map(String), "chat:refresh", {})
+  // Access changed (role, permissions, assignments): drop anyone from live calls they can no longer see.
+  recheckCalls().catch((error) => console.error("Call access check failed", error))
 }
 
 export function disconnectChat(userIds) {

@@ -18,6 +18,7 @@ import {
   visibleChannels,
 } from "../services/chat.js"
 import { emitToUsers, isOnline, onlineIds, socketToken } from "../services/chatHub.js"
+import { recheckCalls } from "../services/calls.js"
 import { receiveFile, saveUploadedFile, sendStoredFile } from "../services/files.js"
 import { notify, recordActivity } from "../services/notify.js"
 
@@ -245,6 +246,7 @@ chatRouter.patch(
     const kept = new Set(ids(after))
     emitToUsers(ids(before).filter((id) => !kept.has(id)), "channel:remove", { id: String(channel._id) })
     emitToUsers(ids(after).filter((id) => !before.some((person) => String(person._id) === id)), "channel:new", { channel: presentChannel(channel, property) })
+    recheckCalls(String(channel._id)).catch((error) => console.error("Call check failed", error))
     res.json({ channel: presentChannel(channel, property, { canManage: canManage(req.user, channel) }) })
   }),
 )
@@ -261,6 +263,7 @@ chatRouter.post(
     await recordActivity({ user: req.user, title: "Left chat channel", detail: `#${channel.name}` })
     emitToUsers([String(req.user._id)], "channel:remove", { id: String(channel._id) })
     await broadcastChannel(channel, null)
+    recheckCalls(String(channel._id)).catch((error) => console.error("Call check failed", error))
     res.json({ ok: true })
   }),
 )
@@ -277,6 +280,7 @@ chatRouter.delete(
     await channel.save()
     await recordActivity({ user: req.user, title: "Chat channel archived", detail: `#${channel.name}` })
     emitToUsers(ids(people), "channel:remove", { id: String(channel._id) })
+    recheckCalls(String(channel._id)).catch((error) => console.error("Call check failed", error))
     res.json({ ok: true })
   }),
 )
@@ -401,6 +405,7 @@ chatRouter.patch(
     if (!found) return sendError(res, 404, "That message was not found.")
     const { message, channel, property } = found
     if (String(message.userId) !== String(req.user._id) || message.deletedAt) return sendError(res, 403, "You can only edit your own messages.")
+    if (message.kind === "call") return sendError(res, 400, "Call notes cannot be edited.")
     const text = String(req.body.text || "").replace(/\r\n/g, "\n").trim()
     if (!text && !message.attachments?.length) return sendError(res, 400, "A message cannot be empty. Delete it instead.")
     if (text.length > MAX_MESSAGE) return sendError(res, 400, `Keep messages under ${MAX_MESSAGE.toLocaleString("en-US")} characters.`)

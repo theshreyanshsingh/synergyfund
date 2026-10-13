@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { homeFor } from "@synergifund/shared"
 import { api } from "../../lib/api"
 import { useSession } from "../../components/shell/Providers"
+import { PasswordInput } from "../../components/ui/PasswordInput"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -43,7 +44,7 @@ export default function LoginPage() {
           </label>
           <label className="field">
             <span>Password</span>
-            <input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+            <PasswordInput autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
           </label>
           <button className="primary" type="submit" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</button>
         </div>

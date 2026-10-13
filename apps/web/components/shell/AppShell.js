@@ -10,6 +10,7 @@ import { CommandPalette } from "./CommandPalette"
 import { Loader } from "../ui/Loader"
 import { Icon } from "../ui/Icon"
 import { InstallCard } from "../pwa/InstallCard"
+import { CallLayer } from "../calls/CallLayer"
 import { api } from "../../lib/api"
 
 const NARROW = "(max-width: 1100px)"
@@ -30,7 +31,7 @@ export function AppShell({ children }) {
 
   useEffect(() => {
     if (session?.user?.role !== "contractor") return
-    const allowed = pathname === "/properties" || pathname.startsWith("/properties/") || pathname === "/expenses" || pathname === "/settings" || pathname === "/chat"
+    const allowed = pathname === "/properties" || pathname.startsWith("/properties/") || pathname === "/expenses" || pathname === "/settings" || pathname === "/chat" || pathname === "/calls"
     if (!allowed) router.replace("/properties")
   }, [pathname, session, router])
 
@@ -63,17 +64,23 @@ export function AppShell({ children }) {
             <span className="mark">S</span>
             <span>SynergiFund</span>
           </Link>
-          <Link href="/expenses" className={pathname === "/expenses" ? "contractor-link is-on" : "contractor-link"}>Expenses</Link>
-          {can(session.user, PERMISSIONS.chatUse) && <Link href="/chat" className={pathname === "/chat" ? "contractor-link is-on" : "contractor-link"}>Chat</Link>}
-          <Link href="/settings" className={pathname === "/settings" ? "contractor-link is-on" : "contractor-link"}>Settings</Link>
-          <span className="contractor-person">{session.user.name}</span>
-          <ThemeToggle />
-          <button type="button" className="tool" onClick={async () => { await api("/auth/logout", { method: "POST" }); router.replace("/login"); router.refresh() }}>Logout</button>
+          <nav className="contractor-nav" aria-label="Main">
+            <Link href="/expenses" className={pathname === "/expenses" ? "contractor-link is-on" : "contractor-link"}>Expenses</Link>
+            {can(session.user, PERMISSIONS.chatUse) && <Link href="/chat" className={pathname === "/chat" ? "contractor-link is-on" : "contractor-link"}>Chat</Link>}
+            {can(session.user, PERMISSIONS.chatUse) && <Link href="/calls" className={pathname === "/calls" ? "contractor-link is-on" : "contractor-link"}>Calls</Link>}
+            <Link href="/settings" className={pathname === "/settings" ? "contractor-link is-on" : "contractor-link"}>Settings</Link>
+          </nav>
+          <div className="contractor-tools">
+            <span className="contractor-person">{session.user.name}</span>
+            <ThemeToggle />
+            <button type="button" className="tool" onClick={async () => { await api("/auth/logout", { method: "POST" }); router.replace("/login"); router.refresh() }}>Logout</button>
+          </div>
         </header>
         <main className="main">
           <InstallCard className="bar-install" />
           {children}
         </main>
+        {can(session.user, PERMISSIONS.chatUse) && <CallLayer user={session.user} />}
       </div>
     )
   }
@@ -87,8 +94,12 @@ export function AppShell({ children }) {
       </button>
       <button type="button" className="menu-backdrop" aria-label="Close sidebar" onClick={() => setMenuOpen(false)} />
       <Sidebar user={session.user} onSearch={openSearch} onToggle={toggleMenu} onNavigate={() => setMenuOpen(false)} />
-      <main className="main">{children}</main>
+      <main className="main">
+        <InstallCard className="bar-install main-install" />
+        {children}
+      </main>
       <CommandPalette user={session.user} open={searchOpen} onClose={closeSearch} />
+      {can(session.user, PERMISSIONS.chatUse) && <CallLayer user={session.user} />}
     </div>
   )
 }

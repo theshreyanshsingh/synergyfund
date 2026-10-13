@@ -7,6 +7,7 @@ import { PROPERTY_LABELS, STAGES, STRATEGIES, can } from "@synergifund/shared"
 import { FormSheet } from "../../../../components/ui/FormSheet"
 import { DrawEditor } from "../../../../components/draws/DrawEditor"
 import { FinancingSection } from "../../../../components/properties/FinancingSection"
+import { DocumentsSection } from "../../../../components/properties/DocumentsSection"
 import { ArvSection } from "../../../../components/properties/ArvSection"
 import { ReportSheet } from "../../../../components/properties/ReportSheet"
 import { money } from "../../../../lib/format"
@@ -24,7 +25,7 @@ export default function PropertyDetailPage({ params }) {
   const search = useSearchParams()
   const session = useSession()
   const detail = useApi(`/properties/${id}`)
-  const [section, setSection] = useState("overview")
+  const [section, setSection] = useState(() => (["overview", "draws", "arv", "financing", "documents"].includes(search.get("tab")) ? search.get("tab") : "overview"))
   const [note, setNote] = useState("")
   const [files, setFiles] = useState([])
   const [message, setMessage] = useState("")
@@ -74,7 +75,7 @@ export default function PropertyDetailPage({ params }) {
   const tabs = [
     { id: "overview", label: "Overview" },
   ]
-  if (internal) tabs.push({ id: "draws", label: "Draws" }, { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" })
+  if (internal) tabs.push({ id: "draws", label: "Draws" }, { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" }, { id: "documents", label: "Documents" })
 
   if (!internal) {
     return (
@@ -316,6 +317,10 @@ export default function PropertyDetailPage({ params }) {
             {message && <p className="property-missing">{message}</p>}
           </section>
         </>
+      )}
+
+      {section === "documents" && (
+        <DocumentsSection property={property} writable={Boolean(session?.user && can(session.user, "documents.write"))} canDelete={Boolean(session?.user && can(session.user, "documents.delete"))} />
       )}
 
       {section === "financing" && (

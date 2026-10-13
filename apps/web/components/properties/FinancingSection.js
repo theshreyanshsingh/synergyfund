@@ -49,13 +49,14 @@ export function FinancingSection({ propertyId, loans, writable, onChanged }) {
   async function start(loan) {
     setError("")
     setEditing(loan || {})
-    if (lenders) return
+    // Always reload lenders so one added a moment ago is in the list.
+    setLenders(null)
     try {
       const data = await api("/loans")
       setLenders(data.lenders || [])
     } catch (err) {
-      setError(err.message)
-      setLenders([])
+      // Keep the form closed: an empty lender list would save the loan with no lender.
+      setError(`Lenders could not load, so the loan cannot be edited right now. ${err.message}`)
     }
   }
 
@@ -147,12 +148,13 @@ export function FinancingSection({ propertyId, loans, writable, onChanged }) {
           onSubmit={save}
           submitLabel={editing.id ? "Save loan" : "Add loan"}
           pending={pending || !lenders}
+          pendingLabel={!lenders ? "Loading…" : undefined}
           error={error}
         >
           {lenders ? (
-            lenders.length ? <LoanFields lenders={lenders} loan={editing.id ? editing : null} propertyId={propertyId} /> : <p className="property-missing">Add a lender on the <Link href="/loans">Loans &amp; lenders</Link> page first.</p>
+            <LoanFields lenders={lenders} loan={editing.id ? editing : null} propertyId={propertyId} />
           ) : (
-            <p className="property-missing">Loading lenders…</p>
+            <p className="property-missing">{error ? "Close this and try again." : "Loading lenders…"}</p>
           )}
         </FormSheet>
       )}

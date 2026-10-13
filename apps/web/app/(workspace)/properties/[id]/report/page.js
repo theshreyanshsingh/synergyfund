@@ -3,7 +3,6 @@
 import { use, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { compStats, daysBetween, drawPulled, isPendingDraw, mapsLink, zillowLink } from "@synergifund/shared"
-import { useSession } from "../../../../../components/shell/Providers"
 import { PageSpinner } from "../../../../../components/ui/Spinner"
 import { CompsMap } from "../../../../../components/properties/CompsMap"
 import { money, photoUrl, placedComps, shortDate, useCompLocations } from "../../../../../components/properties/ArvSection"
@@ -42,7 +41,6 @@ function waitForImages(root) {
 
 export default function PropertyReport({ params }) {
   const { id } = use(params)
-  const session = useSession()
   const detail = useApi(`/properties/${id}`)
   const [settings, setSettings] = useState(null)
   const [mapReady, setMapReady] = useState(false)
@@ -105,7 +103,6 @@ export default function PropertyReport({ params }) {
           </div>
           <dl>
             {settings.preparedFor && <div><dt>Prepared for</dt><dd>{settings.preparedFor}</dd></div>}
-            <div><dt>Prepared by</dt><dd>{session?.user?.name || "SynergiFund"}</dd></div>
             <div><dt>Date</dt><dd>{new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</dd></div>
           </dl>
         </header>
@@ -120,7 +117,7 @@ export default function PropertyReport({ params }) {
               <div><dt>Rehab budget</dt><dd>{money(totalBudget)}</dd></div>
               <div><dt>Drawn to date</dt><dd>{money(drawn)}</dd></div>
               <div><dt>After repair value</dt><dd>{money(property.arv)}</dd></div>
-              {property.purchasePrice != null && totalBudget != null && property.arv != null && (
+              {property.purchasePrice != null && totalBudget != null && Number(property.arv) > 0 && (
                 <div><dt>All-in vs ARV</dt><dd>{money(property.purchasePrice + totalBudget)} · {Math.round(((property.purchasePrice + totalBudget) / property.arv) * 100)}% of ARV</dd></div>
               )}
               {property.marketRent != null && <div><dt>Market rent</dt><dd>{money(property.marketRent)}/mo</dd></div>}
@@ -152,6 +149,7 @@ export default function PropertyReport({ params }) {
         {has("comps") && comps.length > 0 && (
           <section className="report-section">
             <h2>Comparable sales</h2>
+            {property.compsUpdatedAt && <p className="report-updated">Comps last updated {new Date(property.compsUpdatedAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</p>}
             <table className="report-table">
               <thead>
                 <tr><th>#</th><th>Address</th><th>Beds / baths / sq ft</th><th className="num">Sale price</th><th>Sold</th><th className="num">$/sq ft</th><th>Bought</th><th className="num">Days to sell</th></tr>
@@ -288,7 +286,7 @@ export default function PropertyReport({ params }) {
           </section>
         )}
 
-        <footer className="report-foot">Prepared with SynergiFund · {property.address} · {new Date().toLocaleDateString("en-US")}</footer>
+        <footer className="report-foot">{property.address} · {new Date().toLocaleDateString("en-US")}</footer>
       </article>
     </div>
   )

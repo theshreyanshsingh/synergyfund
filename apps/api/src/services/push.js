@@ -10,13 +10,14 @@ export function configurePush() {
   return true
 }
 
-export async function sendPush(subscriptions, { title, body, href }) {
-  const payload = JSON.stringify({ title, body, href: href || "/notifications" })
+// Extra fields (kind, tag, callId, media) travel to the service worker, which uses them for call notifications.
+export async function sendPush(subscriptions, { title, body, href, ...extra }, options = {}) {
+  const payload = JSON.stringify({ ...extra, title, body, href: href || "/notifications" })
   let sent = 0
   let failed = 0
   for (const subscription of subscriptions) {
     try {
-      await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, payload)
+      await webpush.sendNotification({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, payload, options)
       sent += 1
     } catch (error) {
       failed += 1
@@ -26,8 +27,8 @@ export async function sendPush(subscriptions, { title, body, href }) {
   return { sent, failed }
 }
 
-export async function pushToUsers(userIds, message) {
+export async function pushToUsers(userIds, message, options = {}) {
   if (!userIds.length || !configurePush()) return { sent: 0, failed: 0 }
   const subscriptions = await PushSubscription.find({ userId: { $in: userIds } })
-  return sendPush(subscriptions, message)
+  return sendPush(subscriptions, message, options)
 }

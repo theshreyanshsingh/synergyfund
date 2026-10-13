@@ -74,6 +74,7 @@ export const Property = register(
           lng: Number,
         },
       ],
+      compsUpdatedAt: Date,
       marketRent: Number,
       actualRent: Number,
       rentStatus: String,
@@ -245,6 +246,7 @@ export const DocumentFile = register(
       storagePath: { type: String, required: true },
       propertyId: { type: Schema.Types.ObjectId, ref: "Property" },
       kind: { type: String, default: "file" },
+      labels: { type: [String], default: [] },
       versionGroup: String,
       version: { type: Number, default: 1 },
       uploadedBy: { type: Schema.Types.ObjectId, ref: "User" },
@@ -476,6 +478,30 @@ export const AgentSetting = register(
     },
     { timestamps: true },
   ),
+)
+
+export const Call = register(
+  "Call",
+  new Schema(
+    {
+      channelId: { type: Schema.Types.ObjectId, ref: "ChatChannel", required: true },
+      media: { type: String, default: "audio" },
+      startedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+      startedByName: String,
+      invitedIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      declinedIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      participants: [{ userId: { type: Schema.Types.ObjectId, ref: "User" }, name: String, joinedAt: Date, leftAt: Date }],
+      status: { type: String, default: "ringing" },
+      outcome: String,
+      startedAt: { type: Date, default: Date.now },
+      answeredAt: Date,
+      endedAt: Date,
+    },
+    { timestamps: true },
+  )
+    .index({ channelId: 1, startedAt: -1 })
+    .index({ invitedIds: 1, startedAt: -1 })
+    .index({ "participants.userId": 1, startedAt: -1 }),
 )
 
 export const ChatChannel = register(

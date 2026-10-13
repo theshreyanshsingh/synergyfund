@@ -11,6 +11,7 @@ import { loanFields } from "../services/loans.js"
 import { removePropertyRoom } from "../services/chat.js"
 import { orderProperties } from "../services/propertyOrder.js"
 import { geocode } from "../services/geocode.js"
+import { recheckCalls } from "../services/calls.js"
 import { emitToUsers } from "../services/chatHub.js"
 import { changeSummary, notifyPropertyAccess, recordActivity } from "../services/notify.js"
 import { presentContractorDraw, presentDraw } from "./draws.js"
@@ -181,6 +182,7 @@ propertiesRouter.post(
     property.comps.push(fields)
     const comp = property.comps[property.comps.length - 1]
     await placeComp(comp, property)
+    property.compsUpdatedAt = new Date()
     await property.save()
     await recordActivity({ user: req.user, title: "Comp added", detail: `${property.address}: ${comp.address}${comp.salePrice ? ` sold for $${comp.salePrice.toLocaleString("en-US")}` : ""}`, propertyId: property._id })
     res.status(201).json({ property: presentProperty(property, req.user) })
@@ -201,6 +203,7 @@ propertiesRouter.patch(
     const moved = ("address" in fields && fields.address !== comp.address) || ("city" in fields && fields.city !== comp.city)
     comp.set(fields)
     if (moved) await placeComp(comp, property)
+    property.compsUpdatedAt = new Date()
     await property.save()
     await recordActivity({ user: req.user, title: "Comp updated", detail: `${property.address}: ${comp.address}`, propertyId: property._id })
     res.json({ property: presentProperty(property, req.user) })
@@ -220,6 +223,7 @@ propertiesRouter.delete(
     await DocumentFile.deleteMany({ _id: { $in: files.map((file) => file._id) } })
     const address = comp.address
     comp.deleteOne()
+    property.compsUpdatedAt = new Date()
     await property.save()
     await recordActivity({ user: req.user, title: "Comp removed", detail: `${property.address}: ${address}`, propertyId: property._id })
     res.json({ property: presentProperty(property, req.user) })
@@ -242,6 +246,7 @@ propertiesRouter.post(
       const saved = await saveUploadedFile(file, req.user, { propertyId: property._id, kind: "comp" })
       comp.photoFileIds.push(saved._id)
     }
+    property.compsUpdatedAt = new Date()
     await property.save()
     res.status(201).json({ property: presentProperty(property, req.user) })
   }),
@@ -263,6 +268,7 @@ propertiesRouter.delete(
       await deleteStoredFile(file).catch(() => {})
       await file.deleteOne()
     }
+    property.compsUpdatedAt = new Date()
     await property.save()
     res.json({ property: presentProperty(property, req.user) })
   }),
@@ -331,10 +337,12 @@ propertiesRouter.get(
       internal && req.permissions.includes("expenses.read") ? Bill.find({ propertyId: property._id, status: { $ne: "Paid" } }).sort({ due: 1 }) : [],
     ])
     if (!internal) {
+      const ownRequests = new Set(requestDocs.filter((item) => String(item.requestedBy) === String(req.user._id)).map((item) => String(item._id)))
       res.json({
         property: presentProperty(property, req.user),
         photos: photos.map(presentPhoto),
-        expenses: await withProofUrls(expenseDocs.filter((item) => item.drawId || item.scopeLineId).map(presentCost)),
+        // Same rule as the Expenses page: a contractor sees only costs that came from their own requests.
+        expenses: await withProofUrls(expenseDocs.filter((item) => (item.drawId || item.scopeLineId) && ownRequests.has(String(item.requestId || ""))).map(presentCost)),
         requests: await withProofUrls(requestDocs.filter((item) => String(item.requestedBy) === String(req.user._id)).map(presentCost)),
         draws: canDraws ? { items: draws.map(presentContractorDraw) } : null,
       })
@@ -471,6 +479,7 @@ propertiesRouter.delete(
     const room = await removePropertyRoom(property)
     await Promise.all(room.files.map((file) => deleteStoredFile(file).catch(() => {})))
     if (room.channelId) emitToUsers(room.userIds, "channel:remove", { id: room.channelId })
+    if (room.channelId) recheckCalls(room.channelId).catch((error) => console.error("Call check failed", error))
     await Promise.all([
       Loan.deleteMany({ propertyId: property._id }),
       Draw.deleteMany({ propertyId: property._id }),
@@ -517,11 +526,13 @@ async function presentPropertyLoans(loans) {
   const lenders = loans.length ? await Lender.find({ _id: { $in: loans.map((loan) => loan.lenderId).filter(Boolean) } }) : []
   const byId = new Map(lenders.map((lender) => [String(lender._id), lender]))
   return loans.map((loan) => {
-    const lender = byId.get(String(loan.lenderId || ""))
+    // The old "Not provided" placeholder lender counts as no lender.
+    const found = byId.get(String(loan.lenderId || ""))
+    const lender = found && found.name !== "Not provided" ? found : null
     return {
       id: String(loan._id),
-      lenderId: loan.lenderId ? String(loan.lenderId) : "",
-      lender: lender?.name || loan.lender || "Not provided",
+      lenderId: lender ? String(lender._id) : "",
+      lender: lender?.name || (loan.lender && loan.lender !== "Not provided" ? loan.lender : "No lender"),
       lenderTerms: lender?.terms || "",
       label: loan.label || "Financed",
       terms: loan.terms || "",

@@ -1,7 +1,8 @@
 import { Router } from "express"
 import mammoth from "mammoth"
 import xlsx from "xlsx"
-import { DocumentFile, ImportJob, Loan, Property, Task } from "../models/index.js"
+import { cleanDocumentLabels } from "@synergifund/shared"
+import { DocumentFile, ImportJob, Loan, Property, Task, User } from "../models/index.js"
 import { lenderForName } from "../services/lenders.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { propertyFilter } from "../services/access.js"
@@ -11,32 +12,86 @@ import { recordActivity } from "../services/notify.js"
 
 export const documentsRouter = Router()
 
-function present(file) {
+const HIDDEN_KINDS = ["chat", "comp"]
+// Receipts and weekly photos are referenced by expenses and photo sets, and draw workbooks hold draw money,
+// so they stay where they were filed.
+const PINNED_KINDS = ["receipt", "photo", "import"]
+
+function present(file, names = new Map(), people = new Map()) {
+  const propertyId = file.propertyId ? String(file.propertyId) : ""
   return {
     id: String(file._id),
     name: file.name,
     mime: file.mime || "",
     size: file.size || 0,
-    propertyId: file.propertyId ? String(file.propertyId) : "",
+    propertyId,
+    property: propertyId ? names.get(propertyId) || "" : "",
+    labels: file.labels || [],
     kind: file.kind,
     version: file.version,
+    uploadedBy: file.uploadedBy ? people.get(String(file.uploadedBy)) || "" : "",
+    uploadedById: file.uploadedBy ? String(file.uploadedBy) : "",
     createdAt: file.createdAt,
     url: publicFileUrl(file),
   }
+}
+
+async function presentMany(files) {
+  const propertyIds = [...new Set(files.map((file) => file.propertyId && String(file.propertyId)).filter(Boolean))]
+  const userIds = [...new Set(files.map((file) => file.uploadedBy && String(file.uploadedBy)).filter(Boolean))]
+  const [properties, users] = await Promise.all([
+    propertyIds.length ? Property.find({ _id: { $in: propertyIds } }).select("address") : [],
+    userIds.length ? User.find({ _id: { $in: userIds } }).select("name") : [],
+  ])
+  const names = new Map(properties.map((property) => [String(property._id), property.address]))
+  const people = new Map(users.map((user) => [String(user._id), user.name]))
+  return files.map((file) => present(file, names, people))
+}
+
+// Contractors only reach files on their own properties, or files they uploaded.
+async function visibleFile(req, id) {
+  const file = await DocumentFile.findById(id).catch(() => null)
+  if (!file || file.kind === "chat") return null
+  if (req.user.role !== "contractor") return file
+  if (file.uploadedBy && String(file.uploadedBy) === String(req.user._id)) return file
+  if (!file.propertyId) return null
+  const allowed = await Property.exists({ _id: file.propertyId, ...propertyFilter(req.user) })
+  return allowed ? file : null
+}
+
+// "" or "none" clears the property; anything else must be a property this person can see.
+async function readPropertyChoice(req, value) {
+  const id = String(value ?? "").trim()
+  if (!id || id === "none") return { propertyId: null }
+  if (!/^[a-f0-9]{24}$/i.test(id)) return { error: "That property is not available." }
+  const property = await Property.findOne({ _id: id, ...propertyFilter(req.user) }).select("_id address")
+  return property ? { propertyId: property._id, property } : { error: "That property is not available." }
 }
 
 documentsRouter.get(
   "/",
   requirePermission("documents.read"),
   asyncHandler(async (req, res) => {
-    const filter = { kind: { $nin: ["chat", "comp"] } }
+    const filter = { kind: { $nin: HIDDEN_KINDS } }
     if (req.user.role === "contractor") {
       const properties = await Property.find(propertyFilter(req.user)).select("_id")
       filter.propertyId = { $in: properties.map((property) => property._id) }
     }
+    if (req.query.propertyId) {
+      const wanted = String(req.query.propertyId)
+      if (wanted === "none") {
+        if (req.user.role === "contractor") filter.propertyId = { $in: [] }
+        else filter.propertyId = null
+      } else if (/^[a-f0-9]{24}$/i.test(wanted) && (req.user.role !== "contractor" || filter.propertyId.$in.some((id) => String(id) === wanted))) {
+        filter.propertyId = wanted
+      } else {
+        sendError(res, 404, "That property is not available.")
+        return
+      }
+    }
     if (req.query.q) filter.name = new RegExp(String(req.query.q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
     const items = await DocumentFile.find(filter).sort({ createdAt: -1 })
-    res.json({ items: items.map(present) })
+    res.json({ items: await presentMany(items) })
   }),
 )
 
@@ -49,12 +104,76 @@ documentsRouter.post(
       sendError(res, 400, "Choose a file to upload.")
       return
     }
+    const choice = await readPropertyChoice(req, req.body.propertyId)
+    if (choice.error) {
+      sendError(res, 404, choice.error)
+      return
+    }
+    if (req.user.role === "contractor" && !choice.propertyId) {
+      sendError(res, 400, "Choose the property this file belongs to.")
+      return
+    }
+    const labels = cleanDocumentLabels(req.body.labels)
     const file = await saveUploadedFile(req.file, req.user, {
-      propertyId: req.body.propertyId || undefined,
-      kind: req.body.kind || "file",
+      propertyId: choice.propertyId || undefined,
+      kind: "file",
+      labels,
     })
-    await recordActivity({ user: req.user, title: "File uploaded", detail: file.name, propertyId: file.propertyId })
-    res.status(201).json({ file: present(file) })
+    await recordActivity({ user: req.user, title: "File uploaded", detail: [file.name, choice.property?.address, labels.join(", ")].filter(Boolean).join(" · "), propertyId: file.propertyId })
+    const [presented] = await presentMany([file])
+    res.status(201).json({ file: presented })
+  }),
+)
+
+documentsRouter.patch(
+  "/:id",
+  requirePermission("documents.write"),
+  asyncHandler(async (req, res) => {
+    const file = await visibleFile(req, req.params.id)
+    if (!file || HIDDEN_KINDS.includes(file.kind)) {
+      sendError(res, 404, "That file is not available.")
+      return
+    }
+    if (req.user.role === "contractor" && String(file.uploadedBy || "") !== String(req.user._id)) {
+      sendError(res, 403, "Only the person who uploaded this file can change it.")
+      return
+    }
+    const movesProperty = "propertyId" in req.body && String(req.body.propertyId || "") !== (file.propertyId ? String(file.propertyId) : "")
+    if (movesProperty && PINNED_KINDS.includes(file.kind)) {
+      sendError(res, 400, "This file belongs to an expense, photo set or draw import, so it stays on its property.")
+      return
+    }
+    const before = { labels: [...(file.labels || [])], propertyId: file.propertyId ? String(file.propertyId) : "" }
+    if ("labels" in req.body) file.labels = cleanDocumentLabels(req.body.labels)
+    let property = null
+    if (movesProperty) {
+      const choice = await readPropertyChoice(req, req.body.propertyId)
+      if (choice.error) {
+        sendError(res, 404, choice.error)
+        return
+      }
+      if (req.user.role === "contractor" && !choice.propertyId) {
+        sendError(res, 400, "Choose the property this file belongs to.")
+        return
+      }
+      file.propertyId = choice.propertyId || undefined
+      property = choice.property || null
+    }
+    if ("name" in req.body) {
+      const name = String(req.body.name || "").trim().slice(0, 200)
+      if (!name) {
+        sendError(res, 400, "Give the file a name.")
+        return
+      }
+      file.name = name
+    }
+    await file.save()
+    const changes = []
+    if (before.labels.join("|") !== (file.labels || []).join("|")) changes.push(file.labels.length ? `Labels: ${file.labels.join(", ")}` : "Labels cleared")
+    if (before.propertyId !== (file.propertyId ? String(file.propertyId) : "")) changes.push(property ? `Linked to ${property.address}` : "No longer linked to a property")
+    await recordActivity({ user: req.user, title: "File updated", detail: [file.name, ...changes].join(" · "), propertyId: file.propertyId })
+    const [presented] = await presentMany([file])
+    res.json({ file: presented })
   }),
 )
 
@@ -62,8 +181,8 @@ documentsRouter.get(
   "/:id/download",
   requirePermission("documents.read"),
   asyncHandler(async (req, res) => {
-    const file = await DocumentFile.findById(req.params.id)
-    if (!file || file.kind === "chat") {
+    const file = await visibleFile(req, req.params.id)
+    if (!file) {
       sendError(res, 404, "That file is not available.")
       return
     }
@@ -75,8 +194,8 @@ documentsRouter.get(
   "/:id/preview",
   requirePermission("documents.read"),
   asyncHandler(async (req, res) => {
-    const file = await DocumentFile.findById(req.params.id)
-    if (!file || file.kind === "chat") {
+    const file = await visibleFile(req, req.params.id)
+    if (!file) {
       sendError(res, 404, "That file is not available.")
       return
     }
@@ -86,7 +205,7 @@ documentsRouter.get(
       try {
         if (lower.endsWith(".docx")) {
           const result = await mammoth.convertToHtml({ path: stored.path })
-          res.json({ kind: "document", file: present(file), html: result.value })
+          res.json({ kind: "document", file: (await presentMany([file]))[0], html: result.value })
           return
         }
         const book = xlsx.readFile(stored.path)
@@ -94,17 +213,17 @@ documentsRouter.get(
           name,
           rows: xlsx.utils.sheet_to_json(book.Sheets[name], { header: 1, raw: false, defval: "" }).slice(0, 80),
         }))
-        res.json({ kind: "sheet", file: present(file), sheets })
+        res.json({ kind: "sheet", file: (await presentMany([file]))[0], sheets })
       } finally {
         await stored.cleanup()
       }
       return
     }
     if (file.mime?.startsWith("image/")) {
-      res.json({ kind: "image", file: present(file), url: publicFileUrl(file) || `/api/documents/${file._id}/raw` })
+      res.json({ kind: "image", file: (await presentMany([file]))[0], url: publicFileUrl(file) || `/api/documents/${file._id}/raw` })
       return
     }
-    res.json({ kind: "file", file: present(file) })
+    res.json({ kind: "file", file: (await presentMany([file]))[0] })
   }),
 )
 
@@ -112,8 +231,8 @@ documentsRouter.get(
   "/:id/raw",
   requirePermission("documents.read"),
   asyncHandler(async (req, res) => {
-    const file = await DocumentFile.findById(req.params.id)
-    if (!file || file.kind === "chat") {
+    const file = await visibleFile(req, req.params.id)
+    if (!file) {
       sendError(res, 404, "That file is not available.")
       return
     }
@@ -130,9 +249,13 @@ documentsRouter.delete(
   "/:id",
   requirePermission("documents.delete"),
   asyncHandler(async (req, res) => {
-    const file = await DocumentFile.findById(req.params.id)
-    if (!file || file.kind === "chat") {
+    const file = await visibleFile(req, req.params.id)
+    if (!file || HIDDEN_KINDS.includes(file.kind)) {
       sendError(res, 404, "That file is not available.")
+      return
+    }
+    if (file.kind === "receipt" || file.kind === "photo") {
+      sendError(res, 400, "This file belongs to an expense or weekly photo set. Remove it from there instead.")
       return
     }
     await deleteStoredFile(file)
