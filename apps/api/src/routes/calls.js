@@ -2,7 +2,7 @@ import { Router } from "express"
 import { Call } from "../models/index.js"
 import { asyncHandler, sendError } from "../lib/http.js"
 import { presentChannel, usesChat, visibleChannels } from "../services/chat.js"
-import { declineCallFor, liveCall, liveCallsFor } from "../services/calls.js"
+import { declineCallFor, liveCall, liveCallsFor, network, relayProvider } from "../services/calls.js"
 
 export const callsRouter = Router()
 
@@ -63,5 +63,13 @@ callsRouter.post(
   asyncHandler(async (req, res) => {
     await declineCallFor(req.user, req.params.id)
     res.json({ ok: true })
+  }),
+)
+
+// Used by the connection test in Settings: which servers calls use, and whether a relay is set up.
+callsRouter.get(
+  "/network",
+  asyncHandler(async (req, res) => {
+    res.json({ ...(await network()), provider: relayProvider() })
   }),
 )

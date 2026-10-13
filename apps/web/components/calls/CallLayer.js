@@ -7,6 +7,7 @@ import { api } from "../../lib/api"
 import {
   callEvents,
   callLink,
+  dismissBlocked,
   inviteToCall,
   reportAudioBlocked,
   callTitle,
@@ -124,7 +125,9 @@ function IncomingCall({ call, me }) {
 function statusText(current, now) {
   const others = (current.peers || []).length
   if (!others) return current.call?.answered ? "Waiting for others…" : "Ringing…"
-  if (!(current.peers || []).some((peer) => peer.status === "connected")) return "Connecting…"
+  if (!(current.peers || []).some((peer) => peer.status === "connected")) {
+    return (current.peers || []).every((peer) => peer.status === "failed") ? "Couldn’t connect" : "Connecting…"
+  }
   return formatClock(now - (current.connectedAt || current.startedAt))
 }
 
@@ -230,6 +233,20 @@ function ActiveCall({ current, me, myName, audioBlocked }) {
             </button>
           </footer>
           {adding && <AddPeople current={current} me={me} onClose={() => setAdding(false)} />}
+          {current.blocked && (
+            <div className="call-blocked" role="alert">
+              <strong>The call could not connect</strong>
+              {current.relay ? (
+                <span>Check the internet connection on both sides, then leave and call again.</span>
+              ) : (
+                <span>
+                  A network on one side (often mobile data, office Wi‑Fi or a strict router) is blocking a direct connection.
+                  These calls need a relay server. An admin can turn it on and test it under Settings › App › Call connection.
+                </span>
+              )}
+              <button type="button" onClick={dismissBlocked}>OK</button>
+            </div>
+          )}
         </div>
       )}
     </>
@@ -262,7 +279,7 @@ function Tile({ self = false, name, avatarName, stream, version, video, screen =
         {muted && <Icon name="micOff" size={13} />}
         {name}{screen ? " · sharing screen" : ""}
       </span>
-      {status && status !== "connected" && <span className="call-tile-status">{status === "failed" ? "Connection lost" : status === "reconnecting" ? "Reconnecting…" : "Connecting…"}</span>}
+      {status && status !== "connected" && <span className={status === "failed" ? "call-tile-status is-failed" : "call-tile-status"}>{status === "failed" ? "Couldn’t connect" : status === "reconnecting" ? "Reconnecting…" : "Connecting…"}</span>}
     </div>
   )
 }

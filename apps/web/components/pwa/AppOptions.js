@@ -4,6 +4,8 @@ import { useState } from "react"
 import { useSession } from "../shell/Providers"
 import { api } from "../../lib/api"
 import { disablePush, enablePush, installApp, installSteps, usePwa } from "../../lib/pwa"
+import { can } from "@synergifund/shared"
+import { CallCheck } from "../calls/CallCheck"
 
 export function AppOptions() {
   const session = useSession()
@@ -98,6 +100,7 @@ export function AppOptions() {
         )}
       </div>
       {(error || message) && <p className={error ? "banner" : "settings-note"}>{error || message}</p>}
+      {session?.user && can(session.user, "chat.use") && <CallCheck admin={admin} />}
       {admin && (
         <form className="settings-send" onSubmit={send}>
           <div>

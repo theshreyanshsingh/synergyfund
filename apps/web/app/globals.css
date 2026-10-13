@@ -2301,3 +2301,27 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .call-screen:focus, .call-incoming:focus { outline: none; }
 /* The chat screen uses the full height; the install card shows on every other page. */
 .main:has(.chat-page) .bar-install { display: none; }
+
+/* When a call cannot connect */
+.call-tile-status.is-failed { color: #fca5a5; }
+.call-blocked { position: absolute; left: 50%; top: 76px; z-index: 4; display: grid; gap: 6px; width: min(520px, calc(100% - 28px)); padding: 14px 16px; border: 1px solid #7f1d1d; border-radius: 14px; background: #2a1215; color: #fde2e2; transform: translateX(-50%); box-shadow: 0 14px 40px rgba(0, 0, 0, .4); }
+.call-blocked strong { font-size: 14.5px; }
+.call-blocked span { color: #fecaca; font-size: 13px; line-height: 1.45; }
+.call-blocked button { justify-self: end; height: 32px; padding: 0 14px; border: 0; border-radius: 9px; background: #fde2e2; color: #2a1215; font-weight: 700; }
+
+/* Call connection test */
+.call-check { align-items: flex-start; }
+.call-check-list { display: grid; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; }
+.call-check-list li { display: grid; grid-template-columns: 20px 130px minmax(0, 1fr); align-items: baseline; gap: 8px; font-size: 13px; }
+.call-check-list li span { font-weight: 800; }
+.call-check-list li.is-ok span { color: var(--good); }
+.call-check-list li.is-bad span { color: var(--bad); }
+.call-check-list em { color: var(--muted); font-style: normal; }
+.call-check-help { display: grid; gap: 6px; margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); font-size: 13px; }
+.call-check-help ol { margin: 0; padding-left: 18px; color: var(--muted); line-height: 1.6; }
+.call-check-help code { padding: 1px 5px; border-radius: 5px; background: var(--white); color: var(--text); font-size: 12px; }
+@media (max-width: 760px) {
+  .call-check { flex-direction: column; }
+  .call-check-list li { grid-template-columns: 20px minmax(0, 1fr); }
+  .call-check-list li em { grid-column: 2; }
+}

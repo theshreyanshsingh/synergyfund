@@ -19,13 +19,70 @@ const live = new Map()
 const byChannel = new Map()
 const starting = new Set()
 
-export function iceServers() {
-  const stun = String(process.env.CALL_STUN_URLS || "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302")
+// How browsers find each other. STUN works on most networks; mobile data and many offices and routers
+// block direct connections, and then only a relay (TURN) can carry the call.
+// Cloudflare TURN: set CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_API_TOKEN (short-lived logins are made here).
+// Any other TURN server: set TURN_URLS, TURN_USERNAME and TURN_CREDENTIAL.
+let cloudflareTurn = { servers: null, until: 0, pending: null, failedAt: 0 }
+
+async function cloudflareServers() {
+  const keyId = process.env.CLOUDFLARE_TURN_KEY_ID
+  const token = process.env.CLOUDFLARE_TURN_API_TOKEN
+  if (!keyId || !token) return []
+  const now = Date.now()
+  if (cloudflareTurn.servers && cloudflareTurn.until - now > 3600 * 1000) return cloudflareTurn.servers
+  if (cloudflareTurn.pending) return cloudflareTurn.pending
+  // After a failure, wait a minute before asking Cloudflare again, but keep using older logins if they still work.
+  if (now - cloudflareTurn.failedAt < 60000) return cloudflareTurn.until > now ? cloudflareTurn.servers || [] : []
+  const ttl = 24 * 3600
+  cloudflareTurn.pending = (async () => {
+    try {
+      const response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}/credentials/generate-ice-servers`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ttl }),
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!response.ok) throw new Error(`Cloudflare TURN answered ${response.status}`)
+      const data = await response.json()
+      const list = Array.isArray(data.iceServers) ? data.iceServers : data.iceServers ? [data.iceServers] : []
+      // Browsers handle port 53 badly, so those addresses are left out, as Cloudflare recommends.
+      const servers = list.map((server) => ({ ...server, urls: (Array.isArray(server.urls) ? server.urls : [server.urls]).filter((url) => url && !/:53(\?|$)/.test(url)) })).filter((server) => server.urls.length)
+      cloudflareTurn = { servers, until: Date.now() + ttl * 1000, pending: null, failedAt: 0 }
+      return servers
+    } catch (error) {
+      console.error("Cloudflare TURN login failed", error.message)
+      cloudflareTurn.failedAt = Date.now()
+      cloudflareTurn.pending = null
+      return cloudflareTurn.until > Date.now() ? cloudflareTurn.servers || [] : []
+    }
+  })()
+  return cloudflareTurn.pending
+}
+
+export async function iceServers() {
+  const stun = String(process.env.CALL_STUN_URLS || "stun:stun.cloudflare.com:3478,stun:stun.l.google.com:19302")
     .split(",").map((url) => url.trim()).filter(Boolean)
   const servers = stun.length ? [{ urls: stun }] : []
   const turn = String(process.env.TURN_URLS || process.env.TURN_URL || "").split(",").map((url) => url.trim()).filter(Boolean)
   if (turn.length) servers.push({ urls: turn, username: process.env.TURN_USERNAME || "", credential: process.env.TURN_CREDENTIAL || "" })
+  servers.push(...(await cloudflareServers()))
   return servers
+}
+
+function hasRelay(servers) {
+  return servers.some((server) => (Array.isArray(server.urls) ? server.urls : [server.urls]).some((url) => /^turns?:/.test(String(url))))
+}
+
+export async function network() {
+  const servers = await iceServers()
+  return { iceServers: servers, relay: hasRelay(servers) }
+}
+
+export function relayProvider() {
+  if (process.env.CLOUDFLARE_TURN_KEY_ID && process.env.CLOUDFLARE_TURN_API_TOKEN) return "cloudflare"
+  if (process.env.TURN_URLS || process.env.TURN_URL) return "custom"
+  return "none"
 }
 
 // After a restart nobody is connected any more. Close those calls with the time they were last touched,
@@ -327,6 +384,7 @@ export function registerCallHandlers(socket) {
   const me = String(user._id)
 
   handle(socket, "call:start", async (data, reply) => {
+    const net = await network()
     const media = data.media === "video" ? "video" : "audio"
     const found = await loadChannel(user, cleanId(data.channelId))
     if (!found) return reply({ error: "That conversation was not found." })
@@ -397,18 +455,19 @@ export function registerCallHandlers(socket) {
       settleStart(state ? state.id : null)
     }
     ringUntil(state)
-    reply({ call: summary(state), peerId: socket.id, peers: [], iceServers: iceServers(), share: state.shareKey })
+    reply({ call: summary(state), peerId: socket.id, peers: [], ...net, share: state.shareKey })
     ringPeople(state, state.invitedIds, "")
     announce(state)
   })
 
   handle(socket, "call:join", async (data, reply) => {
+    const net = await network()
     const state = live.get(cleanId(data.callId))
     if (!state) return reply({ error: "That call has ended." })
     const key = typeof data.key === "string" ? data.key.slice(0, 64) : ""
     if (!(await mayJoin(user, state, key))) return reply({ error: key ? "This call link is not valid any more." : "You are not part of that conversation." })
     if (!live.has(state.id)) return reply({ error: "That call has ended." })
-    if (state.peers.has(socket.id)) return reply({ call: summary(state), peerId: socket.id, peers: peerList(state, socket.id), iceServers: iceServers(), share: state.shareKey })
+    if (state.peers.has(socket.id)) return reply({ call: summary(state), peerId: socket.id, peers: peerList(state, socket.id), ...net, share: state.shareKey })
     const busy = userInCall(me)
     if (busy && busy !== state) return reply({ error: "You are already in another call. Leave it first." })
     const earlier = [...state.peers.entries()].filter(([, peer]) => peer.userId === me).map(([peerId]) => peerId)
@@ -437,7 +496,7 @@ export function registerCallHandlers(socket) {
     if (firstAnswer || !rejoined) Call.updateOne({ _id: state.id, status: { $ne: "ended" } }, update).catch((error) => console.error("Call join save failed", error))
     const self = state.peers.get(socket.id)
     toPeers(state, "call:peer-joined", { callId: state.id, peer: { peerId: socket.id, userId: me, name: user.name, audio: self.audio, video: self.video, screen: false } }, socket.id)
-    reply({ call: summary(state), peerId: socket.id, peers: others, iceServers: iceServers(), share: state.shareKey })
+    reply({ call: summary(state), peerId: socket.id, peers: others, ...net, share: state.shareKey })
     announce(state)
   })
 

@@ -264,7 +264,7 @@ function stopSpeaking() {
 
 function publishPeers() {
   if (!state.current) return
-  const waiting = [...peerInfo.values()].filter((info) => !connections.has(info.peerId)).map((info) => ({ ...info, stream: null, status: "connecting", version: 0 }))
+  const waiting = [...peerInfo.values()].filter((info) => !connections.has(info.peerId)).map((info) => ({ ...info, stream: null, status: Date.now() - (info.since || Date.now()) >= 30000 ? "failed" : "connecting", version: 0 }))
   setCurrent({
     peers: [...connections.values()].map((peer) => ({
       peerId: peer.peerId,
@@ -355,16 +355,37 @@ function createPeer(info, initiator) {
   }
   pc.onconnectionstatechange = () => {
     const status = pc.connectionState
-    peer.status = status === "connected" ? "connected" : status === "failed" ? "failed" : status === "disconnected" ? "reconnecting" : "connecting"
-    publishPeers()
-    if (status === "connected") peer.restarts = 0
-    if (status === "failed" && peer.restarts < 3) {
-      peer.restarts += 1
-      // Only the side that made the first offer restarts, so both sides never offer at once.
-      if (peer.initiator) sendOffer(peer, true)
-      else signal(peer.peerId, { restart: true })
+    if (status === "connected") {
+      peer.restarts = 0
+      peer.everConnected = true
+      clearTimeout(peer.giveUp)
+      peer.status = "connected"
+    } else if (status === "failed") {
+      // One fresh attempt (it fixes a changed network); after that, say plainly that it failed.
+      if (peer.restarts < 1) {
+        peer.restarts += 1
+        peer.status = "connecting"
+        // Only the side that made the first offer restarts, so both sides never offer at once.
+        if (peer.initiator) sendOffer(peer, true)
+        else signal(peer.peerId, { restart: true })
+      } else {
+        peer.status = "failed"
+      }
+    } else if (status === "disconnected") {
+      peer.status = "reconnecting"
+    } else if (peer.status !== "failed") {
+      peer.status = "connecting"
     }
+    publishPeers()
+    noteFailures()
   }
+  // If it has not connected within 30 seconds, stop saying "Connecting…" and explain instead.
+  peer.giveUp = setTimeout(() => {
+    if (peer.status === "connected" || !connections.has(peer.peerId)) return
+    peer.status = "failed"
+    publishPeers()
+    noteFailures()
+  }, 30000)
   if (initiator) {
     peer.audioSender = pc.addTransceiver(micTrack || "audio", { direction: "sendrecv" }).sender
     peer.videoSender = pc.addTransceiver(outgoingVideo() || "video", { direction: "sendrecv" }).sender
@@ -374,11 +395,21 @@ function createPeer(info, initiator) {
   return peer
 }
 
+// When a connection cannot be made, tell the person why, once per call.
+function noteFailures() {
+  if (!state.current || state.current.blockedShown) return
+  const failed = [...connections.values()].filter((peer) => peer.status === "failed" && !peer.everConnected)
+  const silent = [...peerInfo.values()].filter((info) => !connections.has(info.peerId) && Date.now() - (info.since || Date.now()) >= 30000)
+  if (!failed.length && !silent.length) return
+  setCurrent({ blockedShown: true, blocked: true })
+}
+
 function closePeer(peerId) {
   const peer = connections.get(peerId)
   if (!peer) return
   connections.delete(peerId)
   peerInfo.delete(peerId)
+  clearTimeout(peer.giveUp)
   stopListening(peerId)
   try {
     peer.pc.ontrack = null
@@ -454,6 +485,9 @@ function begin(reply, media) {
       call: reply.call,
       peerId: reply.peerId,
       shareKey: reply.share || "",
+      relay: Boolean(reply.relay),
+      blocked: false,
+      blockedShown: false,
       media,
       startedAt: Date.now(),
       connectedAt: reply.peers.length ? Date.now() : 0,
@@ -672,6 +706,10 @@ export function setMinimized(minimized) {
   setCurrent({ minimized })
 }
 
+export function dismissBlocked() {
+  setCurrent({ blocked: false })
+}
+
 // Rings more people into the current call.
 export async function inviteToCall(userIds) {
   if (!state.current) return { error: "You are not in a call." }
@@ -718,7 +756,7 @@ async function rejoin() {
       return
     }
     iceServers = reply.iceServers?.length ? reply.iceServers : iceServers
-    setCurrent({ call: reply.call, peerId: reply.peerId, shareKey: reply.share || state.current.shareKey, rejoining: false })
+    setCurrent({ call: reply.call, peerId: reply.peerId, shareKey: reply.share || state.current.shareKey, relay: Boolean(reply.relay), rejoining: false })
     for (const info of reply.peers) createPeer(info, true)
     replayEarly(current.callId)
     pushMedia()
@@ -786,7 +824,12 @@ export const callEvents = {
       existing.version += 1
     } else {
       // The person joining sends the offer; keep their details until it arrives.
-      peerInfo.set(peer.peerId, peer)
+      peerInfo.set(peer.peerId, { ...peer, since: Date.now() })
+      setTimeout(() => {
+        if (!peerInfo.has(peer.peerId)) return
+        publishPeers()
+        noteFailures()
+      }, 30500)
     }
     publishPeers()
     refreshTone()
