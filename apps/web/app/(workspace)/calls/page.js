@@ -273,8 +273,13 @@ function NewCall({ boot, me, people, onClose, onStart }) {
             {!everyone.length && <li className="property-missing">No one matches.</li>}
           </ul>
           <div className="calls-pick-actions">
-            <button type="button" className="primary" disabled={pending || !picked.length} onClick={() => callPeople("audio")}><Icon name="phone" size={14} />Voice call{picked.length > 1 ? ` (${picked.length + 1})` : ""}</button>
-            <button type="button" className="primary" disabled={pending || !picked.length} onClick={() => callPeople("video")}><Icon name="video" size={14} />Video call</button>
+            <p className="calls-pick-summary">
+              {picked.length
+                ? `Calling ${picked.map((id) => people.get(id)?.name || "someone").join(", ")}${picked.length > 1 ? ` · group call of ${picked.length + 1}` : ""}`
+                : "Pick one or more people above."}
+            </p>
+            <button type="button" className="calls-pick-button" disabled={pending || !picked.length} onClick={() => callPeople("audio")}><Icon name="phone" size={16} />Voice call</button>
+            <button type="button" className="calls-pick-button" disabled={pending || !picked.length} onClick={() => callPeople("video")}><Icon name="video" size={16} />Video call</button>
           </div>
           {rooms.length > 0 && (
             <>

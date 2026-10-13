@@ -38,6 +38,8 @@ function originAllowed(origin) {
 export function attachChatSockets(server) {
   io = new Server(server, {
     path: "/socket.io",
+    // Accept "/socket.io?..." as well as "/socket.io/?...", so it works through the website's proxy without a redirect.
+    addTrailingSlash: false,
     cors: { origin: (origin, done) => done(null, originAllowed(origin)), credentials: true },
     pingInterval: 20000,
     pingTimeout: 20000,

@@ -28,10 +28,10 @@ function setStatus(next) {
   for (const listener of statusListeners) listener(next)
 }
 
+// By default the live connection goes to this same site, which passes it to the API.
+// A separate socket address can still be set with NEXT_PUBLIC_SOCKET_URL or the API's SOCKET_PUBLIC_URL.
 function socketUrl(serverUrl) {
-  const configured = process.env.NEXT_PUBLIC_SOCKET_URL || serverUrl
-  if (configured) return configured
-  return `${window.location.protocol}//${window.location.hostname}:4000`
+  return process.env.NEXT_PUBLIC_SOCKET_URL || serverUrl || window.location.origin
 }
 
 function dispatch(event, payload) {
@@ -77,7 +77,9 @@ async function start() {
     let token = first.token
     socket = io(socketUrl(first.url), {
       path: "/socket.io",
-      transports: ["websocket", "polling"],
+      addTrailingSlash: false,
+      // Start with plain requests (they pass every proxy), then upgrade to a WebSocket when the network allows it.
+      transports: ["polling", "websocket"],
       reconnectionDelay: 1000,
       reconnectionDelayMax: 10000,
       auth: (done) => {

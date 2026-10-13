@@ -2205,8 +2205,13 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .calls-room { grid-template-columns: auto minmax(0, 1fr) auto; cursor: default; }
 .calls-pick:hover, .calls-room:hover { background: var(--hover); }
 .calls-pick.is-on { background: var(--hover); }
-.calls-pick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.calls-pick-actions .primary { display: inline-flex; align-items: center; gap: 6px; }
+/* Who you are calling, then two equal buttons, kept in view at the bottom of the people list. */
+.calls-pick-actions { position: sticky; bottom: -20px; z-index: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 -20px; padding: 12px 20px 16px; border-top: 1px solid var(--line); background: var(--white); }
+.calls-pick-summary { grid-column: 1 / -1; margin: 0; overflow: hidden; color: var(--muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.calls-pick-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; border: 0; border-radius: 11px; background: var(--ink); color: var(--on-ink); font-size: 15px; font-weight: 650; }
+.calls-pick-button:hover:not(:disabled) { opacity: .9; }
+.calls-pick-button:disabled { background: var(--neutral-bg, var(--hover)); color: var(--muted); cursor: not-allowed; }
+.calls-actions .primary { margin-left: 0; }
 
 @media (max-width: 760px) {
   .call-incoming-stack { top: max(10px, env(safe-area-inset-top)); right: 10px; left: 10px; width: auto; }
@@ -2294,3 +2299,5 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 }
 
 .call-screen:focus, .call-incoming:focus { outline: none; }
+/* The chat screen uses the full height; the install card shows on every other page. */
+.main:has(.chat-page) .bar-install { display: none; }
