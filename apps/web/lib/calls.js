@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react"
 import { currentPushEndpoint, emitChat, requestChat } from "./chatSocket"
+import { audioContext, playLoop, soundsReady as soundsUnlocked, stopLoop, unlockSounds } from "./sounds"
 
 // One call at a time. Every person connects straight to every other person (a mesh),
 // so audio and video never pass through our server. The server only passes setup messages along.
@@ -18,7 +19,6 @@ let iceServers = []
 const connections = new Map()
 // Details of people who joined, kept until their connection is set up.
 const peerInfo = new Map()
-let tones = null
 let speaking = null
 let noticeTimer = null
 // Set while a call is being started or joined, so double clicks never open two microphones.
@@ -76,65 +76,17 @@ export function dismissNotice() {
 
 /* ---------- sounds ---------- */
 
-function soundContext() {
-  if (typeof window === "undefined") return null
-  if (!tones) {
-    const Context = window.AudioContext || window.webkitAudioContext
-    if (!Context) return null
-    tones = { context: new Context(), timer: null, echo: null, kind: "" }
-  }
-  if (tones.context.state !== "running") tones.context.resume().catch(() => {})
-  return tones
-}
-
-export function soundsReady() {
-  return tones?.context.state === "running"
-}
-
-function beep(frequencies, seconds, volume = 0.06) {
-  const sound = soundContext()
-  if (!sound || sound.context.state !== "running") return
-  const { context } = sound
-  const gain = context.createGain()
-  gain.gain.setValueAtTime(0, context.currentTime)
-  gain.gain.linearRampToValueAtTime(volume, context.currentTime + 0.02)
-  gain.gain.setValueAtTime(volume, context.currentTime + seconds - 0.05)
-  gain.gain.linearRampToValueAtTime(0, context.currentTime + seconds)
-  gain.connect(context.destination)
-  for (const frequency of frequencies) {
-    const oscillator = context.createOscillator()
-    oscillator.frequency.value = frequency
-    oscillator.connect(gain)
-    oscillator.start()
-    oscillator.stop(context.currentTime + seconds)
-  }
-}
-
+// The tones themselves (and the person's chosen ringtone) live in lib/sounds.js.
 function playTone(kind) {
-  const sound = soundContext()
-  if (!sound || sound.kind === kind) return
-  stopTone()
-  sound.kind = kind
-  const ring = () => {
-    if (kind === "incoming") {
-      beep([660, 880], 0.35, 0.08)
-      sound.echo = setTimeout(() => beep([660, 880], 0.35, 0.08), 450)
-      if (navigator.vibrate) navigator.vibrate([300, 150, 300])
-    } else {
-      beep([440, 480], 1.2, 0.04)
-    }
-  }
-  ring()
-  sound.timer = setInterval(ring, kind === "incoming" ? 2500 : 3500)
+  playLoop(kind)
 }
 
 function stopTone() {
-  if (!tones) return
-  clearInterval(tones.timer)
-  clearTimeout(tones.echo)
-  tones.timer = null
-  tones.echo = null
-  tones.kind = ""
+  stopLoop()
+}
+
+export function soundsReady() {
+  return soundsUnlocked()
 }
 
 // One place decides what should be heard: an incoming ring, the ringback of our own unanswered call, or nothing.
@@ -147,7 +99,7 @@ function refreshTone() {
 
 // Browsers only allow sound after the person taps or types; this unlocks the ringtone.
 export function unlockCallSounds() {
-  soundContext()
+  unlockSounds()
 }
 
 /* ---------- local media ---------- */
@@ -215,8 +167,7 @@ function localView() {
 /* ---------- speaking indicator ---------- */
 
 function watchSpeaking() {
-  const sound = soundContext()
-  if (!sound || speaking) return
+  if (!audioContext() || speaking) return
   speaking = { sources: new Map(), timer: null }
   speaking.timer = setInterval(() => {
     if (!state.current) return
@@ -233,11 +184,12 @@ function watchSpeaking() {
 }
 
 function listenTo(key, stream) {
-  if (!speaking || !tones || !stream?.getAudioTracks().length) return
+  const context = audioContext()
+  if (!speaking || !context || !stream?.getAudioTracks().length) return
   stopListening(key)
   try {
-    const source = tones.context.createMediaStreamSource(stream)
-    const analyser = tones.context.createAnalyser()
+    const source = context.createMediaStreamSource(stream)
+    const analyser = context.createAnalyser()
     analyser.fftSize = 512
     source.connect(analyser)
     speaking.sources.set(key, { source, analyser, data: new Uint8Array(analyser.fftSize) })

@@ -25,6 +25,8 @@ export const User = register(
       deniedPermissions: [String],
       propertyIds: [{ type: Schema.Types.ObjectId, ref: "Property" }],
       overviewOrder: [String],
+      // The call ringtone and message chime this person picked in Settings.
+      sounds: { ringtone: String, chime: String },
     },
     { timestamps: true },
   ),
@@ -110,8 +112,13 @@ export const Company = register(
       name: { type: String, required: true, trim: true },
       entityType: { type: String, default: "" },
       stateOfFormation: { type: String, default: "" },
+      // Shown as "Effective date".
       formedOn: { type: String, default: "" },
       address: { type: String, default: "" },
+      city: { type: String, default: "" },
+      state: { type: String, default: "" },
+      zip: { type: String, default: "" },
+      // Shown as "Authorized member".
       contactName: { type: String, default: "" },
       phone: { type: String, default: "" },
       email: { type: String, default: "" },

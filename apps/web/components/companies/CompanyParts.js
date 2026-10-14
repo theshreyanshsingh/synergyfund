@@ -5,41 +5,77 @@ import { COMPANY_TYPES } from "@synergifund/shared"
 
 const US_STATES = ["Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", "District of Columbia", "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming"]
 
+const STATE_CODES = ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]
+
+// The company form. formedOn is the effective date and contactName the authorized member (their saved names).
 export function companyForm(company = {}) {
+  const wire = company.wire || {}
   return {
     name: company.name || "",
     entityType: company.entityType || "",
     stateOfFormation: company.stateOfFormation || "",
     formedOn: company.formedOn || "",
-    address: company.address || "",
     contactName: company.contactName || "",
-    phone: company.phone || "",
-    email: company.email || "",
+    address: company.address || "",
+    city: company.city || "",
+    state: company.state || "",
+    zip: company.zip || "",
     notes: company.notes || "",
+    ein: company.ein || "",
+    wireBankName: wire.bankName || "",
+    wireRoutingNumber: wire.routingNumber || "",
+    wireAccountNumber: wire.accountNumber || "",
+    wireEntityName: wire.entityName || "",
+    wireAddress: wire.address || "",
   }
 }
 
-// The company details, used when adding a company and when modifying one.
+export function EinField({ value, onChange }) {
+  return <label className="field"><span>EIN Number <em>· optional</em></span><input value={value} onChange={(event) => onChange(event.target.value)} inputMode="numeric" placeholder="12-3456789" maxLength={20} autoComplete="off" /></label>
+}
+
+export function WireFields({ value, onChange, entityPlaceholder = "" }) {
+  const set = (key) => (event) => onChange({ ...value, [key]: event.target.value })
+  return (
+    <>
+      <label className="field wide"><span>Bank Name</span><input value={value.wireBankName} onChange={set("wireBankName")} maxLength={120} autoComplete="off" /></label>
+      <label className="field"><span>Routing Number</span><input value={value.wireRoutingNumber} onChange={set("wireRoutingNumber")} inputMode="numeric" placeholder="9 digits" maxLength={20} autoComplete="off" /></label>
+      <label className="field"><span>Account Number</span><input value={value.wireAccountNumber} onChange={set("wireAccountNumber")} inputMode="numeric" maxLength={40} autoComplete="off" /></label>
+      <label className="field wide"><span>Entity Name</span><input value={value.wireEntityName} onChange={set("wireEntityName")} placeholder={entityPlaceholder} maxLength={120} autoComplete="off" /></label>
+      <label className="field wide"><span>Bank Address</span><textarea value={value.wireAddress} onChange={set("wireAddress")} maxLength={300} placeholder="The bank's address" /></label>
+    </>
+  )
+}
+
+// The company details, used when adding a company and when modifying one. Starred details are required;
+// the EIN and wire instructions are optional and can be added later from the company's Overview.
 export function CompanyFields({ value, onChange }) {
   const set = (key) => (event) => onChange({ ...value, [key]: event.target.value })
   const types = value.entityType && !COMPANY_TYPES.includes(value.entityType) ? [...COMPANY_TYPES, value.entityType] : COMPANY_TYPES
   return (
     <>
-      <label className="field wide"><span>Company name</span><input value={value.name} onChange={set("name")} placeholder="Synergy Holdings LLC" maxLength={120} required /></label>
-      <label className="field"><span>Type</span>
-        <select value={value.entityType} onChange={set("entityType")}>
-          <option value="">Not set</option>
+      <label className="field wide"><span>Company Name <b className="req" aria-hidden="true">*</b></span><input value={value.name} onChange={set("name")} placeholder="Synergy Holdings LLC" maxLength={120} required /></label>
+      <label className="field"><span>Entity Type <b className="req" aria-hidden="true">*</b></span>
+        <select value={value.entityType} onChange={set("entityType")} required>
+          <option value="" disabled>Choose an entity type</option>
           {types.map((type) => <option key={type}>{type}</option>)}
         </select>
       </label>
-      <label className="field"><span>State of formation</span><input value={value.stateOfFormation} onChange={set("stateOfFormation")} list="company-states" placeholder="Texas" maxLength={60} /></label>
-      <label className="field"><span>Formed on</span><input type="date" value={value.formedOn} onChange={set("formedOn")} /></label>
-      <label className="field"><span>Contact person</span><input value={value.contactName} onChange={set("contactName")} maxLength={120} /></label>
-      <label className="field wide"><span>Address</span><input value={value.address} onChange={set("address")} placeholder="Registered or mailing address" maxLength={300} /></label>
-      <label className="field"><span>Phone</span><input type="tel" value={value.phone} onChange={set("phone")} maxLength={40} /></label>
-      <label className="field"><span>Email</span><input type="email" value={value.email} onChange={set("email")} maxLength={200} /></label>
-      <label className="field wide"><span>Notes</span><textarea value={value.notes} onChange={set("notes")} placeholder="Members, EIN, registered agent, bank or anything else worth keeping" maxLength={4000} /></label>
+      <label className="field"><span>State of Formation <b className="req" aria-hidden="true">*</b></span><input value={value.stateOfFormation} onChange={set("stateOfFormation")} list="company-states" placeholder="Texas" maxLength={60} required /></label>
+      <label className="field"><span>Effective Date <b className="req" aria-hidden="true">*</b></span><input type="date" value={value.formedOn} onChange={set("formedOn")} required /></label>
+      <label className="field"><span>Authorized Member <b className="req" aria-hidden="true">*</b></span><input value={value.contactName} onChange={set("contactName")} maxLength={120} required /></label>
+      <label className="field wide"><span>Address <b className="req" aria-hidden="true">*</b></span><input value={value.address} onChange={set("address")} placeholder="Street address" maxLength={200} autoComplete="street-address" required /></label>
+      <div className="field wide company-place">
+        <label><span>City <b className="req" aria-hidden="true">*</b></span><input value={value.city} onChange={set("city")} maxLength={80} autoComplete="address-level2" required /></label>
+        <label><span>State <b className="req" aria-hidden="true">*</b></span><input value={value.state} onChange={set("state")} list="company-state-codes" placeholder="TX" maxLength={40} autoComplete="address-level1" required /></label>
+        <label><span>Zip <b className="req" aria-hidden="true">*</b></span><input value={value.zip} onChange={set("zip")} inputMode="numeric" placeholder="75201" maxLength={10} autoComplete="postal-code" pattern="\d{5}(-?\d{4})?" title="5 digits, or ZIP+4" required /></label>
+      </div>
+      <label className="field wide"><span>Notes <em>· optional</em></span><textarea value={value.notes} onChange={set("notes")} placeholder="Registered agent, members, or anything else worth keeping" maxLength={4000} /></label>
+      <EinField value={value.ein} onChange={(ein) => onChange({ ...value, ein })} />
+      <p className="company-form-section wide">Wire Instructions <em>· optional</em></p>
+      <WireFields value={value} onChange={onChange} entityPlaceholder={value.name} />
       <datalist id="company-states">{US_STATES.map((state) => <option key={state} value={state} />)}</datalist>
+      <datalist id="company-state-codes">{STATE_CODES.map((code) => <option key={code} value={code} />)}</datalist>
     </>
   )
 }

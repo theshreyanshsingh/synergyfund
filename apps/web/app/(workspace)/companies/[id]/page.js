@@ -4,8 +4,8 @@ import { use, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { can } from "@synergifund/shared"
-import { CompanyFields, PropertyPicker, companyForm } from "../../../../components/companies/CompanyParts"
-import { FolderBrowser } from "../../../../components/documents/FolderBrowser"
+import { CompanyFields, EinField, PropertyPicker, WireFields, companyForm } from "../../../../components/companies/CompanyParts"
+import { DocStatus, FolderBrowser } from "../../../../components/documents/FolderBrowser"
 import { DetailFrame } from "../../../../components/ui/DetailFrame"
 import { FormSheet } from "../../../../components/ui/FormSheet"
 import { Icon } from "../../../../components/ui/Icon"
@@ -50,7 +50,7 @@ async function copyText(text) {
   }
 }
 
-function bankForm(company) {
+function wireForm(company) {
   const wire = company.wire || {}
   return {
     wireBankName: wire.bankName || "",
@@ -58,16 +58,20 @@ function bankForm(company) {
     wireAccountNumber: wire.accountNumber || "",
     wireEntityName: wire.entityName || "",
     wireAddress: wire.address || "",
-    ein: company.ein || "",
   }
 }
 
+function fullAddress(company) {
+  const place = [company.city, [company.state, company.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")
+  return [company.address, place].filter(Boolean).join(", ")
+}
+
 const WIRE_LINES = [
-  ["bankName", "Bank name"],
-  ["routingNumber", "Routing number"],
-  ["accountNumber", "Account number"],
-  ["entityName", "Entity name"],
-  ["address", "Address"],
+  ["bankName", "Bank Name"],
+  ["routingNumber", "Routing Number"],
+  ["accountNumber", "Account Number"],
+  ["entityName", "Entity Name"],
+  ["address", "Bank Address"],
 ]
 
 export default function CompanyPage({ params }) {
@@ -85,6 +89,7 @@ export default function CompanyPage({ params }) {
   const [docsAt, setDocsAt] = useState(() => ({ propertyId: search.get("property") || "", folder: search.get("folder") || "" }))
   const [editing, setEditing] = useState(null)
   const [banking, setBanking] = useState(null)
+  const [einEdit, setEinEdit] = useState(null)
   const [assigning, setAssigning] = useState(null)
   const allProperties = useApi(assigning && writable ? "/properties" : null)
   const [pending, setPending] = useState(false)
@@ -175,6 +180,12 @@ export default function CompanyPage({ params }) {
     if (next === "documents") setDocsAt({ propertyId: "", folder: "" })
   }
 
+  function openFolder(folder) {
+    setDocsAt({ propertyId: "", folder })
+    setSection("documents")
+    setNotice("")
+  }
+
   function openPropertyDocs(propertyId) {
     setDocsAt({ propertyId, folder: "" })
     setSection("documents")
@@ -188,6 +199,8 @@ export default function CompanyPage({ params }) {
   ]
   const wire = company.wire || {}
   const hasWire = WIRE_LINES.some(([key]) => wire[key])
+  const required = detail.data.required || []
+  const missingCount = required.filter((item) => item.missing).length
 
   return (
     <DetailFrame
@@ -221,10 +234,10 @@ export default function CompanyPage({ params }) {
             <section className="panel property-card company-wire">
               <div className="property-card-head">
                 <div>
-                  <h2>Wire instructions</h2>
+                  <h2>Wire Instructions</h2>
                   <p className="property-missing">Copy a line, or copy everything at once to paste into an email.</p>
                 </div>
-                {writable && <button type="button" className="tool" onClick={() => { setError(""); setBanking(bankForm(company)) }}>{hasWire || company.ein ? "Edit" : "Add"}</button>}
+                {writable && <button type="button" className="tool" onClick={() => { setError(""); setBanking(wireForm(company)) }}>{hasWire ? "Edit" : "Add"}</button>}
               </div>
               {hasWire ? (
                 <>
@@ -234,32 +247,50 @@ export default function CompanyPage({ params }) {
                   <CopyAll text={WIRE_LINES.filter(([key]) => wire[key]).map(([key, label]) => `${label}: ${wire[key]}`).join("\n")} />
                 </>
               ) : (
-                <p className="property-missing">No wire instructions yet.{writable ? " Add the bank name, routing number, account number, entity name and address." : ""}</p>
+                <p className="property-missing">No wire instructions yet.{writable ? " Add the bank name, routing number, account number, entity name and bank address." : ""}</p>
               )}
             </section>
 
             <div className="company-side">
+              <section className="panel property-card company-required">
+                <div className="property-card-head">
+                  <div>
+                    <h2>Required Documents</h2>
+                    <p className="property-missing">{missingCount ? `${missingCount} of ${required.length} missing. Open one to upload it.` : "All on file."}</p>
+                  </div>
+                </div>
+                <ul className="required-docs">
+                  {required.map((item) => (
+                    <li key={item.id}>
+                      <button type="button" onClick={() => openFolder(item.id)}>
+                        <span>{item.name}</span>
+                        <DocStatus missing={item.missing} label={item.missing ? "Missing" : item.files === 1 ? "On file" : `${item.files} files`} />
+                        <Icon name="chevron" size={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
               <section className="panel property-card">
                 <div className="property-card-head">
-                  <div><h2>EIN number</h2></div>
+                  <div><h2>EIN Number</h2></div>
+                  {writable && <button type="button" className="tool" onClick={() => { setError(""); setEinEdit(company.ein || "") }}>{company.ein ? "Edit" : "Add"}</button>}
                 </div>
                 {company.ein ? (
-                  <dl className="copy-list"><CopyRow label="EIN" value={company.ein} /></dl>
+                  <dl className="copy-list"><CopyRow label="EIN Number" value={company.ein} /></dl>
                 ) : (
-                  <p className="property-missing">No EIN yet.{writable ? " Add it with Edit on the wire instructions." : ""}</p>
+                  <p className="property-missing">No EIN yet.</p>
                 )}
               </section>
 
               <section className="panel property-card">
                 <h2>Details</h2>
                 <dl className="property-facts">
-                  <Fact label="Type" value={company.entityType} />
-                  <Fact label="State of formation" value={company.stateOfFormation} />
-                  <Fact label="Formed on" value={dateLabel(company.formedOn)} />
-                  <Fact label="Contact" value={company.contactName} />
-                  <Fact label="Phone" value={company.phone && <a href={`tel:${company.phone.replace(/[^\d+]/g, "")}`}>{company.phone}</a>} />
-                  <Fact label="Email" value={company.email && <a href={`mailto:${company.email}`}>{company.email}</a>} />
-                  <Fact label="Address" value={company.address} wide />
+                  <Fact label="Entity Type" value={company.entityType} />
+                  <Fact label="State of Formation" value={company.stateOfFormation} />
+                  <Fact label="Effective Date" value={dateLabel(company.formedOn)} />
+                  <Fact label="Authorized Member" value={company.contactName} />
+                  <Fact label="Address" value={fullAddress(company)} wide />
                   <Fact label="Notes" value={company.notes && <span className="company-notes">{company.notes}</span>} wide />
                 </dl>
                 {company.updatedBy && <p className="property-missing company-updated">Last updated by {company.updatedBy}.</p>}
@@ -337,14 +368,17 @@ export default function CompanyPage({ params }) {
       )}
 
       {banking && (
-        <FormSheet eyebrow={company.name} title="Wire instructions and EIN" hint="Paste them in as the bank gives them. Numbers are checked so a typo is caught before anyone sends money." onClose={() => setBanking(null)} onSubmit={(event) => save(event, banking, () => setBanking(null))} submitLabel="Save" pending={pending} error={error}>
+        <FormSheet eyebrow={company.name} title="Wire Instructions" hint="Paste them in as the bank gives them. Numbers are checked so a typo is caught before anyone sends money." onClose={() => setBanking(null)} onSubmit={(event) => save(event, banking, () => setBanking(null))} submitLabel="Save" pending={pending} error={error}>
           <div className="form-grid">
-            <label className="field wide"><span>Bank name</span><input value={banking.wireBankName} onChange={(event) => setBanking({ ...banking, wireBankName: event.target.value })} maxLength={120} autoComplete="off" /></label>
-            <label className="field"><span>Routing number</span><input value={banking.wireRoutingNumber} onChange={(event) => setBanking({ ...banking, wireRoutingNumber: event.target.value })} inputMode="numeric" placeholder="9 digits" maxLength={20} autoComplete="off" /></label>
-            <label className="field"><span>Account number</span><input value={banking.wireAccountNumber} onChange={(event) => setBanking({ ...banking, wireAccountNumber: event.target.value })} inputMode="numeric" maxLength={40} autoComplete="off" /></label>
-            <label className="field wide"><span>Entity name</span><input value={banking.wireEntityName} onChange={(event) => setBanking({ ...banking, wireEntityName: event.target.value })} placeholder={company.name} maxLength={120} autoComplete="off" /></label>
-            <label className="field wide"><span>Address</span><textarea value={banking.wireAddress} onChange={(event) => setBanking({ ...banking, wireAddress: event.target.value })} maxLength={300} placeholder="The address on the bank account" /></label>
-            <label className="field"><span>EIN number</span><input value={banking.ein} onChange={(event) => setBanking({ ...banking, ein: event.target.value })} inputMode="numeric" placeholder="12-3456789" maxLength={20} autoComplete="off" /></label>
+            <WireFields value={banking} onChange={setBanking} entityPlaceholder={company.name} />
+          </div>
+        </FormSheet>
+      )}
+
+      {einEdit != null && (
+        <FormSheet eyebrow={company.name} title="EIN Number" hint="9 digits, like 12-3456789. Leave it blank to remove it." onClose={() => setEinEdit(null)} onSubmit={(event) => save(event, { ein: einEdit }, () => setEinEdit(null))} submitLabel="Save" pending={pending} error={error}>
+          <div className="form-grid">
+            <EinField value={einEdit} onChange={setEinEdit} />
           </div>
         </FormSheet>
       )}

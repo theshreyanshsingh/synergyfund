@@ -1,4 +1,4 @@
-import { assignmentFee, can, permissionsFor } from "@synergifund/shared"
+import { assignmentFee, can, cleanSounds, permissionsFor } from "@synergifund/shared"
 
 export function publicUser(user) {
   return {
@@ -12,6 +12,7 @@ export function publicUser(user) {
     deniedPermissions: user.deniedPermissions || [],
     permissions: permissionsFor(user),
     propertyIds: (user.propertyIds || []).map(String),
+    sounds: cleanSounds(user.sounds),
   }
 }
 

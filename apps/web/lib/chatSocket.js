@@ -69,6 +69,11 @@ function reportVisible() {
   heartbeat = visible ? setInterval(reportVisible, 10000) : null
 }
 
+// The conversation open on screen right now ("" when none).
+export function activeChatId() {
+  return activeChannel
+}
+
 // The chat screen calls this with the open conversation ("" when none).
 export function setActiveChat(channelId) {
   activeChannel = channelId || ""

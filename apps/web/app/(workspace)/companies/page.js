@@ -4,6 +4,8 @@ import { Suspense, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { can } from "@synergifund/shared"
 import { CompanyFields, PropertyPicker, companyForm } from "../../../components/companies/CompanyParts"
+import { ImportCompanies } from "../../../components/companies/ImportCompanies"
+import { DocStatus } from "../../../components/documents/FolderBrowser"
 import { FormSheet } from "../../../components/ui/FormSheet"
 import { PageSpinner } from "../../../components/ui/Spinner"
 import { WorkspacePage } from "../../../components/ui/WorkspacePage"
@@ -37,6 +39,8 @@ function CompaniesScreen() {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const [ownersOpen, setOwnersOpen] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [imported, setImported] = useState(null)
   const [ownerError, setOwnerError] = useState("")
   const items = list.data?.items || []
   const owners = list.data?.owners || []
@@ -89,7 +93,19 @@ function CompaniesScreen() {
         loading={!list.data && !list.error}
         title="Companies"
         action={writable ? { label: "New company", onClick: () => startCreate() } : null}
-        lead={writable && owners.length > 0 && (
+        secondary={writable ? { label: "Import Excel", onClick: () => { setImported(null); setImporting(true) } } : null}
+        lead={writable && (imported || owners.length > 0) && (
+          <>
+          {imported && (
+            <div className={imported.errors.length ? "banner import-result" : "settings-note import-result"} role="status">
+              <span>
+                {[imported.created && `${plural(imported.created, "company", "companies")} added`, imported.updated && `${plural(imported.updated, "company", "companies")} filled in`, imported.linked && `${plural(imported.linked, "property", "properties")} linked`, imported.skipped && `${imported.skipped} already up to date`].filter(Boolean).join(" · ") || "Nothing was imported."}
+                {imported.errors.length > 0 && ` ${plural(imported.errors.length, "row was", "rows were")} not imported: ${imported.errors.map((item) => `row ${item.row}${item.name ? ` (${item.name})` : ""}: ${item.message}`).join(" ")}`}
+              </span>
+              <button type="button" className="tool" onClick={() => setImported(null)}>Dismiss</button>
+            </div>
+          )}
+          {owners.length > 0 && (
           <section className="panel company-owners">
             <button type="button" className="company-owners-head" aria-expanded={ownersOpen} onClick={() => setOwnersOpen((open) => !open)}>
               <span>
@@ -115,6 +131,8 @@ function CompaniesScreen() {
               </ul>
             )}
           </section>
+          )}
+          </>
         )}
         stats={list.data ? [
           { key: "companies", label: "Companies", value: String(items.length), hint: "LLCs, corporations and trusts" },
@@ -127,14 +145,33 @@ function CompaniesScreen() {
           { key: "properties", label: "Properties", render: (row) => row.properties },
           { key: "loanBalance", label: "Loan balance", className: "num", render: (row) => row.loanBalance == null ? "—" : money(row.loanBalance) },
           { key: "monthlyPayment", label: "Monthly", className: "num", render: (row) => row.monthlyPayment == null ? "—" : money(row.monthlyPayment) },
-          { key: "documents", label: "Documents", render: (row) => row.documents },
+          {
+            key: "missingDocuments",
+            label: "Required docs",
+            render: (row) => (
+              <span className="required-cell" title={row.missingDocuments?.length ? `Missing: ${row.missingDocuments.join(", ")}` : "All four on file"}>
+                <DocStatus missing={row.missingDocuments?.length > 0} label={row.missingDocuments?.length ? `${row.missingDocuments.length} missing` : "Complete"} />
+              </span>
+            ),
+          },
+          { key: "documents", label: "Files", render: (row) => row.documents },
         ]}
         rows={items}
         onRow={(row) => router.push(`/companies/${row.id}`)}
         empty={list.error || "No companies yet. Add one, then assign the properties it owns."}
       />
+      {importing && writable && (
+        <ImportCompanies
+          onClose={() => setImporting(false)}
+          onImported={(result) => {
+            setImporting(false)
+            setImported(result)
+            list.reload()
+          }}
+        />
+      )}
       {creating && writable && (
-        <FormSheet eyebrow="Companies" title="New company" hint="Only the name is needed. Everything else can be added later." onClose={() => setCreating(null)} onSubmit={create} submitLabel="Save company" pending={pending} error={error}>
+        <FormSheet eyebrow="Companies" title="New company" hint="Details marked * are required. The EIN and wire instructions are optional and can be added later." onClose={() => setCreating(null)} onSubmit={create} submitLabel="Save company" pending={pending} error={error}>
           <div className="form-grid">
             <CompanyFields value={creating.form} onChange={(form) => setCreating((current) => ({ ...current, form }))} />
             <div className="field wide">

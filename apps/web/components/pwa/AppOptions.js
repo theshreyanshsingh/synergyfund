@@ -7,6 +7,7 @@ import { disablePush, enablePush, installApp, usePwa } from "../../lib/pwa"
 import { InstallGuide } from "./InstallGuide"
 import { can } from "@synergifund/shared"
 import { CallCheck } from "../calls/CallCheck"
+import { SoundSettings } from "./SoundSettings"
 
 export function AppOptions() {
   const session = useSession()
@@ -102,6 +103,7 @@ export function AppOptions() {
         )}
       </div>
       {(error || message) && <p className={error ? "banner" : "settings-note"}>{error || message}</p>}
+      <SoundSettings />
       {session?.user && can(session.user, "chat.use") && <CallCheck admin={admin} />}
       {admin && (
         <form className="settings-send" onSubmit={send}>

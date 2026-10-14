@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
-import { COMPANY_DOCUMENT_LABELS, COMPANY_FOLDERS, DOCUMENT_LABELS, PROPERTY_FOLDERS } from "@synergifund/shared"
+import { COMPANY_DOCUMENT_LABELS, COMPANY_FOLDERS, DOCUMENT_LABELS, PROPERTY_FOLDERS, QUICK_ACCESS, quickAccessFiles } from "@synergifund/shared"
 import { api } from "../../lib/api"
 import { Icon } from "../ui/Icon"
 import { EditSheet, UploadSheet, attached, dateLabel, fileType, isImage, sizeLabel } from "./DocumentLibrary"
@@ -20,7 +20,7 @@ function newestFirst(a, b) {
 
 function folderLabel(file) {
   const list = file.propertyId ? PROPERTY_FOLDERS : COMPANY_FOLDERS
-  return list.find((item) => item.id === file.folder)?.name || "Other Documents"
+  return list.find((item) => item.id === file.folder)?.name || "Miscellaneous"
 }
 
 function folderSummary(list) {
@@ -155,6 +155,12 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
     setUploading({ place: herePlace, folder: at.folder, files: dropped, where: onlyProperty ? "" : property?.address || "" })
   }
 
+  // Quick Access: upload straight into the document's main folder, labeled as that document.
+  function uploadQuick(item) {
+    setError("")
+    setUploading({ place: property.id, folder: item.folder, files: [], where: onlyProperty ? "" : property.address, labels: [item.name], title: `Upload ${item.name}` })
+  }
+
   const dropProps = writable ? {
     onDragOver: (event) => {
       if (![...(event.dataTransfer?.types || [])].includes("Files")) return
@@ -215,16 +221,25 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
               const list = box?.get(item.id) || []
               return (
                 <li key={item.id}>
-                  <FolderTile name={item.name} meta={folderSummary(list)} filled={list.length > 0} onOpen={() => go({ propertyId: at.propertyId, folder: item.id })} />
+                  <FolderTile name={item.name} meta={list.length || !item.required ? folderSummary(list) : ""} filled={list.length > 0} status={item.required ? (list.length ? "ok" : "missing") : ""} onOpen={() => go({ propertyId: at.propertyId, folder: item.id })} />
                 </li>
               )
             })}
           </ul>
+          {property && (
+            <QuickAccess
+              files={[...(box?.values() || [])].flat()}
+              writable={writable}
+              viewHref={(file) => `/documents/${file.id}${onlyProperty ? "" : "?in=company"}`}
+              onOpenFolder={(folder) => go({ propertyId: property.id, folder })}
+              onUpload={uploadQuick}
+            />
+          )}
           {!property && (
             <>
               <h3 className="folders-heading">Properties <em>{properties.length ? `· ${properties.length}` : ""}</em></h3>
               {properties.length === 0 ? (
-                <p className="folders-note">Properties assigned to {companyName} show here, each with Contracts, Lender, Title, Insurance, Renovation, Other and Pictures folders.</p>
+                <p className="folders-note">Properties assigned to {companyName} show here, each with its own folders: {PROPERTY_FOLDERS.map((item) => item.name).join(", ")}.</p>
               ) : (
                 <ul className="folder-grid">
                   {properties.map((item) => {
@@ -310,6 +325,8 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
           fixedPlace={uploading.place}
           defaultFolder={uploading.folder}
           initialFiles={uploading.files}
+          defaultLabels={uploading.labels || []}
+          title={uploading.title || ""}
           placeName={uploading.where}
           labelOptions={uploading.place === companyPlace ? COMPANY_DOCUMENT_LABELS : DOCUMENT_LABELS}
           suggestions={suggestions}
@@ -332,17 +349,62 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
   )
 }
 
-function FolderTile({ name, meta, filled, building = false, onOpen }) {
+// Key documents of a property in one place: each shows its newest file, or that it is not uploaded yet.
+function QuickAccess({ files, writable, viewHref, onOpenFolder, onUpload }) {
   return (
-    <button type="button" className="folder-tile" onClick={onOpen}>
+    <section className="quick-access" aria-label="Quick Access Documents">
+      <h3 className="folders-heading">Quick Access Documents</h3>
+      <ul className="quick-list">
+        {QUICK_ACCESS.map((item) => {
+          const list = quickAccessFiles(files, item).sort(newestFirst)
+          const latest = list[0]
+          const folder = PROPERTY_FOLDERS.find((entry) => entry.id === item.folder)
+          return (
+            <li key={item.id} className={latest ? "" : "is-empty"}>
+              <span className={latest ? "quick-icon" : "quick-icon is-empty"} aria-hidden="true"><Icon name="file" size={18} /></span>
+              <span className="quick-copy">
+                <strong>{item.name}</strong>
+                <em>
+                  {latest ? <Link href={viewHref(latest)}>{latest.name}</Link> : "Not uploaded yet"}
+                  {latest && ` · ${dateLabel(latest.createdAt)}`}
+                  {list.length > 1 && ` · ${list.length} files`}
+                  {" · in "}
+                  <button type="button" onClick={() => onOpenFolder(item.folder)}>{folder?.name}</button>
+                </em>
+              </span>
+              <DocStatus missing={false} label={latest ? "On file" : "Not uploaded"} tone={latest ? "ok" : "none"} />
+              <span className="quick-actions">
+                {latest && <Link href={viewHref(latest)}>View</Link>}
+                {latest && <a href={`/api/documents/${latest.id}/download`}>Download</a>}
+                {writable && <button type="button" onClick={() => onUpload(item)}>Upload</button>}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
+// A required company document shows Missing until a file is in its folder, then On file.
+function FolderTile({ name, meta, filled, status = "", building = false, onOpen }) {
+  return (
+    <button type="button" className={status === "missing" ? "folder-tile is-missing" : "folder-tile"} onClick={onOpen} title={name}>
       <span className={`folder-icon${filled ? "" : " is-empty"}${building ? " is-property" : ""}`}><Icon name={building ? "building" : "folder"} size={22} /></span>
       <span className="folder-copy">
         <strong>{name}</strong>
-        <em>{meta}</em>
+        <span className="folder-meta">
+          {status && <DocStatus missing={status === "missing"} />}
+          {meta && <em>{meta}</em>}
+        </span>
       </span>
       <Icon name="chevron" size={14} />
     </button>
   )
+}
+
+export function DocStatus({ missing, label, tone = "" }) {
+  return <span className={`doc-status is-${tone || (missing ? "missing" : "ok")}`}>{label || (missing ? "Missing" : "On file")}</span>
 }
 
 function FileRow({ file, where, viewHref, checked, onToggle, writable, canDelete, onEdit, onDelete }) {

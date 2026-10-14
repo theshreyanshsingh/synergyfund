@@ -412,11 +412,11 @@ function typeProblem(file, place) {
   return `${file.name}: only PDF, Word, Excel${placeType(place) === "property" ? ", image and video" : " and image"} files can be uploaded.`
 }
 
-export function UploadSheet({ properties = [], companies = [], fixedPlace, defaultPlace, defaultFolder = "", initialFiles = [], placeName = "", labelOptions = DOCUMENT_LABELS, suggestions = [], requireProperty, onUploaded, onClose, onDone }) {
+export function UploadSheet({ properties = [], companies = [], fixedPlace, defaultPlace, defaultFolder = "", initialFiles = [], defaultLabels = [], title = "", placeName = "", labelOptions = DOCUMENT_LABELS, suggestions = [], requireProperty, onUploaded, onClose, onDone }) {
   const [files, setFiles] = useState(initialFiles)
   const [place, setPlace] = useState(defaultPlace || "")
   const [folder, setFolder] = useState(defaultFolder)
-  const [labels, setLabels] = useState([])
+  const [labels, setLabels] = useState(defaultLabels)
   const [pending, setPending] = useState(false)
   const [progress, setProgress] = useState("")
   const [error, setError] = useState("")
@@ -482,7 +482,7 @@ export function UploadSheet({ properties = [], companies = [], fixedPlace, defau
   return (
     <FormSheet
       eyebrow="Documents"
-      title={fixedPlace && (placeName || folderLabel) ? `Upload to ${[placeName, folderLabel].filter(Boolean).join(" › ")}` : "Upload files"}
+      title={title || (fixedPlace && (placeName || folderLabel) ? `Upload to ${[placeName, folderLabel].filter(Boolean).join(" › ")}` : "Upload files")}
       hint={fixedPlace
         ? `PDF, Word, Excel${kind === "property" ? ", images or videos" : " or images"}, up to ${MAX_UPLOAD_MB} MB each. They are filed under this ${placeLabel}.`
         : companies.length && !requireProperty

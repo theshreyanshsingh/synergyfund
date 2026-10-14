@@ -186,7 +186,24 @@ export const TASK_LABELS = ["EMD", "Mortgage payment", "Draw", "Verify", "Inspec
 export const PROPERTY_LABELS = ["Financed", "Refinanced", "Flip", "Hold", "Rent"]
 
 export const LOAN_LABELS = ["Financed", "Refinanced", "Construction", "Bridge", "Seller financing"]
-export const DOCUMENT_LABELS = ["Purchase contract", "Closing statement", "Title", "Insurance", "Loan", "Appraisal", "Inspection", "Permit", "Invoice", "Lease", "Tax", "Other"]
+// The first five are the Quick Access documents on a property (see QUICK_ACCESS).
+export const DOCUMENT_LABELS = ["Purchase Contract", "Reassignment Contract", "Closing Contract", "Settlement Statement (ALTA)", "Scope of Work (SOW)", "Closing Statement", "Title", "Insurance", "Loan", "Appraisal", "Inspection", "Permit", "Invoice", "Lease", "Tax", "Other"]
+
+// Key documents every property may need, shown under Quick Access on its Documents. A file counts as one when it
+// carries that label (older spellings too); uploading from Quick Access files it in the main folder with the label.
+export const QUICK_ACCESS = [
+  { id: "purchase-contract", name: "Purchase Contract", folder: "contracts", aliases: ["purchase contract"] },
+  { id: "reassignment-contract", name: "Reassignment Contract", folder: "contracts", aliases: ["reassignment contract", "assignment contract"] },
+  { id: "closing-contract", name: "Closing Contract", folder: "title", aliases: ["closing contract"] },
+  { id: "settlement-statement", name: "Settlement Statement (ALTA)", folder: "title", aliases: ["settlement statement (alta)", "settlement statement", "alta settlement statement", "alta"] },
+  { id: "scope-of-work", name: "Scope of Work (SOW)", folder: "renovation", aliases: ["scope of work (sow)", "scope of work", "sow"] },
+]
+
+// The files on a property that count as a Quick Access document.
+export function quickAccessFiles(files = [], item) {
+  const wanted = new Set(item.aliases)
+  return files.filter((file) => (file.labels || []).some((label) => wanted.has(String(label).trim().toLowerCase())))
+}
 export const COMPANY_DOCUMENT_LABELS = ["Articles of organization", "Operating agreement", "EIN letter", "Annual report", "Bank statement", "Tax", "Insurance", "Other"]
 export const COMPANY_TYPES = ["LLC", "Corporation", "S corporation", "Partnership", "Limited partnership", "Trust", "Sole proprietorship", "Other"]
 const STANDARD_DOCUMENT_LABELS = [...new Set([...DOCUMENT_LABELS, ...COMPANY_DOCUMENT_LABELS])]
@@ -218,20 +235,27 @@ export function cleanDocumentLabels(value) {
 // Folders inside a property's and a company's Documents. Every file filed under one lives in exactly one folder.
 export const PROPERTY_FOLDERS = [
   { id: "contracts", name: "Contracts" },
-  { id: "lender", name: "Lender Documents" },
-  { id: "title", name: "Title Documents" },
-  { id: "insurance", name: "Insurance Documents" },
-  { id: "renovation", name: "Renovation Documents" },
-  { id: "other", name: "Other Documents" },
-  { id: "pictures", name: "Pictures" },
+  { id: "lender", name: "Financing & Lender" },
+  { id: "title", name: "Title & Closing" },
+  { id: "insurance", name: "Insurance" },
+  { id: "renovation", name: "Renovation & Rehab" },
+  { id: "other", name: "Miscellaneous" },
+  { id: "pictures", name: "Photos & Media" },
 ]
+// `required`: every company needs one; an empty required folder shows as Missing.
 export const COMPANY_FOLDERS = [
-  { id: "articles", name: "Articles of Organization" },
-  { id: "operating", name: "Operating Agreement" },
-  { id: "ein", name: "EIN Letter" },
-  { id: "good-standing", name: "Certificate of Good Standing" },
-  { id: "other", name: "Other Documents" },
+  { id: "articles", name: "Articles of Organization", required: true },
+  { id: "operating", name: "Operating Agreement", required: true },
+  { id: "ein", name: "EIN Letter", required: true },
+  { id: "good-standing", name: "Certificate of Good Standing", required: true },
+  { id: "other", name: "Miscellaneous" },
 ]
+
+// The required company documents with no file yet, from the company's own files (each with its folder).
+export function missingCompanyDocuments(files = []) {
+  const filled = new Set(files.map((file) => folderOf(file)))
+  return COMPANY_FOLDERS.filter((folder) => folder.required && !filled.has(folder.id))
+}
 
 export function foldersFor(place) {
   if (place === "property") return PROPERTY_FOLDERS
@@ -269,6 +293,13 @@ export function documentAccept(place) {
 
 const PROPERTY_LABEL_FOLDERS = {
   "purchase contract": "contracts",
+  "reassignment contract": "contracts",
+  "assignment contract": "contracts",
+  "closing contract": "title",
+  "settlement statement (alta)": "title",
+  "settlement statement": "title",
+  "scope of work (sow)": "renovation",
+  "scope of work": "renovation",
   lease: "contracts",
   loan: "lender",
   appraisal: "lender",
@@ -303,6 +334,31 @@ export function folderOf(file = {}) {
   const type = documentType(file.name) || (String(file.mime || "").startsWith("image/") ? "image" : String(file.mime || "").startsWith("video/") ? "video" : "")
   if (type === "image" || type === "video") return "pictures"
   return "other"
+}
+
+// Sounds the app plays while it is open, chosen by each person in Settings › App.
+export const RINGTONES = [
+  { id: "marimba", name: "Marimba" },
+  { id: "classic", name: "Classic phone" },
+  { id: "bells", name: "Soft bells" },
+  { id: "pulse", name: "Pulse" },
+  { id: "beep", name: "Beep (the old one)" },
+  { id: "off", name: "Silent (vibrate only)" },
+]
+export const CHIMES = [
+  { id: "chime", name: "Chime" },
+  { id: "pop", name: "Pop" },
+  { id: "bell", name: "Bell" },
+  { id: "marimba", name: "Marimba" },
+  { id: "off", name: "Off" },
+]
+export const DEFAULT_SOUNDS = { ringtone: "marimba", chime: "chime" }
+
+export function cleanSounds(value = {}) {
+  return {
+    ringtone: RINGTONES.some((item) => item.id === value?.ringtone) ? value.ringtone : DEFAULT_SOUNDS.ringtone,
+    chime: CHIMES.some((item) => item.id === value?.chime) ? value.chime : DEFAULT_SOUNDS.chime,
+  }
 }
 
 export const LOAN_STATUSES = ["Current", "Late", "In default", "Paid off"]
