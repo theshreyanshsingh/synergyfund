@@ -8,6 +8,7 @@ import { FormSheet } from "../../../../components/ui/FormSheet"
 import { DrawEditor } from "../../../../components/draws/DrawEditor"
 import { FinancingSection } from "../../../../components/properties/FinancingSection"
 import { ArvSection } from "../../../../components/properties/ArvSection"
+import { DocumentsSection } from "../../../../components/properties/DocumentsSection"
 import { ReportSheet } from "../../../../components/properties/ReportSheet"
 import { money } from "../../../../lib/format"
 import { api } from "../../../../lib/api"
@@ -24,7 +25,7 @@ export default function PropertyDetailPage({ params }) {
   const search = useSearchParams()
   const session = useSession()
   const detail = useApi(`/properties/${id}`)
-  const [section, setSection] = useState(() => (["overview", "draws", "arv", "financing"].includes(search.get("tab")) ? search.get("tab") : "overview"))
+  const [section, setSection] = useState(() => (["overview", "draws", "arv", "financing", "documents"].includes(search.get("tab")) ? search.get("tab") : "overview"))
   const [note, setNote] = useState("")
   const [files, setFiles] = useState([])
   const [message, setMessage] = useState("")
@@ -78,8 +79,8 @@ export default function PropertyDetailPage({ params }) {
   const tabs = [
     { id: "overview", label: "Overview" },
   ]
-  // A property's documents are kept inside its company's Documents, not on the property.
-  if (internal) tabs.push({ id: "draws", label: "Draws" }, { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" })
+  // The Documents tab shows the same files the property's company shows under Documents › Properties.
+  if (internal) tabs.push({ id: "draws", label: "Draws" }, { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" }, { id: "documents", label: "Documents" })
 
   if (!internal) {
     return (
@@ -234,12 +235,7 @@ export default function PropertyDetailPage({ params }) {
               <h2>Deal</h2>
               <dl className="property-facts">
                 {(property.labels || []).length > 0 && <div className="wide label-row">{property.labels.map((label) => <StatusPill key={label}>{label}</StatusPill>)}</div>}
-                <Fact label="Company" value={company ? (
-                  <span className="property-company-line">
-                    <Link href={`/companies/${company.id}`} className="property-company">{company.name}</Link>
-                    <Link href={`/companies/${company.id}?tab=documents&property=${id}`} className="property-company-docs">Documents</Link>
-                  </span>
-                ) : "Not in a company"} />
+                <Fact label="Company" value={company ? <Link href={`/companies/${company.id}`} className="property-company">{company.name}</Link> : "Not in a company"} />
                 <Fact label="Strategy" value={property.strategy} />
                 {(!company || (property.ownerEntity && property.ownerEntity.trim().toLowerCase() !== company.name.toLowerCase())) && <Fact label="Owner" value={property.ownerEntity} />}
                 <Fact label="Market" value={property.rentMarket} />
@@ -327,6 +323,10 @@ export default function PropertyDetailPage({ params }) {
             {message && <p className="property-missing">{message}</p>}
           </section>
         </>
+      )}
+
+      {section === "documents" && (
+        <DocumentsSection property={property} company={company} writable={Boolean(session?.user && can(session.user, "documents.write"))} canDelete={Boolean(session?.user && can(session.user, "documents.delete"))} initialFolder={search.get("folder") || ""} />
       )}
 
       {section === "financing" && (

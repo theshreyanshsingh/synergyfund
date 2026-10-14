@@ -40,9 +40,12 @@ function startDownload(files, name) {
 }
 
 // A company's Documents as folders: its own folders, then one folder per property it owns, each with the property folders.
+// With `onlyProperty`, the same folders for one property on its own page (the same files the company shows).
 // Open a folder, tick files, download or view them, upload into it.
-export function FolderBrowser({ companyId, companyName, properties = [], files, writable, canDelete, canEdit = () => true, onChanged, initialProperty = "", initialFolder = "" }) {
-  const startProperty = properties.some((item) => item.id === initialProperty) ? initialProperty : ""
+export function FolderBrowser({ companyId = "", companyName = "", properties: owned = [], onlyProperty = null, files, writable, canDelete, canEdit = () => true, onChanged, initialProperty = "", initialFolder = "" }) {
+  const properties = onlyProperty ? [onlyProperty] : owned
+  const top = onlyProperty ? onlyProperty.id : ""
+  const startProperty = onlyProperty ? onlyProperty.id : properties.some((item) => item.id === initialProperty) ? initialProperty : ""
   const startFolders = startProperty ? PROPERTY_FOLDERS : COMPANY_FOLDERS
   const [at, setAt] = useState({ propertyId: startProperty, folder: startFolders.some((item) => item.id === initialFolder) ? initialFolder : "" })
   const [query, setQuery] = useState("")
@@ -93,7 +96,7 @@ export function FolderBrowser({ companyId, companyName, properties = [], files, 
   const suggestions = [...new Set(files.flatMap((file) => file.labels || []))]
 
   function go(next) {
-    setAt(next)
+    setAt(onlyProperty ? { ...next, propertyId: onlyProperty.id } : next)
     setSelected([])
     setQuery("")
     setError("")
@@ -149,7 +152,7 @@ export function FolderBrowser({ companyId, companyName, properties = [], files, 
 
   function openUpload(dropped = []) {
     setError("")
-    setUploading({ place: herePlace, folder: at.folder, files: dropped, where: property?.address || "" })
+    setUploading({ place: herePlace, folder: at.folder, files: dropped, where: onlyProperty ? "" : property?.address || "" })
   }
 
   const dropProps = writable ? {
@@ -170,14 +173,14 @@ export function FolderBrowser({ companyId, companyName, properties = [], files, 
     },
   } : {}
 
-  const whereNow = current?.name || property?.address || ""
+  const whereNow = current?.name || (onlyProperty ? "" : property?.address) || ""
   const showTiles = !at.folder && !needle
   return (
     <div className={dragging ? "folders is-dragging" : "folders"} {...dropProps}>
       <div className="folders-bar">
         <nav className="folders-crumbs" aria-label="Folders">
-          {at.propertyId || at.folder ? <button type="button" onClick={() => go({ propertyId: "", folder: "" })}>All folders</button> : <strong>All folders</strong>}
-          {property && (
+          {at.propertyId !== top || at.folder ? <button type="button" onClick={() => go({ propertyId: top, folder: "" })}>All folders</button> : <strong>All folders</strong>}
+          {property && !onlyProperty && (
             <>
               <span aria-hidden="true">›</span>
               {at.folder ? <button type="button" onClick={() => go({ propertyId: property.id, folder: "" })}>{property.address}</button> : <strong>{property.address}</strong>}
@@ -206,7 +209,7 @@ export function FolderBrowser({ companyId, companyName, properties = [], files, 
 
       {showTiles && (
         <>
-          {property && <p className="folders-note">Documents for {property.address}.</p>}
+          {property && !onlyProperty && <p className="folders-note">Documents for {property.address}.</p>}
           <ul className="folder-grid">
             {folders.map((item) => {
               const list = box?.get(item.id) || []
@@ -287,6 +290,7 @@ export function FolderBrowser({ companyId, companyName, properties = [], files, 
                 key={file.id}
                 file={file}
                 where={at.folder ? "" : [property ? "" : file.property, folderLabel(file)].filter(Boolean).join(" › ")}
+                viewHref={`/documents/${file.id}${onlyProperty ? "" : "?in=company"}`}
                 checked={selected.includes(file.id)}
                 onToggle={() => toggle(file.id)}
                 writable={writable && canEdit(file)}
@@ -341,7 +345,7 @@ function FolderTile({ name, meta, filled, building = false, onOpen }) {
   )
 }
 
-function FileRow({ file, where, checked, onToggle, writable, canDelete, onEdit, onDelete }) {
+function FileRow({ file, where, viewHref, checked, onToggle, writable, canDelete, onEdit, onDelete }) {
   const kind = fileType(file)
   const thumb = isImage(file) ? file.url || `/api/documents/${file.id}/raw` : ""
   return (
@@ -350,7 +354,7 @@ function FileRow({ file, where, checked, onToggle, writable, canDelete, onEdit, 
         <input type="checkbox" checked={checked} onChange={onToggle} />
         <span className="sr-only">Select {file.name}</span>
       </label>
-      <Link href={`/documents/${file.id}`} className="doc-open">
+      <Link href={viewHref} className="doc-open">
         <span className={`doc-badge is-${kind.toLowerCase()}`} aria-hidden="true">
           {thumb ? <img src={thumb} alt="" loading="lazy" /> : kind === "Excel" ? "XLS" : kind === "Word" ? "DOC" : kind === "Receipt" ? "RCT" : kind === "Video" ? "VID" : kind.toUpperCase().slice(0, 3)}
         </span>
@@ -364,7 +368,7 @@ function FileRow({ file, where, checked, onToggle, writable, canDelete, onEdit, 
         {(file.labels || []).map((item) => <span key={item} className="doc-tag">{item}</span>)}
       </span>
       <span className="doc-actions">
-        <Link href={`/documents/${file.id}`}>View</Link>
+        <Link href={viewHref}>View</Link>
         <a href={`/api/documents/${file.id}/download`}>Download</a>
         {writable && <button type="button" onClick={onEdit}>Edit</button>}
         {canDelete && <button type="button" className="is-danger" onClick={onDelete}>Delete</button>}

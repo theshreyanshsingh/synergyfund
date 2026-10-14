@@ -59,10 +59,9 @@ export function attached(file) {
   return file.kind === "receipt" || file.kind === "photo"
 }
 
-// Where a property's files are browsed: inside its company's Documents. A property not in a company has no folders page.
+// Where a property's files are browsed in folders: the property's own Documents tab.
 export function propertyHome(file) {
-  if (file.propertyCompanyId) return `/companies/${file.propertyCompanyId}?tab=documents&property=${file.propertyId}`
-  return `/properties/${file.propertyId}`
+  return `/properties/${file.propertyId}?tab=documents`
 }
 
 export function fileFolder(file) {

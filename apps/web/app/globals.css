@@ -2519,9 +2519,6 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .copy-row dt { grid-column: 1 / -1; }
 }
 [data-theme="dark"] .doc-badge.is-video { background: #2e1a47; color: #c084fc; }
-.property-company-line { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
-.property-company-docs { color: var(--muted); font-size: 13px; font-weight: 600; }
-.property-company-docs:hover { color: var(--text); text-decoration: underline; }
 .folders-heading { display: flex; align-items: baseline; gap: 6px; margin: 8px 0 0; font-size: 14px; font-weight: 700; }
 .folders-heading em { color: var(--muted); font-style: normal; font-weight: 600; }
 .folders-note { margin: 0; color: var(--muted); font-size: 13px; }

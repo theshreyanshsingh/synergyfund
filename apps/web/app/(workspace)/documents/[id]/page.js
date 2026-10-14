@@ -1,6 +1,7 @@
 "use client"
 
 import { use, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { DetailFrame } from "../../../../components/ui/DetailFrame"
 import { PageSpinner } from "../../../../components/ui/Spinner"
 import { folderName } from "@synergifund/shared"
@@ -22,17 +23,18 @@ function sizeText(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-// Back to the folder the file sits in, on its property or company.
-function backTo(file) {
-  if (file.propertyId && file.propertyCompanyId) return { href: `/companies/${file.propertyCompanyId}?tab=documents&property=${file.propertyId}${file.folder ? `&folder=${file.folder}` : ""}`, label: [file.property || "Property", folderName("property", file.folder)].filter(Boolean).join(" · ") }
-  // A property that is not in a company yet: its files are in the Documents library.
-  if (file.propertyId) return { href: `/documents?property=${file.propertyId}`, label: `Documents · ${file.property || "Property"}` }
+// Back to the folder the file sits in: on the company when it was opened from the company's Documents,
+// otherwise on its property or company.
+function backTo(file, fromCompany) {
+  if (file.propertyId && file.propertyCompanyId && fromCompany) return { href: `/companies/${file.propertyCompanyId}?tab=documents&property=${file.propertyId}${file.folder ? `&folder=${file.folder}` : ""}`, label: [file.property || "Property", folderName("property", file.folder)].filter(Boolean).join(" · ") }
+  if (file.propertyId) return { href: `/properties/${file.propertyId}?tab=documents${file.folder ? `&folder=${file.folder}` : ""}`, label: [file.property || "Property", folderName("property", file.folder)].filter(Boolean).join(" · ") }
   if (file.companyId) return { href: `/companies/${file.companyId}?tab=documents${file.folder ? `&folder=${file.folder}` : ""}`, label: [file.company || "Company", folderName("company", file.folder)].filter(Boolean).join(" · ") }
   return { href: "/documents", label: "Documents" }
 }
 
 export default function DocumentViewerPage({ params }) {
   const { id } = use(params)
+  const search = useSearchParams()
   const preview = useApi(`/documents/${id}/preview`)
   const [sheet, setSheet] = useState(0)
   const data = preview.data
@@ -41,7 +43,7 @@ export default function DocumentViewerPage({ params }) {
   const header = current?.rows?.[0] || []
   const body = current?.rows?.slice(1) || []
 
-  const back = backTo(data.file)
+  const back = backTo(data.file, search.get("in") === "company")
   return (
     <DetailFrame
       backHref={back.href}
