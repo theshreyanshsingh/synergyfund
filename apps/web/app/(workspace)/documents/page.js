@@ -111,7 +111,7 @@ function DocumentsScreen() {
             <header>
               <div>
                 <p>Documents</p>
-                <h2>Import properties from Excel</h2>
+                <h2>Import properties</h2>
                 <span>Rows become properties and loans. Blank cells stay blank and nothing is overwritten.</span>
               </div>
               <button type="button" className="icon-btn" onClick={closeUpload} aria-label="Close">×</button>

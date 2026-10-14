@@ -2497,7 +2497,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 }
 
 /* Company overview: wire instructions and EIN you can copy */
-.company-overview { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 12px; align-items: start; margin-bottom: 12px; }
+.company-overview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; margin-bottom: 12px; }
 .company-overview .property-card, .company-side .property-card { margin-bottom: 0; }
 .company-side { display: grid; gap: 12px; }
 .copy-list { display: grid; margin: 0; }

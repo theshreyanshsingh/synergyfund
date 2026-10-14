@@ -98,7 +98,7 @@ function PropertiesScreen() {
         loading={!list.data && !list.error}
         customize={false}
         title="Properties"
-        secondary={canImport ? { label: importBusy === "reading" ? "Reading…" : importBusy === "saving" ? "Saving…" : "Import Excel", busy: Boolean(importBusy), disabled: Boolean(importBusy), onClick: () => { if (!importBusy) importInput.current?.click() } } : null}
+        secondary={canImport ? { label: importBusy === "reading" ? "Reading…" : importBusy === "saving" ? "Saving…" : "Import", busy: Boolean(importBusy), disabled: Boolean(importBusy), onClick: () => { if (!importBusy) importInput.current?.click() } } : null}
         action={writable ? { label: "New property", onClick: () => setOpen(true) } : null}
         lead={(
           <>

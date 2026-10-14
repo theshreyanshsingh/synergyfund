@@ -67,7 +67,7 @@ export function ImportCompanies({ onClose, onImported }) {
   return (
     <FormSheet
       eyebrow="Companies"
-      title="Import from Excel"
+      title="Import companies"
       hint="One company per row, in the Companies template format. Required: Company Name, Entity Type, State of Formation, Effective Date, Authorized Member, Address, City, State and Zip. Owned Properties, wire instructions and EIN are optional."
       onClose={pending ? () => {} : onClose}
       onSubmit={submit}

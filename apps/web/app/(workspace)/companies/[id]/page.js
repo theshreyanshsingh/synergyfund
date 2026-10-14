@@ -230,28 +230,21 @@ export default function CompanyPage({ params }) {
             <Figure label="Loan balance" value={total(totals.loanBalance)} hint={totals.monthlyPayment != null ? `${money(totals.monthlyPayment)} a month` : ""} />
           </section>
 
+          {/* Left: the company's details, then its required documents. Right: the EIN, then the wire instructions. */}
           <div className="company-overview">
-            <section className="panel property-card company-wire">
-              <div className="property-card-head">
-                <div>
-                  <h2>Wire Instructions</h2>
-                  <p className="property-missing">Copy a line, or copy everything at once to paste into an email.</p>
-                </div>
-                {writable && <button type="button" className="tool" onClick={() => { setError(""); setBanking(wireForm(company)) }}>{hasWire ? "Edit" : "Add"}</button>}
-              </div>
-              {hasWire ? (
-                <>
-                  <dl className="copy-list">
-                    {WIRE_LINES.map(([key, label]) => <CopyRow key={key} label={label} value={wire[key]} secret={key === "accountNumber"} />)}
-                  </dl>
-                  <CopyAll text={WIRE_LINES.filter(([key]) => wire[key]).map(([key, label]) => `${label}: ${wire[key]}`).join("\n")} />
-                </>
-              ) : (
-                <p className="property-missing">No wire instructions yet.{writable ? " Add the bank name, routing number, account number, entity name and bank address." : ""}</p>
-              )}
-            </section>
-
             <div className="company-side">
+              <section className="panel property-card">
+                <h2>Details</h2>
+                <dl className="property-facts">
+                  <Fact label="Entity Type" value={company.entityType} />
+                  <Fact label="State of Formation" value={company.stateOfFormation} />
+                  <Fact label="Effective Date" value={dateLabel(company.formedOn)} />
+                  <Fact label="Authorized Member" value={company.contactName} />
+                  <Fact label="Address" value={fullAddress(company)} wide />
+                  <Fact label="Notes" value={company.notes && <span className="company-notes">{company.notes}</span>} wide />
+                </dl>
+                {company.updatedBy && <p className="property-missing company-updated">Last updated by {company.updatedBy}.</p>}
+              </section>
               <section className="panel property-card company-required">
                 <div className="property-card-head">
                   <div>
@@ -271,6 +264,8 @@ export default function CompanyPage({ params }) {
                   ))}
                 </ul>
               </section>
+            </div>
+            <div className="company-side">
               <section className="panel property-card">
                 <div className="property-card-head">
                   <div><h2>EIN Number</h2></div>
@@ -282,18 +277,24 @@ export default function CompanyPage({ params }) {
                   <p className="property-missing">No EIN yet.</p>
                 )}
               </section>
-
-              <section className="panel property-card">
-                <h2>Details</h2>
-                <dl className="property-facts">
-                  <Fact label="Entity Type" value={company.entityType} />
-                  <Fact label="State of Formation" value={company.stateOfFormation} />
-                  <Fact label="Effective Date" value={dateLabel(company.formedOn)} />
-                  <Fact label="Authorized Member" value={company.contactName} />
-                  <Fact label="Address" value={fullAddress(company)} wide />
-                  <Fact label="Notes" value={company.notes && <span className="company-notes">{company.notes}</span>} wide />
-                </dl>
-                {company.updatedBy && <p className="property-missing company-updated">Last updated by {company.updatedBy}.</p>}
+              <section className="panel property-card company-wire">
+                <div className="property-card-head">
+                  <div>
+                    <h2>Wire Instructions</h2>
+                    <p className="property-missing">Copy a line, or copy everything at once to paste into an email.</p>
+                  </div>
+                  {writable && <button type="button" className="tool" onClick={() => { setError(""); setBanking(wireForm(company)) }}>{hasWire ? "Edit" : "Add"}</button>}
+                </div>
+                {hasWire ? (
+                  <>
+                    <dl className="copy-list">
+                      {WIRE_LINES.map(([key, label]) => <CopyRow key={key} label={label} value={wire[key]} secret={key === "accountNumber"} />)}
+                    </dl>
+                    <CopyAll text={WIRE_LINES.filter(([key]) => wire[key]).map(([key, label]) => `${label}: ${wire[key]}`).join("\n")} />
+                  </>
+                ) : (
+                  <p className="property-missing">No wire instructions yet.{writable ? " Add the bank name, routing number, account number, entity name and bank address." : ""}</p>
+                )}
               </section>
             </div>
           </div>

@@ -93,7 +93,7 @@ function CompaniesScreen() {
         loading={!list.data && !list.error}
         title="Companies"
         action={writable ? { label: "New company", onClick: () => startCreate() } : null}
-        secondary={writable ? { label: "Import Excel", onClick: () => { setImported(null); setImporting(true) } } : null}
+        secondary={writable ? { label: "Import", onClick: () => { setImported(null); setImporting(true) } } : null}
         lead={writable && (imported || owners.length > 0) && (
           <>
           {imported && (

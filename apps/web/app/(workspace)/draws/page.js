@@ -219,7 +219,7 @@ export default function DrawsPage() {
           {canImport && (
             <button type="button" className="import-button import-trigger" disabled={Boolean(importBusy)} aria-busy={Boolean(importBusy) || undefined} onClick={() => { if (!importBusy) importInput.current?.click() }}>
               {importBusy && <span className="spinner spinner-sm tw:animate-spin" />}
-              {importBusy === "reading" ? "Reading…" : importBusy === "saving" ? "Saving…" : "Import Excel"}
+              {importBusy === "reading" ? "Reading…" : importBusy === "saving" ? "Saving…" : "Import"}
             </button>
           )}
           {writable && (

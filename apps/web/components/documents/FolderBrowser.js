@@ -221,7 +221,7 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
               const list = box?.get(item.id) || []
               return (
                 <li key={item.id}>
-                  <FolderTile name={item.name} meta={list.length || !item.required ? folderSummary(list) : ""} filled={list.length > 0} status={item.required ? (list.length ? "ok" : "missing") : ""} onOpen={() => go({ propertyId: at.propertyId, folder: item.id })} />
+                  <FolderTile name={item.name} meta={list.length || !item.required ? folderSummary(list) : ""} filled={list.length > 0} status={item.required ? (list.length ? "ok" : "missing") : ""} icon={item.required ? "file" : "folder"} onOpen={() => go({ propertyId: at.propertyId, folder: item.id })} />
                 </li>
               )
             })}
@@ -387,10 +387,11 @@ function QuickAccess({ files, writable, viewHref, onOpenFolder, onUpload }) {
 }
 
 // A required company document shows Missing until a file is in its folder, then On file.
-function FolderTile({ name, meta, filled, status = "", building = false, onOpen }) {
+// The four required company documents show a document icon; ordinary folders a folder.
+function FolderTile({ name, meta, filled, status = "", building = false, icon = "folder", onOpen }) {
   return (
     <button type="button" className={status === "missing" ? "folder-tile is-missing" : "folder-tile"} onClick={onOpen} title={name}>
-      <span className={`folder-icon${filled ? "" : " is-empty"}${building ? " is-property" : ""}`}><Icon name={building ? "building" : "folder"} size={22} /></span>
+      <span className={`folder-icon${filled ? "" : " is-empty"}${building ? " is-property" : ""}`}><Icon name={building ? "building" : icon} size={22} /></span>
       <span className="folder-copy">
         <strong>{name}</strong>
         <span className="folder-meta">
