@@ -338,7 +338,7 @@ export default function CompanyPage({ params }) {
           <div className="property-card-head">
             <div>
               <h2>Documents</h2>
-              <p className="property-missing">{company.name}’s papers and the documents of every property it owns, in folders. Open a folder to view, download or upload. Tick files to download several at once.</p>
+              <p className="property-missing">{company.name}’s papers and the documents of every property it owns, in folders. Open a folder to view, download or upload. Tick files or folders, in as many folders as you like, then Download zip.</p>
             </div>
             <Link href={`/documents?company=${id}`} className="tool">Open in Documents</Link>
           </div>

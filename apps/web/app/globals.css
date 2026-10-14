@@ -2465,6 +2465,20 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .folders-search { display: flex; align-items: center; gap: 8px; flex: 0 1 260px; min-width: 0; height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--white); color: var(--muted); }
 .folders-search input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; }
 .folders-upload { display: inline-flex; align-items: center; gap: 6px; height: 38px; }
+.folders-bar .folders-upload { margin-left: 0; }
+/* Download zip, beside Upload: greyed out until a file or folder is ticked, then shows how many. */
+.folders-zip { justify-content: center; height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--white); color: var(--text); font-weight: 600; white-space: nowrap; }
+.folders-zip:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.folders-zip:not(:disabled):hover { background: color-mix(in srgb, var(--accent) 8%, var(--white)); }
+.folders-zip:disabled { color: var(--faint); cursor: not-allowed; }
+.folders-zip:disabled:hover { background: var(--white); }
+.zip-count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; line-height: 1; }
+/* What is ticked, across folders, with a way to untick it all. */
+.folders-basket { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 8px 8px 8px 14px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--accent) 6%, var(--white)); font-size: 13px; }
+.folders-basket > span { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+.folders-basket strong { color: var(--text); }
+.folders-basket .tool { height: 30px; font-weight: 600; }
+.folder-picked { color: var(--accent); font-size: 12px; font-weight: 650; }
 .folder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
 .folder-tile { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--white); color: var(--text); text-align: left; cursor: pointer; transition: border-color .12s, background .12s; }
 .folder-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent) 4%, var(--white)); }
@@ -2477,7 +2491,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .folders-select { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 40px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--white); }
 .folders-select.is-on { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent) 6%, var(--white)); }
 .folders-select .tool { display: inline-flex; align-items: center; gap: 6px; height: 32px; }
-.folders-select > label:first-child { margin-right: auto; }
+.folders-select-hint { margin-right: auto; color: var(--muted); font-size: 12px; }
 .folders-check { display: inline-flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer; }
 .folders-check input { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); cursor: pointer; }
 .folders-move select { height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--white); color: var(--text); font: inherit; font-size: 13px; }
@@ -2507,7 +2521,11 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .crumbs-trail li.is-current { flex-basis: 100%; }
   .crumbs-trail li.is-current .crumbs-sep { display: none; }
   .crumbs-here { height: auto; max-width: 100%; padding: 0; font-size: 18px; letter-spacing: -0.01em; }
-  .folders-search { flex: 1 1 auto; }
+  /* Search on its own line, then Download zip and Upload side by side. */
+  .folders-search { flex: 1 1 100%; }
+  .folders-zip, .folders-bar .folders-upload { flex: 1 1 calc(50% - 5px); min-width: 0; justify-content: center; height: 40px; }
+  .folders-select-hint { display: none; }
+  .folders-select .folders-check { margin-right: auto; }
   .folder-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .folder-tile { padding: 12px; }
   .folder-file { grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; }
@@ -2664,10 +2682,9 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .quick-list li:hover .pick-box, .quick-list li:focus-within .pick-box, .quick-list li.is-picked .pick-box, .folders.is-picking .quick-list .pick-box { opacity: 1; pointer-events: auto; }
 .folder-cell.is-picked .folder-tile { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--white)); }
 .quick-list li.is-picked { background: color-mix(in srgb, var(--accent) 6%, var(--white)); }
-.folders-pickbar { gap: 10px; }
-.folders-pick-count { margin-right: auto; font-size: 13px; font-weight: 650; }
 /* Touch screens cannot hover: the tick boxes stay visible (beside the arrow on a folder, in place of the icon on a document). */
 @media (hover: none) {
   .pick-box { opacity: 1; pointer-events: auto; }
   .folder-cell .pick-box { left: auto; right: 34px; top: 50%; width: 30px; height: 30px; border-radius: 8px; }
+  .folder-cell.has-pick .folder-copy { padding-right: 40px; }
 }

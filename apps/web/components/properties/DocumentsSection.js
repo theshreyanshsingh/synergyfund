@@ -14,7 +14,7 @@ export function DocumentsSection({ property, company, writable, canDelete, initi
         <div>
           <h2>Documents</h2>
           <p className="property-missing">
-            Everything filed under {property.address}, in folders. Open a folder to view, download or upload. Tick files to download several at once.
+            Everything filed under {property.address}, in folders. Open a folder to view, download or upload. Tick files or folders, in as many folders as you like, then Download zip.
             {company ? <> The same files are in <Link href={`/companies/${company.id}?tab=documents&property=${property.id}`} className="property-company">{company.name}</Link> › Documents.</> : null}
           </p>
         </div>

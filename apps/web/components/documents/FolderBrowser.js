@@ -41,7 +41,7 @@ function startDownload(files, name) {
 
 // A company's Documents as folders: its own folders, then one folder per property it owns, each with the property folders.
 // With `onlyProperty`, the same folders for one property on its own page (the same files the company shows).
-// Open a folder, tick files, download or view them, upload into it.
+// Open a folder, tick files (ticks stay while you move between folders), download them as one zip, view them, upload.
 export function FolderBrowser({ companyId = "", companyName = "", properties: owned = [], onlyProperty = null, files, writable, canDelete, canEdit = () => true, onChanged, initialProperty = "", initialFolder = "" }) {
   const properties = onlyProperty ? [onlyProperty] : owned
   const top = onlyProperty ? onlyProperty.id : ""
@@ -49,9 +49,9 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
   const startFolders = startProperty ? PROPERTY_FOLDERS : COMPANY_FOLDERS
   const [at, setAt] = useState({ propertyId: startProperty, folder: startFolders.some((item) => item.id === initialFolder) ? initialFolder : "" })
   const [query, setQuery] = useState("")
+  // Ticked files, kept while you move between folders: tick a file in Contracts, another in Renovation & Rehab,
+  // then download them together with Download zip beside Upload.
   const [selected, setSelected] = useState([])
-  // Folders, property folders and Quick Access documents ticked on the folder view, to download together as one zip.
-  const [tilePicks, setTilePicks] = useState([])
   const [uploading, setUploading] = useState(null)
   const [editing, setEditing] = useState(null)
   const [dragging, setDragging] = useState(false)
@@ -89,7 +89,10 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
     return pool.filter((file) => [file.name, ...(file.labels || []), fileType(file), file.uploadedBy, folderLabel(file), file.property].join(" ").toLowerCase().includes(needle))
   }, [at.folder, needle, box, property, tree])
 
-  const picked = listed.filter((file) => selected.includes(file.id))
+  const selectedSet = useMemo(() => new Set(selected), [selected])
+  // Only files that still exist (a ticked file may have been deleted or moved away since).
+  const selectedFiles = useMemo(() => files.filter((file) => selectedSet.has(file.id)), [files, selectedSet])
+  const picked = listed.filter((file) => selectedSet.has(file.id))
   const allPicked = listed.length > 0 && picked.length === listed.length
   // Files can move between folders of the same property, or between the company's folders.
   const pickedPlaces = new Set(picked.map((file) => file.propertyId || companyPlace))
@@ -97,37 +100,43 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
   const moveFolders = picked[0]?.propertyId ? PROPERTY_FOLDERS : COMPANY_FOLDERS
   const suggestions = [...new Set(files.flatMap((file) => file.labels || []))]
 
+  // Moving between folders keeps what is ticked.
   function go(next) {
     setAt(onlyProperty ? { ...next, propertyId: onlyProperty.id } : next)
-    setSelected([])
-    setTilePicks([])
     setQuery("")
     setError("")
   }
 
-  // A ticked tile's files: "folder:<company or property id>:<folder>", "property:<id>" or "doc:<property id>:<quick access id>".
-  function filesForPick(key) {
-    const [kind, place, id] = key.split(":")
-    if (kind === "folder") return (place === "company" ? tree.company : tree.owned.get(place))?.get(id) || []
-    if (kind === "property") return [...(tree.owned.get(place)?.values() || [])].flat()
-    if (kind === "doc") {
-      const item = QUICK_ACCESS.find((entry) => entry.id === id)
-      return item ? quickAccessFiles([...(tree.owned.get(place)?.values() || [])].flat(), item) : []
-    }
-    return []
-  }
-  const pickedTileFiles = [...new Map(tilePicks.flatMap(filesForPick).map((file) => [file.id, file])).values()]
-  const pickedFolders = tilePicks.filter((key) => !key.startsWith("doc:")).length
-  const pickedDocs = tilePicks.length - pickedFolders
-
-  function togglePick(key) {
-    setError("")
-    setTilePicks((list) => (list.includes(key) ? list.filter((item) => item !== key) : [...list, key]))
-  }
-
   function toggle(id) {
+    setError("")
     setSelected((list) => (list.includes(id) ? list.filter((item) => item !== id) : [...list, id]))
   }
+
+  // A group of files (a folder, a whole property, a Quick Access document): how many are ticked.
+  function groupState(list) {
+    const count = list.filter((file) => selectedSet.has(file.id)).length
+    return { count, total: list.length, all: list.length > 0 && count === list.length, some: count > 0 && count < list.length }
+  }
+
+  // Ticking a group ticks all its files; ticking it again (when all are ticked) unticks them.
+  function toggleGroup(list) {
+    setError("")
+    const ids = list.map((file) => file.id)
+    const all = ids.length > 0 && ids.every((id) => selectedSet.has(id))
+    setSelected((current) => (all ? current.filter((id) => !ids.includes(id)) : [...new Set([...current, ...ids])]))
+  }
+
+  // "Contracts", "3318 Nolan St › Contracts" or "Operating Agreement": where ticked files sit, for the summary,
+  // in the order the folders show (the company's first, then each property's).
+  const selectedPlaces = useMemo(() => {
+    const order = (file) => {
+      const place = file.propertyId ? properties.findIndex((item) => item.id === file.propertyId) : -1
+      const folder = (file.propertyId ? PROPERTY_FOLDERS : COMPANY_FOLDERS).findIndex((item) => item.id === file.folder)
+      return (place + 1) * 100 + (folder < 0 ? 99 : folder)
+    }
+    const sorted = [...selectedFiles].sort((a, b) => order(a) - order(b))
+    return [...new Set(sorted.map((file) => [!onlyProperty && file.propertyId ? file.property : "", folderLabel(file)].filter(Boolean).join(" › ")))]
+  }, [selectedFiles, properties, onlyProperty])
 
   function download(list) {
     setError("")
@@ -140,7 +149,11 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
       setError("That is too much to download at once. Tick fewer files.")
       return
     }
-    startDownload(list, [companyName, property?.address, current?.name].filter(Boolean).join(" - ") || "Documents")
+    // Named after what is in it: the company, the property when all the files are from one, the folder when all are from one.
+    const onePlace = new Set(list.map((file) => file.propertyId || "company")).size === 1
+    const oneFolder = onePlace && new Set(list.map((file) => file.folder)).size === 1
+    const placeName = onePlace && list[0].propertyId ? properties.find((item) => item.id === list[0].propertyId)?.address || list[0].property : ""
+    startDownload(list, [companyName, placeName, oneFolder ? folderLabel(list[0]) : ""].filter(Boolean).join(" - ") || "Documents")
   }
 
   async function moveTo(target) {
@@ -156,7 +169,9 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
       }
     }
     setBusy("")
-    setSelected([])
+    // The moved files are done with; anything ticked elsewhere stays ticked.
+    const moved = picked.map((file) => file.id)
+    setSelected((list) => list.filter((id) => !moved.includes(id)))
     if (failed.length) setError(failed.join(" "))
     onChanged?.()
   }
@@ -214,7 +229,7 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
   const parentCrumb = trail.length > 1 ? trail[trail.length - 2] : null
   const showTiles = !at.folder && !needle
   return (
-    <div className={["folders", dragging ? "is-dragging" : "", tilePicks.length ? "is-picking" : ""].filter(Boolean).join(" ")} {...dropProps}>
+    <div className={["folders", dragging ? "is-dragging" : "", selectedFiles.length ? "is-picking" : ""].filter(Boolean).join(" ")} {...dropProps}>
       <div className="folders-bar">
         <nav className="folders-crumbs" aria-label="Breadcrumb">
           {parentCrumb && (
@@ -244,8 +259,18 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
         <label className="folders-search">
           <Icon name="search" size={14} />
           <span className="sr-only">Search files</span>
-          <input type="search" value={query} placeholder={whereNow ? `Search ${whereNow}` : "Search all folders"} onChange={(event) => { setQuery(event.target.value); setSelected([]) }} />
+          <input type="search" value={query} placeholder={whereNow ? `Search ${whereNow}` : "Search all folders"} onChange={(event) => setQuery(event.target.value)} />
         </label>
+        <button
+          type="button"
+          className="tool folders-zip"
+          disabled={!selectedFiles.length}
+          onClick={() => download(selectedFiles)}
+          title={selectedFiles.length ? `Download the ${selectedFiles.length === 1 ? "ticked file" : `${selectedFiles.length} ticked files as one zip`}` : "Tick files or folders to download them together"}
+        >
+          <Icon name="download" size={14} /> {selectedFiles.length === 1 ? "Download" : "Download zip"}
+          {selectedFiles.length > 0 && <span className="zip-count">{selectedFiles.length}</span>}
+        </button>
         {writable && (
           <button type="button" className="primary folders-upload" onClick={() => openUpload()}>
             <Icon name="upload" size={14} /> {at.folder ? "Upload here" : "Upload"}
@@ -255,27 +280,26 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
 
       {error && <p className="banner">{error}</p>}
 
+      {selectedFiles.length > 0 && (
+        <div className="folders-basket" role="status">
+          <span>
+            <strong>{selectedFiles.length} {selectedFiles.length === 1 ? "file" : "files"} selected</strong>
+            {" "}
+            {selectedPlaces.length <= 3 ? `in ${selectedPlaces.join(", ")}` : `in ${selectedPlaces.length} folders`}
+          </span>
+          <button type="button" className="tool" onClick={() => setSelected([])}>Clear selection</button>
+        </div>
+      )}
+
       {showTiles && (
         <>
           {property && !onlyProperty && <p className="folders-note">Documents for {property.address}.</p>}
-          {tilePicks.length > 0 && (
-            <div className="folders-select is-on folders-pickbar" role="status">
-              <span className="folders-pick-count">
-                {[pickedFolders ? `${pickedFolders} ${pickedFolders === 1 ? "folder" : "folders"}` : "", pickedDocs ? `${pickedDocs} ${pickedDocs === 1 ? "document" : "documents"}` : ""].filter(Boolean).join(" and ")} selected · {pickedTileFiles.length} {pickedTileFiles.length === 1 ? "file" : "files"}
-              </span>
-              <button type="button" className="tool" disabled={!pickedTileFiles.length} onClick={() => download(pickedTileFiles)}>
-                <Icon name="download" size={14} /> {!pickedTileFiles.length ? "Nothing to download" : pickedTileFiles.length === 1 ? "Download" : "Download zip"}
-              </button>
-              <button type="button" className="tool" onClick={() => setTilePicks([])}>Clear</button>
-            </div>
-          )}
           <ul className="folder-grid">
             {folders.map((item) => {
               const list = box?.get(item.id) || []
-              const key = `folder:${property ? property.id : "company"}:${item.id}`
               return (
                 <li key={item.id}>
-                  <FolderTile name={item.name} meta={list.length || !item.required ? folderSummary(list) : ""} filled={list.length > 0} status={item.required ? (list.length ? "ok" : "missing") : ""} icon={item.required ? "file" : "folder"} picked={tilePicks.includes(key)} onPick={() => togglePick(key)} onOpen={() => go({ propertyId: at.propertyId, folder: item.id })} />
+                  <FolderTile name={item.name} meta={list.length || !item.required ? folderSummary(list) : ""} filled={list.length > 0} status={item.required ? (list.length ? "ok" : "missing") : ""} icon={item.required ? "file" : "folder"} pick={groupState(list)} onPick={() => toggleGroup(list)} onOpen={() => go({ propertyId: at.propertyId, folder: item.id })} />
                 </li>
               )
             })}
@@ -287,8 +311,8 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
               viewHref={(file) => `/documents/${file.id}${onlyProperty ? "" : "?in=company"}`}
               onOpenFolder={(folder) => go({ propertyId: property.id, folder })}
               onUpload={uploadQuick}
-              isPicked={(item) => tilePicks.includes(`doc:${property.id}:${item.id}`)}
-              onPick={(item) => togglePick(`doc:${property.id}:${item.id}`)}
+              pickState={(list) => groupState(list)}
+              onPick={(list) => toggleGroup(list)}
             />
           )}
           {!property && (
@@ -302,7 +326,7 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
                     const list = [...(tree.owned.get(item.id)?.values() || [])].flat().sort(newestFirst)
                     return (
                       <li key={item.id}>
-                        <FolderTile name={item.address} meta={folderSummary(list)} filled={list.length > 0} building picked={tilePicks.includes(`property:${item.id}`)} onPick={() => togglePick(`property:${item.id}`)} onOpen={() => go({ propertyId: item.id, folder: "" })} />
+                        <FolderTile name={item.address} meta={folderSummary(list)} filled={list.length > 0} building pick={groupState(list)} onPick={() => toggleGroup(list)} onOpen={() => go({ propertyId: item.id, folder: "" })} />
                       </li>
                     )
                   })}
@@ -318,25 +342,18 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
           {listed.length > 0 && (
             <div className={picked.length ? "folders-select is-on" : "folders-select"}>
               <label className="folders-check">
-                <input type="checkbox" checked={allPicked} ref={(element) => { if (element) element.indeterminate = picked.length > 0 && !allPicked }} onChange={() => setSelected(allPicked ? [] : listed.map((file) => file.id))} />
-                <span>{picked.length ? `${picked.length} selected` : "Select all"}</span>
+                <input type="checkbox" checked={allPicked} ref={(element) => { if (element) element.indeterminate = picked.length > 0 && !allPicked }} onChange={() => toggleGroup(listed)} />
+                <span>{picked.length ? `${picked.length} of ${listed.length} selected${at.folder ? " here" : ""}` : `Select all ${listed.length}`}</span>
               </label>
-              {picked.length > 0 ? (
-                <>
-                  <button type="button" className="tool" onClick={() => download(picked)}><Icon name="download" size={14} /> {picked.length === 1 ? "Download" : `Download ${picked.length} as zip`}</button>
-                  {movable && (
-                    <label className="folders-move">
-                      <span className="sr-only">Move to folder</span>
-                      <select value="" disabled={Boolean(busy)} onChange={(event) => moveTo(event.target.value)}>
-                        <option value="">{busy || "Move to…"}</option>
-                        {moveFolders.filter((item) => !(at.folder && item.id === at.folder)).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                      </select>
-                    </label>
-                  )}
-                  <button type="button" className="tool" onClick={() => setSelected([])}>Clear</button>
-                </>
-              ) : (
-                at.folder && <button type="button" className="tool" onClick={() => download(listed)}><Icon name="download" size={14} /> Download {listed.length === 1 ? "file" : `all (${listed.length})`}</button>
+              <span className="folders-select-hint">{selectedFiles.length > picked.length ? `${selectedFiles.length - picked.length} more ticked in other folders` : "Tick files here and in other folders, then Download zip"}</span>
+              {movable && (
+                <label className="folders-move">
+                  <span className="sr-only">Move to folder</span>
+                  <select value="" disabled={Boolean(busy)} onChange={(event) => moveTo(event.target.value)}>
+                    <option value="">{busy || "Move to…"}</option>
+                    {moveFolders.filter((item) => !(at.folder && item.id === at.folder)).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  </select>
+                </label>
               )}
             </div>
           )}
@@ -362,7 +379,7 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
                 file={file}
                 where={at.folder ? "" : [property ? "" : file.property, folderLabel(file)].filter(Boolean).join(" › ")}
                 viewHref={`/documents/${file.id}${onlyProperty ? "" : "?in=company"}`}
-                checked={selected.includes(file.id)}
+                checked={selectedSet.has(file.id)}
                 onToggle={() => toggle(file.id)}
                 writable={writable && canEdit(file)}
                 canDelete={canDelete && !attached(file)}
@@ -406,7 +423,7 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
 }
 
 // Key documents of a property in one place: each shows its newest file, or that it is not uploaded yet.
-function QuickAccess({ files, writable, viewHref, onOpenFolder, onUpload, isPicked, onPick }) {
+function QuickAccess({ files, writable, viewHref, onOpenFolder, onUpload, pickState, onPick }) {
   return (
     <section className="quick-access" aria-label="Quick Access Documents">
       <h3 className="folders-heading">Quick Access Documents</h3>
@@ -415,11 +432,12 @@ function QuickAccess({ files, writable, viewHref, onOpenFolder, onUpload, isPick
           const list = quickAccessFiles(files, item).sort(newestFirst)
           const latest = list[0]
           const folder = PROPERTY_FOLDERS.find((entry) => entry.id === item.folder)
+          const pick = pickState(list)
           return (
-            <li key={item.id} className={[latest ? "" : "is-empty", latest && isPicked(item) ? "is-picked" : ""].filter(Boolean).join(" ")}>
+            <li key={item.id} className={[latest ? "" : "is-empty", pick.count ? "is-picked" : ""].filter(Boolean).join(" ")}>
               <span className="quick-lead">
                 <span className={latest ? "quick-icon" : "quick-icon is-empty"} aria-hidden="true"><Icon name="file" size={18} /></span>
-                {latest && <label className="pick-box" title={`Select ${item.name}`}><input type="checkbox" checked={isPicked(item)} onChange={() => onPick(item)} aria-label={`Select ${item.name}`} /></label>}
+                {latest && <PickBox label={item.name} pick={pick} onPick={() => onPick(list)} />}
               </span>
               <span className="quick-copy">
                 <strong>{item.name}</strong>
@@ -445,12 +463,22 @@ function QuickAccess({ files, writable, viewHref, onOpenFolder, onUpload, isPick
   )
 }
 
+// A tick box that can be fully or partly ticked (some of a folder's files ticked).
+function PickBox({ label, pick, onPick }) {
+  return (
+    <label className="pick-box" title={pick.all ? `Untick ${label}` : `Tick ${label}`}>
+      <input type="checkbox" checked={pick.all} ref={(element) => { if (element) element.indeterminate = pick.some }} onChange={onPick} aria-label={`Select ${label}`} />
+    </label>
+  )
+}
+
 // A required company document shows Missing until a file is in its folder, then On file.
 // The four required company documents show a document icon; ordinary folders a folder.
-function FolderTile({ name, meta, filled, status = "", building = false, icon = "folder", picked = false, onPick, onOpen }) {
+function FolderTile({ name, meta, filled, status = "", building = false, icon = "folder", pick = null, onPick, onOpen }) {
+  const count = pick?.count || 0
   return (
-    // Hovering shows a tick box over the icon: tick several folders, then download them together.
-    <div className={picked ? "folder-cell is-picked" : "folder-cell"}>
+    // Hovering shows a tick box over the icon: tick folders (or files inside them), then Download zip.
+    <div className={["folder-cell", count ? "is-picked" : "", onPick && pick?.total > 0 ? "has-pick" : ""].filter(Boolean).join(" ")}>
     <button type="button" className={status === "missing" ? "folder-tile is-missing" : "folder-tile"} onClick={onOpen} title={name}>
       <span className={`folder-icon${filled ? "" : " is-empty"}${building ? " is-property" : ""}`}><Icon name={building ? "building" : icon} size={22} /></span>
       <span className="folder-copy">
@@ -458,11 +486,12 @@ function FolderTile({ name, meta, filled, status = "", building = false, icon = 
         <span className="folder-meta">
           {status && <DocStatus missing={status === "missing"} />}
           {meta && <em>{meta}</em>}
+          {count > 0 && <span className="folder-picked">{pick.all ? `All ${count} selected` : `${count} of ${pick.total} selected`}</span>}
         </span>
       </span>
       <Icon name="chevron" size={14} />
     </button>
-    {onPick && <label className="pick-box" title={`Select ${name}`}><input type="checkbox" checked={picked} onChange={onPick} aria-label={`Select ${name}`} /></label>}
+    {onPick && pick?.total > 0 && <PickBox label={name} pick={pick} onPick={onPick} />}
     </div>
   )
 }
