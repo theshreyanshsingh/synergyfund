@@ -2069,7 +2069,6 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .doc-empty { display: grid; justify-items: center; gap: 10px; padding: 36px 16px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); text-align: center; }
 .doc-empty strong { color: var(--text); font-weight: 650; }
 .doc-picked { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-.label-editor-wrap { display: grid; gap: 8px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (max-width: 760px) {
   .doc-panel { padding: 12px; }
@@ -2688,3 +2687,17 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .folder-cell .pick-box { left: auto; right: 34px; top: 50%; width: 30px; height: 30px; border-radius: 8px; }
   .folder-cell.has-pick .folder-copy { padding-right: 40px; }
 }
+
+/* Installed iPhone app: a file being downloaded, before it goes to the share sheet (Save to Files, Mail…). */
+.download-tray { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 1130; display: flex; align-items: center; gap: 10px; width: min(440px, calc(100vw - 32px)); box-sizing: border-box; padding: 10px 8px 10px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--white); color: var(--text); box-shadow: 0 14px 40px rgba(0, 0, 0, .22); transform: translateX(-50%); animation: download-in .16s ease-out; }
+@keyframes download-in { from { opacity: 0; transform: translate(-50%, 8px); } }
+.download-tray-icon { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.download-tray.is-error .download-tray-icon { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
+.download-spinner { width: 16px; height: 16px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: loader-spin .8s linear infinite; }
+.download-tray-copy { display: grid; flex: 1; gap: 1px; min-width: 0; }
+.download-tray-copy strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.download-tray-copy small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.download-tray.is-error .download-tray-copy small { color: var(--bad); }
+.download-tray-save { flex: none; height: 36px; margin-left: 0; }
+.download-tray-close { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 10px; color: var(--muted); cursor: pointer; }
+.download-tray-close:hover { background: var(--hover); color: var(--text); }

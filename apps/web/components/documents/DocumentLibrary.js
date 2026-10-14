@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
-import { COMPANY_DOCUMENT_LABELS, DOCUMENT_LABELS, allowedDocument, documentAccept, documentType, folderName, foldersFor } from "@synergifund/shared"
+import { DOCUMENT_LABELS, allowedDocument, documentAccept, documentType, folderName, foldersFor } from "@synergifund/shared"
 import { FormSheet } from "../ui/FormSheet"
 import { api, uploadForm } from "../../lib/api"
 
@@ -267,8 +267,6 @@ export function DocumentLibrary({ files, properties = [], companies = [], fixedP
           companies={companyOptions}
           fixedPlace={fixedPlace}
           defaultPlace={fixedPlace || (activeProperty !== "all" && activeProperty !== "none" ? activeProperty : "")}
-          labelOptions={labelOptions}
-          suggestions={labelCounts.map((item) => item.label)}
           requireProperty={requireProperty}
           onUploaded={() => onChanged?.()}
           onClose={() => setUploading(false)}
@@ -282,8 +280,6 @@ export function DocumentLibrary({ files, properties = [], companies = [], fixedP
           companies={companyOptions}
           fixedPlace={fixedPlace || (attached(editing) ? placeOf(editing) : "")}
           requireProperty={requireProperty}
-          labelOptions={labelOptions}
-          suggestions={labelCounts.map((item) => item.label)}
           onClose={() => setEditing(null)}
           onDone={() => { setEditing(null); onChanged?.() }}
         />
@@ -318,44 +314,6 @@ function DocumentRow({ file, showProperty, writable, canDelete, onEdit, onDelete
         {canDelete && !attached(file) && <button type="button" className="is-danger" onClick={onDelete}>Delete</button>}
       </span>
     </li>
-  )
-}
-
-export function LabelPicker({ value, onChange, suggestions = [], base = DOCUMENT_LABELS }) {
-  const [draft, setDraft] = useState("")
-  const options = [...new Set([...base, ...suggestions])]
-  const has = (item) => value.some((existing) => existing.toLowerCase() === item.toLowerCase())
-  function add(item) {
-    const text = String(item || "").trim().replace(/\s+/g, " ").slice(0, 40)
-    if (!text || has(text) || value.length >= 8) return
-    const standard = [...base, ...DOCUMENT_LABELS, ...COMPANY_DOCUMENT_LABELS].find((label) => label.toLowerCase() === text.toLowerCase())
-    onChange([...value, standard || text])
-  }
-  return (
-    <div className="label-editor-wrap">
-      <div className="label-editor">
-        {value.map((item) => <button key={item} type="button" className="label-chip" onClick={() => onChange(value.filter((existing) => existing !== item))} aria-label={`Remove label ${item}`}>{item} ×</button>)}
-        <input
-          value={draft}
-          placeholder={value.length ? "Add another label" : "Type a label, or pick one below"}
-          maxLength={40}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === ",") {
-              event.preventDefault()
-              add(draft)
-              setDraft("")
-            } else if (event.key === "Backspace" && !draft && value.length) {
-              onChange(value.slice(0, -1))
-            }
-          }}
-          onBlur={() => { if (draft.trim()) { add(draft); setDraft("") } }}
-        />
-      </div>
-      <div className="label-suggestions">
-        {options.filter((item) => !has(item)).map((item) => <button key={item} type="button" onClick={() => add(item)}>{item}</button>)}
-      </div>
-    </div>
   )
 }
 
@@ -412,11 +370,11 @@ function typeProblem(file, place) {
   return `${file.name}: only PDF, Word, Excel${placeType(place) === "property" ? ", image and video" : " and image"} files can be uploaded.`
 }
 
-export function UploadSheet({ properties = [], companies = [], fixedPlace, defaultPlace, defaultFolder = "", initialFiles = [], defaultLabels = [], title = "", placeName = "", labelOptions = DOCUMENT_LABELS, suggestions = [], requireProperty, onUploaded, onClose, onDone }) {
+// `labels` are not chosen here: only Quick Access passes one (e.g. "Purchase Contract") so the file shows there.
+export function UploadSheet({ properties = [], companies = [], fixedPlace, defaultPlace, defaultFolder = "", initialFiles = [], labels = [], title = "", placeName = "", requireProperty, onUploaded, onClose, onDone }) {
   const [files, setFiles] = useState(initialFiles)
   const [place, setPlace] = useState(defaultPlace || "")
   const [folder, setFolder] = useState(defaultFolder)
-  const [labels, setLabels] = useState(defaultLabels)
   const [pending, setPending] = useState(false)
   const [progress, setProgress] = useState("")
   const [error, setError] = useState("")
@@ -459,7 +417,7 @@ export function UploadSheet({ properties = [], companies = [], fixedPlace, defau
       body.set("propertyId", target.propertyId)
       if (target.companyId) body.set("companyId", target.companyId)
       if (activeFolder) body.set("folder", activeFolder)
-      body.set("labels", JSON.stringify(labels))
+      if (labels.length) body.set("labels", JSON.stringify(labels))
       try {
         await uploadForm("/documents", body, (share) => setProgress(`Uploading ${counter}${Math.round(share * 100)}%`))
       } catch (err) {
@@ -504,20 +462,16 @@ export function UploadSheet({ properties = [], companies = [], fixedPlace, defau
         </label>
         <PlaceField properties={properties} companies={companies} value={place} onChange={changePlace} fixedPlace={fixedPlace} requireProperty={requireProperty} />
         <FolderField place={where} value={activeFolder} onChange={setFolder} />
-        <div className="field wide">
-          <span>Labels <em>· optional</em></span>
-          <LabelPicker value={labels} onChange={setLabels} suggestions={suggestions} base={labelOptions} />
-        </div>
       </div>
     </FormSheet>
   )
 }
 
-export function EditSheet({ file, properties = [], companies = [], fixedPlace, requireProperty, labelOptions = DOCUMENT_LABELS, suggestions = [], onClose, onDone }) {
+// A file's labels are left as they are (Quick Access finds documents by them).
+export function EditSheet({ file, properties = [], companies = [], fixedPlace, requireProperty, onClose, onDone }) {
   const [name, setName] = useState(file.name)
   const [place, setPlace] = useState(placeOf(file) === "none" ? "" : placeOf(file))
   const [folder, setFolder] = useState(file.folder || "")
-  const [labels, setLabels] = useState(file.labels || [])
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const where = fixedPlace && fixedPlace !== "none" ? fixedPlace : place
@@ -538,7 +492,7 @@ export function EditSheet({ file, properties = [], companies = [], fixedPlace, r
     setError("")
     setPending(true)
     try {
-      const body = { name, labels, folder: activeFolder }
+      const body = { name, folder: activeFolder }
       if (!fixedPlace) {
         const target = placeBody(place)
         body.propertyId = target.propertyId
@@ -555,15 +509,11 @@ export function EditSheet({ file, properties = [], companies = [], fixedPlace, r
   }
 
   return (
-    <FormSheet eyebrow="Documents" title="Edit file" hint={attached(file) ? "This file belongs to an expense or weekly photo set, so it stays on its property. You can rename it, move it to another folder and change its labels." : fixedPlace ? "Change its name, its folder or its labels." : companies.length && !requireProperty ? "Change its name, where it is filed, its folder or its labels." : "Change its name, the property it belongs to, its folder or its labels."} onClose={onClose} onSubmit={submit} submitLabel="Save" pending={pending} error={error}>
+    <FormSheet eyebrow="Documents" title="Edit file" hint={attached(file) ? "This file belongs to an expense or weekly photo set, so it stays on its property. You can rename it or move it to another folder." : fixedPlace ? "Change its name or its folder." : companies.length && !requireProperty ? "Change its name, where it is filed or its folder." : "Change its name, the property it belongs to or its folder."} onClose={onClose} onSubmit={submit} submitLabel="Save" pending={pending} error={error}>
       <div className="form-grid">
         <label className="field wide"><span>Name</span><input value={name} onChange={(event) => setName(event.target.value)} required maxLength={200} /></label>
         <PlaceField properties={properties} companies={companies} value={place} onChange={changePlace} fixedPlace={fixedPlace} requireProperty={requireProperty} />
         <FolderField place={where} value={activeFolder} onChange={setFolder} />
-        <div className="field wide">
-          <span>Labels <em>· optional</em></span>
-          <LabelPicker value={labels} onChange={setLabels} suggestions={suggestions} base={labelOptions} />
-        </div>
       </div>
     </FormSheet>
   )

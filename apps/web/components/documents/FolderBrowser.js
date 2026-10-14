@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
-import { COMPANY_DOCUMENT_LABELS, COMPANY_FOLDERS, DOCUMENT_LABELS, PROPERTY_FOLDERS, QUICK_ACCESS, quickAccessFiles } from "@synergifund/shared"
+import { COMPANY_FOLDERS, PROPERTY_FOLDERS, QUICK_ACCESS, quickAccessFiles } from "@synergifund/shared"
 import { api } from "../../lib/api"
 import { Icon } from "../ui/Icon"
 import { EditSheet, UploadSheet, attached, dateLabel, fileType, isImage, sizeLabel } from "./DocumentLibrary"
@@ -28,12 +28,15 @@ function folderSummary(list) {
 }
 
 // Starts a download without leaving the page: one file as it is, several as a zip.
+// (In the installed iPhone app, DownloadTray catches the click and uses the share sheet instead.)
 function startDownload(files, name) {
   const link = document.createElement("a")
   link.href = files.length === 1
     ? `/api/documents/${files[0].id}/download`
     : `/api/documents/zip?ids=${files.map((file) => file.id).join(",")}&name=${encodeURIComponent(name)}`
   link.rel = "noopener"
+  link.dataset.name = files.length === 1 ? files[0].name : `${name}.zip`
+  link.dataset.size = String(files.reduce((total, file) => total + (file.size || 0), 0))
   document.body.appendChild(link)
   link.click()
   link.remove()
@@ -98,7 +101,6 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
   const pickedPlaces = new Set(picked.map((file) => file.propertyId || companyPlace))
   const movable = picked.length > 0 && writable && pickedPlaces.size === 1 && picked.every((file) => canEdit(file))
   const moveFolders = picked[0]?.propertyId ? PROPERTY_FOLDERS : COMPANY_FOLDERS
-  const suggestions = [...new Set(files.flatMap((file) => file.labels || []))]
 
   // Moving between folders keeps what is ticked.
   function go(next) {
@@ -398,11 +400,9 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
           fixedPlace={uploading.place}
           defaultFolder={uploading.folder}
           initialFiles={uploading.files}
-          defaultLabels={uploading.labels || []}
+          labels={uploading.labels || []}
           title={uploading.title || ""}
           placeName={uploading.where}
-          labelOptions={uploading.place === companyPlace ? COMPANY_DOCUMENT_LABELS : DOCUMENT_LABELS}
-          suggestions={suggestions}
           onUploaded={() => onChanged?.()}
           onClose={() => setUploading(null)}
           onDone={() => { setUploading(null); onChanged?.() }}
@@ -412,8 +412,6 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
         <EditSheet
           file={editing}
           fixedPlace={editing.propertyId || companyPlace}
-          labelOptions={editing.propertyId ? DOCUMENT_LABELS : COMPANY_DOCUMENT_LABELS}
-          suggestions={suggestions}
           onClose={() => setEditing(null)}
           onDone={() => { setEditing(null); onChanged?.() }}
         />

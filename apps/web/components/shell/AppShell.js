@@ -12,6 +12,7 @@ import { Icon } from "../ui/Icon"
 import { InstallCard } from "../pwa/InstallCard"
 import { CallLayer } from "../calls/CallLayer"
 import { SoundAlerts } from "./SoundAlerts"
+import { DownloadTray } from "./DownloadTray"
 import { api } from "../../lib/api"
 
 const NARROW = "(max-width: 1100px)"
@@ -83,6 +84,7 @@ export function AppShell({ children }) {
         </main>
         {can(session.user, PERMISSIONS.chatUse) && <CallLayer user={session.user} />}
         <SoundAlerts user={session.user} chat={can(session.user, PERMISSIONS.chatUse)} />
+        <DownloadTray />
       </div>
     )
   }
@@ -103,6 +105,7 @@ export function AppShell({ children }) {
       <CommandPalette user={session.user} open={searchOpen} onClose={closeSearch} />
       {can(session.user, PERMISSIONS.chatUse) && <CallLayer user={session.user} />}
       <SoundAlerts user={session.user} chat={can(session.user, PERMISSIONS.chatUse)} />
+      <DownloadTray />
     </div>
   )
 }
