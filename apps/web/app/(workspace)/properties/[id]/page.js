@@ -39,6 +39,10 @@ export default function PropertyDetailPage({ params }) {
   const companies = useApi(editing && session?.user?.role !== "contractor" ? "/companies" : null)
   const property = detail.data?.property
   const editOpened = useRef(false)
+  // On phones the tabs scroll sideways; keep the open one in view (e.g. Documents, the last tab).
+  useEffect(() => {
+    document.querySelector(".property-switch .is-on")?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }, [section, property?.id])
   useEffect(() => {
     if (editOpened.current || !property || search.get("edit") !== "1") return
     if (session?.user && can(session.user, "properties.write")) {

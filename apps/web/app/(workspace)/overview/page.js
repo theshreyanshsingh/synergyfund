@@ -136,12 +136,22 @@ function AttentionItem({ item, onOpen }) {
         <span className="overview-attn-copy">
           <small>{item.kind}{item.tone === "bad" ? " · Overdue" : ""}</small>
           <strong>{item.title}</strong>
-          <em>{[item.property, item.detail, item.date].filter(Boolean).join(" · ")}</em>
+          {/* Lines break between the parts ("12 Oak Lane · Due within 30 days · Oct 24"), never inside a date. */}
+          <em>{[item.property, item.detail, dayLabel(item.date)].filter(Boolean).join("\u00a0· ")}</em>
         </span>
         {item.amount != null && <b>{formatMoney(item.amount)}</b>}
       </button>
     </li>
   )
+}
+
+// "2026-10-21" as "Oct 21", with the year only when it is not this year.
+function dayLabel(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return value || ""
+  const date = new Date(`${value}T12:00:00`)
+  const options = { month: "short", day: "numeric" }
+  if (date.getFullYear() !== new Date().getFullYear()) options.year = "numeric"
+  return date.toLocaleDateString("en-US", options).replace(/ /g, "\u00a0")
 }
 
 function attentionIcon(kind) {

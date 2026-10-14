@@ -242,8 +242,9 @@ a { color: inherit; text-decoration: none; }
 .overview-attn-copy { min-width: 0; }
 .overview-attn small { display: block; margin-bottom: 2px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .overview-attn.tone-bad small { color: var(--bad); }
-.overview-attn strong { display: block; font-size: 13px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.overview-attn em { display: block; margin-top: 3px; color: var(--muted); font-style: normal; font-size: 11px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Up to two lines each, so the property, the reason and the date are not cut off. */
+.overview-attn strong { display: -webkit-box; font-size: 13px; line-height: 1.25; overflow: hidden; overflow-wrap: anywhere; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.overview-attn em { display: -webkit-box; margin-top: 3px; color: var(--muted); font-style: normal; font-size: 11px; line-height: 1.3; overflow: hidden; overflow-wrap: anywhere; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .overview-attn b { align-self: start; padding-top: 18px; font-size: 13px; white-space: nowrap; }
 .overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .overview-card { background: var(--white); border: 1px solid var(--line); border-radius: 16px; padding: 16px 16px 12px; min-width: 0; }
@@ -895,7 +896,9 @@ a { color: inherit; text-decoration: none; }
   .app:not(.is-contractor) .main .workspace-top .draws-actions { flex: 0 1 auto; flex-wrap: nowrap; min-width: 0; overflow-x: auto; }
   .app:not(.is-contractor) .main .workspace-top .import-button, .app:not(.is-contractor) .main .workspace-top .primary,
   .app:not(.is-contractor) .main .detail-bar .import-button, .app:not(.is-contractor) .main .detail-bar .primary, .app:not(.is-contractor) .main .detail-bar .danger { flex: none; padding: 6px 10px; font-size: 13px; white-space: nowrap; }
-  .app:not(.is-contractor) .main .workspace-top .overview-controls { flex: 0 0 auto; align-self: flex-start; }
+  /* Overview on phones and tablets: title and New property on the first row, the 30 / 60 / 90 days switch on its own row. */
+  .app:not(.is-contractor) .main .workspace-top .overview-controls { order: 3; flex: 1 1 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .app:not(.is-contractor) .main .workspace-top .overview-controls button { padding: 7px 6px; text-align: center; white-space: nowrap; }
   .app:not(.is-contractor) .main .detail-bar { flex-wrap: nowrap; padding-top: 8px; padding-bottom: 8px; }
   .app:not(.is-contractor) .main .detail-heading { flex: 1 1 auto; min-width: 0; }
   .app:not(.is-contractor) .main .detail-heading .back-link { display: block; margin: 0 0 1px; font-size: 12px; line-height: 1.2; }
@@ -2446,11 +2449,19 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 /* Folders in a property's or company's Documents */
 .folders { position: relative; display: grid; gap: 12px; min-width: 0; }
 .folders-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.folders-crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; margin-right: auto; font-size: 15px; }
-.folders-crumbs button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 650; cursor: pointer; }
-.folders-crumbs button:hover { text-decoration: underline; }
-.folders-crumbs span { color: var(--faint); }
-.folders-crumbs strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Breadcrumb: All folders › property › folder. Each level above the current one is a link. */
+.folders-crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; margin-right: auto; }
+.crumbs-back { display: none; }
+.crumbs-trail { display: flex; align-items: center; gap: 2px; min-width: 0; margin: 0 0 0 -8px; padding: 0; list-style: none; }
+.crumbs-trail li { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.crumbs-sep { display: grid; place-items: center; flex: none; color: var(--faint); transform: rotate(-90deg); }
+.crumbs-link, .crumbs-here { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 260px; height: 32px; padding: 0 8px; border-radius: 8px; font-size: 14px; white-space: nowrap; }
+.crumbs-link { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.crumbs-link:hover { background: var(--hover); color: var(--text); }
+.crumbs-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.crumbs-here { color: var(--text); font-size: 15px; font-weight: 700; }
+.crumbs-link svg, .crumbs-here svg { flex: none; }
+.crumbs-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .folders-search { display: flex; align-items: center; gap: 8px; flex: 0 1 260px; min-width: 0; height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--white); color: var(--muted); }
 .folders-search input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; }
 .folders-upload { display: inline-flex; align-items: center; gap: 6px; height: 38px; }
@@ -2485,7 +2496,17 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .reader-video { display: grid; place-items: center; padding: 16px; background: #000; }
 .reader-video video { width: 100%; max-height: 75vh; border-radius: 8px; background: #000; }
 @media (max-width: 760px) {
-  .folders-crumbs { flex-basis: 100%; }
+  /* Phones: a back button, the levels above in small type, and the current folder on its own line. */
+  .folders-crumbs { flex-basis: 100%; gap: 10px; }
+  .crumbs-back { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 11px; background: var(--white); color: var(--text); cursor: pointer; }
+  .crumbs-back:active { background: var(--hover); }
+  .crumbs-trail { flex-wrap: wrap; flex: 1; margin-left: 0; row-gap: 0; }
+  .crumbs-trail li:not(.is-current) .crumbs-link { height: 22px; padding: 0 3px; font-size: 12px; max-width: 46vw; }
+  .crumbs-trail li:not(.is-current):first-child .crumbs-link { padding-left: 0; }
+  .crumbs-trail li:not(.is-current) .crumbs-sep svg { width: 10px; height: 10px; }
+  .crumbs-trail li.is-current { flex-basis: 100%; }
+  .crumbs-trail li.is-current .crumbs-sep { display: none; }
+  .crumbs-here { height: auto; max-width: 100%; padding: 0; font-size: 18px; letter-spacing: -0.01em; }
   .folders-search { flex: 1 1 auto; }
   .folder-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .folder-tile { padding: 12px; }
@@ -2630,4 +2651,23 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 @media (max-width: 1100px) {
   .app:not(.is-contractor) .main .detail-meta-below.has-aside { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; }
   .detail-meta-aside { display: inline-flex; flex: none; margin-left: auto; }
+}
+
+/* Tick folders and Quick Access documents to download them together: the icon turns into a tick box on hover. */
+.folder-cell, .quick-lead { position: relative; }
+.quick-lead { display: inline-grid; }
+.pick-box { position: absolute; z-index: 1; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 11px; background: var(--white); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.pick-box input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.folder-cell .pick-box { left: 15px; top: 50%; width: 42px; height: 42px; transform: translateY(-50%); }
+.quick-lead .pick-box { inset: 0; border-radius: 9px; }
+.folder-cell:hover .pick-box, .folder-cell:focus-within .pick-box, .folder-cell.is-picked .pick-box, .folders.is-picking .folder-cell .pick-box,
+.quick-list li:hover .pick-box, .quick-list li:focus-within .pick-box, .quick-list li.is-picked .pick-box, .folders.is-picking .quick-list .pick-box { opacity: 1; pointer-events: auto; }
+.folder-cell.is-picked .folder-tile { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--white)); }
+.quick-list li.is-picked { background: color-mix(in srgb, var(--accent) 6%, var(--white)); }
+.folders-pickbar { gap: 10px; }
+.folders-pick-count { margin-right: auto; font-size: 13px; font-weight: 650; }
+/* Touch screens cannot hover: the tick boxes stay visible (beside the arrow on a folder, in place of the icon on a document). */
+@media (hover: none) {
+  .pick-box { opacity: 1; pointer-events: auto; }
+  .folder-cell .pick-box { left: auto; right: 34px; top: 50%; width: 30px; height: 30px; border-radius: 8px; }
 }

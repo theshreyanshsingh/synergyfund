@@ -50,6 +50,8 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
   const [at, setAt] = useState({ propertyId: startProperty, folder: startFolders.some((item) => item.id === initialFolder) ? initialFolder : "" })
   const [query, setQuery] = useState("")
   const [selected, setSelected] = useState([])
+  // Folders, property folders and Quick Access documents ticked on the folder view, to download together as one zip.
+  const [tilePicks, setTilePicks] = useState([])
   const [uploading, setUploading] = useState(null)
   const [editing, setEditing] = useState(null)
   const [dragging, setDragging] = useState(false)
@@ -98,8 +100,29 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
   function go(next) {
     setAt(onlyProperty ? { ...next, propertyId: onlyProperty.id } : next)
     setSelected([])
+    setTilePicks([])
     setQuery("")
     setError("")
+  }
+
+  // A ticked tile's files: "folder:<company or property id>:<folder>", "property:<id>" or "doc:<property id>:<quick access id>".
+  function filesForPick(key) {
+    const [kind, place, id] = key.split(":")
+    if (kind === "folder") return (place === "company" ? tree.company : tree.owned.get(place))?.get(id) || []
+    if (kind === "property") return [...(tree.owned.get(place)?.values() || [])].flat()
+    if (kind === "doc") {
+      const item = QUICK_ACCESS.find((entry) => entry.id === id)
+      return item ? quickAccessFiles([...(tree.owned.get(place)?.values() || [])].flat(), item) : []
+    }
+    return []
+  }
+  const pickedTileFiles = [...new Map(tilePicks.flatMap(filesForPick).map((file) => [file.id, file])).values()]
+  const pickedFolders = tilePicks.filter((key) => !key.startsWith("doc:")).length
+  const pickedDocs = tilePicks.length - pickedFolders
+
+  function togglePick(key) {
+    setError("")
+    setTilePicks((list) => (list.includes(key) ? list.filter((item) => item !== key) : [...list, key]))
   }
 
   function toggle(id) {
@@ -180,24 +203,43 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
   } : {}
 
   const whereNow = current?.name || (onlyProperty ? "" : property?.address) || ""
+  // Where you are: All folders › (property, on a company) › folder. On phones the parent levels sit small above the
+  // current one, with a back button to go up a level.
+  const trail = [
+    { key: "root", label: "All folders", to: { propertyId: top, folder: "" }, icon: true },
+    ...(property && !onlyProperty ? [{ key: "property", label: property.address, to: { propertyId: property.id, folder: "" } }] : []),
+    ...(current ? [{ key: "folder", label: current.name }] : []),
+  ]
+  const here = trail[trail.length - 1]
+  const parentCrumb = trail.length > 1 ? trail[trail.length - 2] : null
   const showTiles = !at.folder && !needle
   return (
-    <div className={dragging ? "folders is-dragging" : "folders"} {...dropProps}>
+    <div className={["folders", dragging ? "is-dragging" : "", tilePicks.length ? "is-picking" : ""].filter(Boolean).join(" ")} {...dropProps}>
       <div className="folders-bar">
-        <nav className="folders-crumbs" aria-label="Folders">
-          {at.propertyId !== top || at.folder ? <button type="button" onClick={() => go({ propertyId: top, folder: "" })}>All folders</button> : <strong>All folders</strong>}
-          {property && !onlyProperty && (
-            <>
-              <span aria-hidden="true">›</span>
-              {at.folder ? <button type="button" onClick={() => go({ propertyId: property.id, folder: "" })}>{property.address}</button> : <strong>{property.address}</strong>}
-            </>
+        <nav className="folders-crumbs" aria-label="Breadcrumb">
+          {parentCrumb && (
+            <button type="button" className="crumbs-back" onClick={() => go(parentCrumb.to)} aria-label={`Back to ${parentCrumb.label}`} title={`Back to ${parentCrumb.label}`}>
+              <Icon name="back" size={16} />
+            </button>
           )}
-          {current && (
-            <>
-              <span aria-hidden="true">›</span>
-              <strong>{current.name}</strong>
-            </>
-          )}
+          <ol className="crumbs-trail">
+            {trail.map((crumb, index) => (
+              <li key={crumb.key} className={crumb === here ? "is-current" : undefined}>
+                {index > 0 && <span className="crumbs-sep" aria-hidden="true"><Icon name="chevron" size={12} /></span>}
+                {crumb === here ? (
+                  <span className="crumbs-here" aria-current="page" title={crumb.label}>
+                    {crumb.icon && <Icon name="folder" size={15} />}
+                    <span className="crumbs-text">{crumb.label}</span>
+                  </span>
+                ) : (
+                  <button type="button" className="crumbs-link" onClick={() => go(crumb.to)} title={crumb.label}>
+                    {crumb.icon && <Icon name="folder" size={15} />}
+                    <span className="crumbs-text">{crumb.label}</span>
+                  </button>
+                )}
+              </li>
+            ))}
+          </ol>
         </nav>
         <label className="folders-search">
           <Icon name="search" size={14} />
@@ -216,12 +258,24 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
       {showTiles && (
         <>
           {property && !onlyProperty && <p className="folders-note">Documents for {property.address}.</p>}
+          {tilePicks.length > 0 && (
+            <div className="folders-select is-on folders-pickbar" role="status">
+              <span className="folders-pick-count">
+                {[pickedFolders ? `${pickedFolders} ${pickedFolders === 1 ? "folder" : "folders"}` : "", pickedDocs ? `${pickedDocs} ${pickedDocs === 1 ? "document" : "documents"}` : ""].filter(Boolean).join(" and ")} selected · {pickedTileFiles.length} {pickedTileFiles.length === 1 ? "file" : "files"}
+              </span>
+              <button type="button" className="tool" disabled={!pickedTileFiles.length} onClick={() => download(pickedTileFiles)}>
+                <Icon name="download" size={14} /> {!pickedTileFiles.length ? "Nothing to download" : pickedTileFiles.length === 1 ? "Download" : "Download zip"}
+              </button>
+              <button type="button" className="tool" onClick={() => setTilePicks([])}>Clear</button>
+            </div>
+          )}
           <ul className="folder-grid">
             {folders.map((item) => {
               const list = box?.get(item.id) || []
+              const key = `folder:${property ? property.id : "company"}:${item.id}`
               return (
                 <li key={item.id}>
-                  <FolderTile name={item.name} meta={list.length || !item.required ? folderSummary(list) : ""} filled={list.length > 0} status={item.required ? (list.length ? "ok" : "missing") : ""} icon={item.required ? "file" : "folder"} onOpen={() => go({ propertyId: at.propertyId, folder: item.id })} />
+                  <FolderTile name={item.name} meta={list.length || !item.required ? folderSummary(list) : ""} filled={list.length > 0} status={item.required ? (list.length ? "ok" : "missing") : ""} icon={item.required ? "file" : "folder"} picked={tilePicks.includes(key)} onPick={() => togglePick(key)} onOpen={() => go({ propertyId: at.propertyId, folder: item.id })} />
                 </li>
               )
             })}
@@ -233,6 +287,8 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
               viewHref={(file) => `/documents/${file.id}${onlyProperty ? "" : "?in=company"}`}
               onOpenFolder={(folder) => go({ propertyId: property.id, folder })}
               onUpload={uploadQuick}
+              isPicked={(item) => tilePicks.includes(`doc:${property.id}:${item.id}`)}
+              onPick={(item) => togglePick(`doc:${property.id}:${item.id}`)}
             />
           )}
           {!property && (
@@ -246,7 +302,7 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
                     const list = [...(tree.owned.get(item.id)?.values() || [])].flat().sort(newestFirst)
                     return (
                       <li key={item.id}>
-                        <FolderTile name={item.address} meta={folderSummary(list)} filled={list.length > 0} building onOpen={() => go({ propertyId: item.id, folder: "" })} />
+                        <FolderTile name={item.address} meta={folderSummary(list)} filled={list.length > 0} building picked={tilePicks.includes(`property:${item.id}`)} onPick={() => togglePick(`property:${item.id}`)} onOpen={() => go({ propertyId: item.id, folder: "" })} />
                       </li>
                     )
                   })}
@@ -350,7 +406,7 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
 }
 
 // Key documents of a property in one place: each shows its newest file, or that it is not uploaded yet.
-function QuickAccess({ files, writable, viewHref, onOpenFolder, onUpload }) {
+function QuickAccess({ files, writable, viewHref, onOpenFolder, onUpload, isPicked, onPick }) {
   return (
     <section className="quick-access" aria-label="Quick Access Documents">
       <h3 className="folders-heading">Quick Access Documents</h3>
@@ -360,8 +416,11 @@ function QuickAccess({ files, writable, viewHref, onOpenFolder, onUpload }) {
           const latest = list[0]
           const folder = PROPERTY_FOLDERS.find((entry) => entry.id === item.folder)
           return (
-            <li key={item.id} className={latest ? "" : "is-empty"}>
-              <span className={latest ? "quick-icon" : "quick-icon is-empty"} aria-hidden="true"><Icon name="file" size={18} /></span>
+            <li key={item.id} className={[latest ? "" : "is-empty", latest && isPicked(item) ? "is-picked" : ""].filter(Boolean).join(" ")}>
+              <span className="quick-lead">
+                <span className={latest ? "quick-icon" : "quick-icon is-empty"} aria-hidden="true"><Icon name="file" size={18} /></span>
+                {latest && <label className="pick-box" title={`Select ${item.name}`}><input type="checkbox" checked={isPicked(item)} onChange={() => onPick(item)} aria-label={`Select ${item.name}`} /></label>}
+              </span>
               <span className="quick-copy">
                 <strong>{item.name}</strong>
                 <em>
@@ -388,8 +447,10 @@ function QuickAccess({ files, writable, viewHref, onOpenFolder, onUpload }) {
 
 // A required company document shows Missing until a file is in its folder, then On file.
 // The four required company documents show a document icon; ordinary folders a folder.
-function FolderTile({ name, meta, filled, status = "", building = false, icon = "folder", onOpen }) {
+function FolderTile({ name, meta, filled, status = "", building = false, icon = "folder", picked = false, onPick, onOpen }) {
   return (
+    // Hovering shows a tick box over the icon: tick several folders, then download them together.
+    <div className={picked ? "folder-cell is-picked" : "folder-cell"}>
     <button type="button" className={status === "missing" ? "folder-tile is-missing" : "folder-tile"} onClick={onOpen} title={name}>
       <span className={`folder-icon${filled ? "" : " is-empty"}${building ? " is-property" : ""}`}><Icon name={building ? "building" : icon} size={22} /></span>
       <span className="folder-copy">
@@ -401,6 +462,8 @@ function FolderTile({ name, meta, filled, status = "", building = false, icon = 
       </span>
       <Icon name="chevron" size={14} />
     </button>
+    {onPick && <label className="pick-box" title={`Select ${name}`}><input type="checkbox" checked={picked} onChange={onPick} aria-label={`Select ${name}`} /></label>}
+    </div>
   )
 }
 

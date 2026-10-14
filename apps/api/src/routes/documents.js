@@ -300,9 +300,21 @@ documentsRouter.patch(
 const ZIP_MAX_FILES = 150
 const ZIP_MAX_BYTES = 1500 * 1024 * 1024
 
-function zipEntryName(file, used, withFolder) {
-  const base = String(file.name || "file").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim() || "file"
-  const folder = withFolder ? folderName(placeOf(file), folderOf(file)) : ""
+function zipSafe(text) {
+  return String(text || "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim()
+}
+
+function placeIdOf(file) {
+  return file.propertyId ? `p${file.propertyId}` : file.companyId ? `c${file.companyId}` : ""
+}
+
+// The path inside the zip: the property or company first when the zip mixes several, then the folder.
+function zipEntryName(file, used, { withPlace, withFolder, placeNames }) {
+  const base = zipSafe(file.name) || "file"
+  const folder = [
+    withPlace ? zipSafe(placeNames.get(placeIdOf(file)) || "Not filed") : "",
+    withFolder ? zipSafe(folderName(placeOf(file), folderOf(file))) : "",
+  ].filter(Boolean).join("/")
   let name = folder ? `${folder}/${base}` : base
   if (used.has(name.toLowerCase())) {
     const dot = base.lastIndexOf(".")
@@ -326,7 +338,7 @@ function dosTime(value) {
 }
 
 // Writes a zip (files stored as they are; PDFs, Office files, photos and videos are already compressed).
-async function writeZip(res, files) {
+async function writeZip(res, files, placeNames = new Map()) {
   let closed = false
   res.on("close", () => { closed = true })
   const write = (buffer) => new Promise((resolve) => {
@@ -338,7 +350,8 @@ async function writeZip(res, files) {
     }
   })
   const used = new Set()
-  const withFolder = new Set(files.map((file) => `${placeOf(file)}:${folderOf(file)}`)).size > 1
+  const withPlace = new Set(files.map(placeIdOf)).size > 1
+  const withFolder = withPlace || new Set(files.map((file) => `${placeOf(file)}:${folderOf(file)}`)).size > 1
   const entries = []
   let offset = 0
   for (const file of files) {
@@ -349,7 +362,7 @@ async function writeZip(res, files) {
     } catch {
       continue
     }
-    const name = Buffer.from(zipEntryName(file, used, withFolder), "utf8")
+    const name = Buffer.from(zipEntryName(file, used, { withPlace, withFolder, placeNames }), "utf8")
     const crc = zlib.crc32(data) >>> 0
     const { time, day } = dosTime(file.createdAt)
     const header = Buffer.alloc(30)
@@ -419,7 +432,17 @@ documentsRouter.get(
     res.setHeader("Content-Type", "application/zip")
     res.setHeader("Content-Disposition", `attachment; filename="${name.replace(/[^\x20-\x7e]/g, "_")}.zip"; filename*=UTF-8''${encodeURIComponent(name)}.zip`)
     res.setHeader("X-Content-Type-Options", "nosniff")
-    await writeZip(res, files)
+    const propertyIds = [...new Set(files.map((file) => file.propertyId && String(file.propertyId)).filter(Boolean))]
+    const companyIds = [...new Set(files.map((file) => file.companyId && String(file.companyId)).filter(Boolean))]
+    const [properties, companies] = await Promise.all([
+      propertyIds.length ? Property.find({ _id: { $in: propertyIds } }).select("address") : [],
+      companyIds.length && req.user.role !== "contractor" ? Company.find({ _id: { $in: companyIds } }).select("name") : [],
+    ])
+    const placeNames = new Map([
+      ...properties.map((property) => [`p${property._id}`, property.address]),
+      ...companies.map((company) => [`c${company._id}`, company.name]),
+    ])
+    await writeZip(res, files, placeNames)
   }),
 )
 
