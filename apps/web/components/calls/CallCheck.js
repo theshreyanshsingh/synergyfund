@@ -26,6 +26,10 @@ async function gather(iceServers) {
   return found
 }
 
+function isAndroid() {
+  return typeof navigator !== "undefined" && /android/i.test(navigator.userAgent)
+}
+
 export function CallCheck({ admin }) {
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -99,8 +103,11 @@ export function CallCheck({ admin }) {
               ? ring.error
               : ring.failed
                 ? `Sent to ${ring.sent} of ${ring.devices} devices. ${ring.errors.map((item) => `${item.service}: ${item.reason}`).join(" · ")}`
-                : `Sent to ${ring.devices} ${ring.devices === 1 ? "device" : "devices"}. A call notification with Answer and Decline should appear now.`}
+                : `Sent to ${ring.devices} ${ring.devices === 1 ? "device" : "devices"}. It rings for about ${ring.ringsFor || 15} seconds, like a real call. Answer or Decline stops it.`}
           </p>
+        )}
+        {ring && !ring.error && isAndroid() && (
+          <p className="call-check-tip">Want calls to have their own ringtone? Open your phone’s Settings › Apps › SynergiFund › Notifications and pick a sound. Websites cannot choose the sound themselves.</p>
         )}
         {admin && result && !result.relayConfigured && (
           <div className="call-check-help">

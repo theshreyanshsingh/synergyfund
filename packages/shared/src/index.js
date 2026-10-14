@@ -187,6 +187,9 @@ export const PROPERTY_LABELS = ["Financed", "Refinanced", "Flip", "Hold", "Rent"
 
 export const LOAN_LABELS = ["Financed", "Refinanced", "Construction", "Bridge", "Seller financing"]
 export const DOCUMENT_LABELS = ["Purchase contract", "Closing statement", "Title", "Insurance", "Loan", "Appraisal", "Inspection", "Permit", "Invoice", "Lease", "Tax", "Other"]
+export const COMPANY_DOCUMENT_LABELS = ["Articles of organization", "Operating agreement", "EIN letter", "Annual report", "Bank statement", "Tax", "Insurance", "Other"]
+export const COMPANY_TYPES = ["LLC", "Corporation", "S corporation", "Partnership", "Limited partnership", "Trust", "Sole proprietorship", "Other"]
+const STANDARD_DOCUMENT_LABELS = [...new Set([...DOCUMENT_LABELS, ...COMPANY_DOCUMENT_LABELS])]
 
 // Optional labels on a file: trimmed, at most 8, no repeats, matching the standard spelling when one exists.
 export function cleanDocumentLabels(value) {
@@ -204,12 +207,102 @@ export function cleanDocumentLabels(value) {
   for (const item of Array.isArray(list) ? list : []) {
     const text = String(item ?? "").trim().replace(/\s+/g, " ").slice(0, 40)
     if (!text) continue
-    const standard = DOCUMENT_LABELS.find((label) => label.toLowerCase() === text.toLowerCase())
+    const standard = STANDARD_DOCUMENT_LABELS.find((label) => label.toLowerCase() === text.toLowerCase())
     const label = standard || text
     if (!labels.some((existing) => existing.toLowerCase() === label.toLowerCase())) labels.push(label)
     if (labels.length === 8) break
   }
   return labels
+}
+
+// Folders inside a property's and a company's Documents. Every file filed under one lives in exactly one folder.
+export const PROPERTY_FOLDERS = [
+  { id: "contracts", name: "Contracts" },
+  { id: "lender", name: "Lender Documents" },
+  { id: "title", name: "Title Documents" },
+  { id: "insurance", name: "Insurance Documents" },
+  { id: "renovation", name: "Renovation Documents" },
+  { id: "other", name: "Other Documents" },
+  { id: "pictures", name: "Pictures" },
+]
+export const COMPANY_FOLDERS = [
+  { id: "articles", name: "Articles of Organization" },
+  { id: "operating", name: "Operating Agreement" },
+  { id: "ein", name: "EIN Letter" },
+  { id: "good-standing", name: "Certificate of Good Standing" },
+  { id: "other", name: "Other Documents" },
+]
+
+export function foldersFor(place) {
+  if (place === "property") return PROPERTY_FOLDERS
+  if (place === "company") return COMPANY_FOLDERS
+  return []
+}
+
+export function folderName(place, id) {
+  return foldersFor(place).find((folder) => folder.id === id)?.name || ""
+}
+
+// What a file is, from its name: pdf, word, excel, image or video. Anything else is not accepted in Documents.
+const FILE_TYPES = [
+  ["pdf", /\.pdf$/i],
+  ["word", /\.(docx?|rtf)$/i],
+  ["excel", /\.(xlsx?|xlsm|csv)$/i],
+  ["image", /\.(jpe?g|png|gif|webp|heic|heif|avif)$/i],
+  ["video", /\.(mp4|mov|m4v|webm)$/i],
+]
+
+export function documentType(name = "") {
+  return FILE_TYPES.find(([, pattern]) => pattern.test(String(name).trim()))?.[0] || ""
+}
+
+// PDF, Word, Excel and images everywhere; videos only on properties.
+export function allowedDocument(name, place) {
+  const type = documentType(name)
+  if (!type) return false
+  return type !== "video" || place === "property"
+}
+
+export function documentAccept(place) {
+  return `.pdf,.doc,.docx,.rtf,.xls,.xlsx,.xlsm,.csv,image/*,.heic,.heif${place === "property" ? ",video/mp4,video/quicktime,video/webm,.mp4,.mov,.m4v,.webm" : ""}`
+}
+
+const PROPERTY_LABEL_FOLDERS = {
+  "purchase contract": "contracts",
+  lease: "contracts",
+  loan: "lender",
+  appraisal: "lender",
+  title: "title",
+  "closing statement": "title",
+  insurance: "insurance",
+  permit: "renovation",
+  invoice: "renovation",
+  inspection: "renovation",
+}
+const COMPANY_LABEL_FOLDERS = {
+  "articles of organization": "articles",
+  "operating agreement": "operating",
+  "ein letter": "ein",
+  "certificate of good standing": "good-standing",
+}
+
+// The folder a file sits in. Files saved before folders existed are placed by what they are and their labels.
+export function folderOf(file = {}) {
+  const place = file.propertyId ? "property" : file.companyId ? "company" : ""
+  if (!place) return ""
+  const folders = foldersFor(place)
+  if (file.folder && folders.some((folder) => folder.id === file.folder)) return file.folder
+  const labels = (file.labels || []).map((label) => String(label).toLowerCase())
+  if (place === "company") {
+    for (const label of labels) if (COMPANY_LABEL_FOLDERS[label]) return COMPANY_LABEL_FOLDERS[label]
+    return "other"
+  }
+  if (file.kind === "photo") return "pictures"
+  if (file.kind === "receipt") return "renovation"
+  for (const label of labels) if (PROPERTY_LABEL_FOLDERS[label]) return PROPERTY_LABEL_FOLDERS[label]
+  const type = documentType(file.name) || (String(file.mime || "").startsWith("image/") ? "image" : String(file.mime || "").startsWith("video/") ? "video" : "")
+  if (type === "image" || type === "video") return "pictures"
+  return "other"
 }
 
 export const LOAN_STATUSES = ["Current", "Late", "In default", "Paid off"]
@@ -286,6 +379,7 @@ export const NAV = [
   { href: "/payments", label: "Upcoming payments", icon: "card", permission: PERMISSIONS.expensesRead, section: "Plan your day" },
   { href: "/calendar", label: "Calendar", icon: "calendar", permission: PERMISSIONS.expensesRead, section: "Plan your day" },
   { href: "/properties", label: "Properties", icon: "building", permission: PERMISSIONS.propertiesRead, section: "Projects" },
+  { href: "/companies", label: "Companies", icon: "briefcase", permission: PERMISSIONS.propertiesRead, section: "Projects" },
   { href: "/construction", label: "Construction intelligence", icon: "chart", permission: PERMISSIONS.drawsRead, section: "Projects", badge: "Soon" },
   { href: "/loans", label: "Loans & lenders", icon: "bank", permission: PERMISSIONS.propertiesRead, section: "Projects" },
   { href: "/expenses", label: "Expenses", icon: "receipt", permission: PERMISSIONS.expensesRead, section: "Records" },

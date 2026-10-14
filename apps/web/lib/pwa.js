@@ -122,13 +122,6 @@ export async function installApp() {
   return choice.outcome === "accepted"
 }
 
-export function installSteps(state) {
-  if (state.platform === "ios") return "Tap the Share button, then Add to Home Screen."
-  if (state.platform === "safari") return "In Safari, choose File, then Add to Dock."
-  if (state.platform === "android") return "Open the browser menu and tap Install app or Add to Home screen."
-  return "Use the install icon at the right of the address bar, or the browser menu’s Install SynergiFund."
-}
-
 async function workerRegistration() {
   if (!(await navigator.serviceWorker.getRegistration())) await navigator.serviceWorker.register("/sw.js")
   return Promise.race([

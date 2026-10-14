@@ -3,7 +3,8 @@
 import { useState } from "react"
 import { useSession } from "../shell/Providers"
 import { api } from "../../lib/api"
-import { disablePush, enablePush, installApp, installSteps, usePwa } from "../../lib/pwa"
+import { disablePush, enablePush, installApp, usePwa } from "../../lib/pwa"
+import { InstallGuide } from "./InstallGuide"
 import { can } from "@synergifund/shared"
 import { CallCheck } from "../calls/CallCheck"
 
@@ -14,14 +15,14 @@ export function AppOptions() {
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
   const [pending, setPending] = useState(false)
-  const [steps, setSteps] = useState(false)
+  const [guide, setGuide] = useState(false)
   const [notice, setNotice] = useState({ title: "", body: "", href: "/notifications" })
   const installed = pwa.installed
   const iosHint = pwa.platform === "ios" && !pwa.standalone
 
   async function install() {
     if (!pwa.installEvent) {
-      setSteps(true)
+      setGuide(true)
       return
     }
     await installApp()
@@ -84,9 +85,10 @@ export function AppOptions() {
       <div className="settings-row">
         <div>
           <h2>Home screen</h2>
-          <p>{installed ? "SynergiFund is installed on this device." : !pwa.installable ? "This browser cannot install apps. Use Chrome, Edge or Safari to install SynergiFund." : steps || iosHint ? installSteps(pwa) : "Install SynergiFund so it opens from your home screen or dock."}</p>
+          <p>{installed ? "SynergiFund is installed on this device." : !pwa.installable ? "This browser cannot install apps. Use Chrome, Edge or Safari to install SynergiFund." : iosHint ? "Add SynergiFund to your Home Screen to get call and message notifications." : "Install SynergiFund so it opens from your home screen or dock."}</p>
         </div>
-        {!installed && pwa.installable && !iosHint && !steps && <button type="button" className="primary" onClick={install}>Install</button>}
+        {!installed && pwa.installable && <button type="button" className="primary" onClick={install}>Install</button>}
+        {guide && <InstallGuide platform={pwa.platform} onClose={() => setGuide(false)} />}
       </div>
       <div className="settings-row">
         <div>

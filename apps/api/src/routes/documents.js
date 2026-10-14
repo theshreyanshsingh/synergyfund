@@ -1,13 +1,14 @@
+import zlib from "node:zlib"
 import { Router } from "express"
 import mammoth from "mammoth"
 import xlsx from "xlsx"
-import { cleanDocumentLabels } from "@synergifund/shared"
-import { DocumentFile, ImportJob, Loan, Property, Task, User } from "../models/index.js"
+import { allowedDocument, cleanDocumentLabels, documentType, folderName, folderOf, foldersFor } from "@synergifund/shared"
+import { Company, DocumentFile, ImportJob, Loan, Property, Task, User } from "../models/index.js"
 import { lenderForName } from "../services/lenders.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { propertyFilter } from "../services/access.js"
 import { readWorkbook } from "../services/drawImport.js"
-import { deleteStoredFile, materializeStoredFile, publicFileUrl, receiveFile, saveUploadedFile, sendStoredFile, upload } from "../services/files.js"
+import { deleteStoredFile, materializeStoredFile, publicFileUrl, readStoredFile, receiveDocument, receiveFile, saveUploadedFile, sendStoredFile } from "../services/files.js"
 import { recordActivity } from "../services/notify.js"
 
 export const documentsRouter = Router()
@@ -17,8 +18,9 @@ const HIDDEN_KINDS = ["chat", "comp"]
 // so they stay where they were filed.
 const PINNED_KINDS = ["receipt", "photo", "import"]
 
-function present(file, names = new Map(), people = new Map()) {
+function present(file, names = new Map(), people = new Map(), companies = new Map()) {
   const propertyId = file.propertyId ? String(file.propertyId) : ""
+  const companyId = file.companyId ? String(file.companyId) : ""
   return {
     id: String(file._id),
     name: file.name,
@@ -26,6 +28,9 @@ function present(file, names = new Map(), people = new Map()) {
     size: file.size || 0,
     propertyId,
     property: propertyId ? names.get(propertyId) || "" : "",
+    companyId,
+    company: companyId ? companies.get(companyId) || "" : "",
+    folder: folderOf(file),
     labels: file.labels || [],
     kind: file.kind,
     version: file.version,
@@ -36,16 +41,31 @@ function present(file, names = new Map(), people = new Map()) {
   }
 }
 
-async function presentMany(files) {
+// Contractors never see companies, so their copies leave the company out.
+async function presentMany(files, user = null) {
   const propertyIds = [...new Set(files.map((file) => file.propertyId && String(file.propertyId)).filter(Boolean))]
   const userIds = [...new Set(files.map((file) => file.uploadedBy && String(file.uploadedBy)).filter(Boolean))]
-  const [properties, users] = await Promise.all([
-    propertyIds.length ? Property.find({ _id: { $in: propertyIds } }).select("address") : [],
+  const companyIds = [...new Set(files.map((file) => file.companyId && String(file.companyId)).filter(Boolean))]
+  const [properties, users, companies] = await Promise.all([
+    propertyIds.length ? Property.find({ _id: { $in: propertyIds } }).select("address companyId") : [],
     userIds.length ? User.find({ _id: { $in: userIds } }).select("name") : [],
+    companyIds.length && user?.role !== "contractor" ? Company.find({ _id: { $in: companyIds } }).select("name") : [],
   ])
   const names = new Map(properties.map((property) => [String(property._id), property.address]))
+  // A property's documents are kept inside its company's Documents, so links to them need the company.
+  const owners = new Map(properties.map((property) => [String(property._id), property.companyId ? String(property.companyId) : ""]))
   const people = new Map(users.map((user) => [String(user._id), user.name]))
-  return files.map((file) => present(file, names, people))
+  const companyNames = new Map(companies.map((company) => [String(company._id), company.name]))
+  return files.map((file) => {
+    const shown = present(file, names, people, companyNames)
+    shown.propertyCompanyId = shown.propertyId ? owners.get(shown.propertyId) || "" : ""
+    if (user?.role === "contractor") {
+      shown.companyId = ""
+      shown.company = ""
+      shown.propertyCompanyId = ""
+    }
+    return shown
+  })
 }
 
 // Contractors only reach files on their own properties, or files they uploaded.
@@ -57,6 +77,33 @@ async function visibleFile(req, id) {
   if (!file.propertyId) return null
   const allowed = await Property.exists({ _id: file.propertyId, ...propertyFilter(req.user) })
   return allowed ? file : null
+}
+
+// "" or "none" clears the company; anything else must be an existing company. Staff only.
+async function readCompanyChoice(req, value) {
+  const id = String(value ?? "").trim()
+  if (!id || id === "none") return { companyId: null }
+  if (req.user.role === "contractor" || !/^[a-f0-9]{24}$/i.test(id)) return { error: "That company is not available." }
+  const company = await Company.findById(id).select("_id name")
+  return company ? { companyId: company._id, company } : { error: "That company is not available." }
+}
+
+function placeOf(file) {
+  return file.propertyId ? "property" : file.companyId ? "company" : ""
+}
+
+function typeProblem(name, place) {
+  if (allowedDocument(name, place)) return ""
+  if (documentType(name) === "video") return "Videos can only be added to a property."
+  return place === "property" ? "Upload a PDF, Word, Excel, image or video file." : "Upload a PDF, Word, Excel or image file."
+}
+
+// A folder sent by the app must be one of that place's folders. Nothing sent: the file is placed by what it is.
+function readFolder(value, place) {
+  const wanted = String(value ?? "").trim()
+  if (!wanted) return { folder: "" }
+  if (!foldersFor(place).some((folder) => folder.id === wanted)) return { error: place ? `Choose one of this ${place}'s folders.` : "Link the file to a property or a company before choosing a folder." }
+  return { folder: wanted }
 }
 
 // "" or "none" clears the property; anything else must be a property this person can see.
@@ -89,16 +136,30 @@ documentsRouter.get(
         return
       }
     }
+    if (req.query.companyId) {
+      const wanted = String(req.query.companyId)
+      if (req.user.role === "contractor" || !/^[a-f0-9]{24}$/i.test(wanted)) {
+        sendError(res, 404, "That company is not available.")
+        return
+      }
+      if (req.query.properties === "1") {
+        // The company's own papers and the documents of every property it owns, for the company's Documents tab.
+        const owned = await Property.find({ companyId: wanted }).select("_id")
+        filter.$or = [{ companyId: wanted }, { propertyId: { $in: owned.map((property) => property._id) } }]
+      } else {
+        filter.companyId = wanted
+      }
+    }
     if (req.query.q) filter.name = new RegExp(String(req.query.q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
     const items = await DocumentFile.find(filter).sort({ createdAt: -1 })
-    res.json({ items: await presentMany(items) })
+    res.json({ items: await presentMany(items, req.user) })
   }),
 )
 
 documentsRouter.post(
   "/",
   requirePermission("documents.write"),
-  upload.single("file"),
+  receiveDocument("file"),
   asyncHandler(async (req, res) => {
     if (!req.file) {
       sendError(res, 400, "Choose a file to upload.")
@@ -113,14 +174,37 @@ documentsRouter.post(
       sendError(res, 400, "Choose the property this file belongs to.")
       return
     }
+    const owner = await readCompanyChoice(req, req.body.companyId)
+    if (owner.error) {
+      sendError(res, 404, owner.error)
+      return
+    }
+    if (choice.propertyId && owner.companyId) {
+      sendError(res, 400, "File it under a property or a company, not both.")
+      return
+    }
+    const place = choice.propertyId ? "property" : owner.companyId ? "company" : ""
+    const problem = typeProblem(req.file.originalname, place)
+    if (problem) {
+      sendError(res, 400, problem)
+      return
+    }
+    const picked = readFolder(req.body.folder, place)
+    if (picked.error) {
+      sendError(res, 400, picked.error)
+      return
+    }
     const labels = cleanDocumentLabels(req.body.labels)
+    const where = { propertyId: choice.propertyId || undefined, companyId: owner.companyId || undefined }
+    const folder = picked.folder || folderOf({ ...where, labels, kind: "file", name: req.file.originalname, mime: req.file.mimetype })
     const file = await saveUploadedFile(req.file, req.user, {
-      propertyId: choice.propertyId || undefined,
+      ...where,
+      folder: folder || undefined,
       kind: "file",
       labels,
     })
-    await recordActivity({ user: req.user, title: "File uploaded", detail: [file.name, choice.property?.address, labels.join(", ")].filter(Boolean).join(" · "), propertyId: file.propertyId })
-    const [presented] = await presentMany([file])
+    await recordActivity({ user: req.user, title: "File uploaded", detail: [file.name, choice.property?.address, owner.company?.name, folderName(place, folder), labels.join(", ")].filter(Boolean).join(" · "), propertyId: file.propertyId })
+    const [presented] = await presentMany([file], req.user)
     res.status(201).json({ file: presented })
   }),
 )
@@ -139,11 +223,13 @@ documentsRouter.patch(
       return
     }
     const movesProperty = "propertyId" in req.body && String(req.body.propertyId || "") !== (file.propertyId ? String(file.propertyId) : "")
-    if (movesProperty && PINNED_KINDS.includes(file.kind)) {
+    // Contractors cannot see companies, so they never move a file into or out of one.
+    const movesCompany = req.user.role !== "contractor" && "companyId" in req.body && String(req.body.companyId || "") !== (file.companyId ? String(file.companyId) : "")
+    if ((movesProperty || movesCompany) && PINNED_KINDS.includes(file.kind)) {
       sendError(res, 400, "This file belongs to an expense, photo set or draw import, so it stays on its property.")
       return
     }
-    const before = { labels: [...(file.labels || [])], propertyId: file.propertyId ? String(file.propertyId) : "" }
+    const before = { labels: [...(file.labels || [])], propertyId: file.propertyId ? String(file.propertyId) : "", companyId: file.companyId ? String(file.companyId) : "", folder: folderOf(file) }
     if ("labels" in req.body) file.labels = cleanDocumentLabels(req.body.labels)
     let property = null
     if (movesProperty) {
@@ -159,6 +245,38 @@ documentsRouter.patch(
       file.propertyId = choice.propertyId || undefined
       property = choice.property || null
     }
+    let company = null
+    if (movesCompany) {
+      const owner = await readCompanyChoice(req, req.body.companyId)
+      if (owner.error) {
+        sendError(res, 404, owner.error)
+        return
+      }
+      file.companyId = owner.companyId || undefined
+      company = owner.company || null
+    }
+    if (file.propertyId && file.companyId) {
+      sendError(res, 400, "File it under a property or a company, not both.")
+      return
+    }
+    const place = placeOf(file)
+    if ((movesProperty || movesCompany) && file.kind === "file") {
+      const problem = typeProblem(file.name, place)
+      if (problem) {
+        sendError(res, 400, problem === "Videos can only be added to a property." ? "Videos can only be kept on a property." : problem)
+        return
+      }
+    }
+    if ("folder" in req.body) {
+      const picked = readFolder(req.body.folder, place)
+      if (picked.error) {
+        sendError(res, 400, picked.error)
+        return
+      }
+      file.folder = picked.folder || undefined
+    }
+    // Moved to another property or company without a folder: keep the folder if it exists there, otherwise place it again.
+    file.folder = folderOf({ propertyId: file.propertyId, companyId: file.companyId, folder: file.folder, labels: file.labels, kind: file.kind, name: file.name, mime: file.mime }) || undefined
     if ("name" in req.body) {
       const name = String(req.body.name || "").trim().slice(0, 200)
       if (!name) {
@@ -171,9 +289,137 @@ documentsRouter.patch(
     const changes = []
     if (before.labels.join("|") !== (file.labels || []).join("|")) changes.push(file.labels.length ? `Labels: ${file.labels.join(", ")}` : "Labels cleared")
     if (before.propertyId !== (file.propertyId ? String(file.propertyId) : "")) changes.push(property ? `Linked to ${property.address}` : "No longer linked to a property")
+    if (before.companyId !== (file.companyId ? String(file.companyId) : "")) changes.push(company ? `Filed under ${company.name}` : "No longer filed under a company")
+    if (file.folder && before.folder !== file.folder) changes.push(`In ${folderName(place, file.folder)}`)
     await recordActivity({ user: req.user, title: "File updated", detail: [file.name, ...changes].join(" · "), propertyId: file.propertyId })
-    const [presented] = await presentMany([file])
+    const [presented] = await presentMany([file], req.user)
     res.json({ file: presented })
+  }),
+)
+
+const ZIP_MAX_FILES = 150
+const ZIP_MAX_BYTES = 1500 * 1024 * 1024
+
+function zipEntryName(file, used, withFolder) {
+  const base = String(file.name || "file").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim() || "file"
+  const folder = withFolder ? folderName(placeOf(file), folderOf(file)) : ""
+  let name = folder ? `${folder}/${base}` : base
+  if (used.has(name.toLowerCase())) {
+    const dot = base.lastIndexOf(".")
+    const stem = dot > 0 ? base.slice(0, dot) : base
+    const ext = dot > 0 ? base.slice(dot) : ""
+    let count = 2
+    while (used.has(`${folder ? `${folder}/` : ""}${stem} (${count})${ext}`.toLowerCase())) count += 1
+    name = `${folder ? `${folder}/` : ""}${stem} (${count})${ext}`
+  }
+  used.add(name.toLowerCase())
+  return name
+}
+
+function dosTime(value) {
+  const date = new Date(value || Date.now())
+  const year = Math.min(2107, Math.max(1980, date.getFullYear()))
+  return {
+    time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
+    day: ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
+  }
+}
+
+// Writes a zip (files stored as they are; PDFs, Office files, photos and videos are already compressed).
+async function writeZip(res, files) {
+  let closed = false
+  res.on("close", () => { closed = true })
+  const write = (buffer) => new Promise((resolve) => {
+    if (closed || res.write(buffer)) resolve()
+    else {
+      const done = () => { res.off("drain", done); res.off("close", done); resolve() }
+      res.on("drain", done)
+      res.on("close", done)
+    }
+  })
+  const used = new Set()
+  const withFolder = new Set(files.map((file) => `${placeOf(file)}:${folderOf(file)}`)).size > 1
+  const entries = []
+  let offset = 0
+  for (const file of files) {
+    if (closed) return
+    let data
+    try {
+      data = await readStoredFile(file)
+    } catch {
+      continue
+    }
+    const name = Buffer.from(zipEntryName(file, used, withFolder), "utf8")
+    const crc = zlib.crc32(data) >>> 0
+    const { time, day } = dosTime(file.createdAt)
+    const header = Buffer.alloc(30)
+    header.writeUInt32LE(0x04034b50, 0)
+    header.writeUInt16LE(20, 4)
+    header.writeUInt16LE(0x0800, 6)
+    header.writeUInt16LE(0, 8)
+    header.writeUInt16LE(time, 10)
+    header.writeUInt16LE(day, 12)
+    header.writeUInt32LE(crc, 14)
+    header.writeUInt32LE(data.length, 18)
+    header.writeUInt32LE(data.length, 22)
+    header.writeUInt16LE(name.length, 26)
+    header.writeUInt16LE(0, 28)
+    await write(header)
+    await write(name)
+    await write(data)
+    entries.push({ name, crc, size: data.length, time, day, offset })
+    offset += 30 + name.length + data.length
+  }
+  const start = offset
+  for (const entry of entries) {
+    const central = Buffer.alloc(46)
+    central.writeUInt32LE(0x02014b50, 0)
+    central.writeUInt16LE(20, 4)
+    central.writeUInt16LE(20, 6)
+    central.writeUInt16LE(0x0800, 8)
+    central.writeUInt16LE(0, 10)
+    central.writeUInt16LE(entry.time, 12)
+    central.writeUInt16LE(entry.day, 14)
+    central.writeUInt32LE(entry.crc, 16)
+    central.writeUInt32LE(entry.size, 20)
+    central.writeUInt32LE(entry.size, 24)
+    central.writeUInt16LE(entry.name.length, 28)
+    central.writeUInt32LE(entry.offset, 42)
+    await write(central)
+    await write(entry.name)
+    offset += 46 + entry.name.length
+  }
+  const end = Buffer.alloc(22)
+  end.writeUInt32LE(0x06054b50, 0)
+  end.writeUInt16LE(entries.length, 8)
+  end.writeUInt16LE(entries.length, 10)
+  end.writeUInt32LE(offset - start, 12)
+  end.writeUInt32LE(start, 16)
+  await write(end)
+  res.end()
+}
+
+// Several files in one download: /documents/zip?ids=a,b,c&name=Contracts
+documentsRouter.get(
+  "/zip",
+  requirePermission("documents.read"),
+  asyncHandler(async (req, res) => {
+    const ids = [...new Set(String(req.query.ids || "").split(",").map((id) => id.trim()).filter((id) => /^[a-f0-9]{24}$/i.test(id)))]
+    if (!ids.length) return sendError(res, 400, "Choose at least one file.")
+    if (ids.length > ZIP_MAX_FILES) return sendError(res, 400, `Download up to ${ZIP_MAX_FILES} files at a time.`)
+    const files = []
+    for (const id of ids) {
+      const file = await visibleFile(req, id)
+      if (file && !HIDDEN_KINDS.includes(file.kind)) files.push(file)
+    }
+    if (!files.length) return sendError(res, 404, "Those files are not available.")
+    const total = files.reduce((sum, file) => sum + (Number(file.size) || 0), 0)
+    if (total > ZIP_MAX_BYTES) return sendError(res, 400, "That is too much to download at once. Choose fewer files.")
+    const name = String(req.query.name || "SynergiFund documents").replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 100) || "SynergiFund documents"
+    res.setHeader("Content-Type", "application/zip")
+    res.setHeader("Content-Disposition", `attachment; filename="${name.replace(/[^\x20-\x7e]/g, "_")}.zip"; filename*=UTF-8''${encodeURIComponent(name)}.zip`)
+    res.setHeader("X-Content-Type-Options", "nosniff")
+    await writeZip(res, files)
   }),
 )
 
@@ -200,12 +446,22 @@ documentsRouter.get(
       return
     }
     const lower = file.name.toLowerCase()
-    if (lower.endsWith(".xlsx") || lower.endsWith(".xls") || lower.endsWith(".docx")) {
+    const [presented] = await presentMany([file], req.user)
+    const type = documentType(file.name) || (file.mime?.startsWith("image/") ? "image" : file.mime?.startsWith("video/") ? "video" : "")
+    if (type === "pdf" || file.mime === "application/pdf") {
+      res.json({ kind: "pdf", file: presented, url: `/api/documents/${file._id}/raw` })
+      return
+    }
+    if (type === "video") {
+      res.json({ kind: "video", file: presented, url: `/api/documents/${file._id}/raw` })
+      return
+    }
+    if (/\.(xlsx|xlsm|xls|csv|docx)$/.test(lower)) {
       const stored = await materializeStoredFile(file)
       try {
         if (lower.endsWith(".docx")) {
           const result = await mammoth.convertToHtml({ path: stored.path })
-          res.json({ kind: "document", file: (await presentMany([file]))[0], html: result.value })
+          res.json({ kind: "document", file: (await presentMany([file], req.user))[0], html: result.value })
           return
         }
         const book = xlsx.readFile(stored.path)
@@ -213,17 +469,17 @@ documentsRouter.get(
           name,
           rows: xlsx.utils.sheet_to_json(book.Sheets[name], { header: 1, raw: false, defval: "" }).slice(0, 80),
         }))
-        res.json({ kind: "sheet", file: (await presentMany([file]))[0], sheets })
+        res.json({ kind: "sheet", file: (await presentMany([file], req.user))[0], sheets })
       } finally {
         await stored.cleanup()
       }
       return
     }
     if (file.mime?.startsWith("image/")) {
-      res.json({ kind: "image", file: (await presentMany([file]))[0], url: publicFileUrl(file) || `/api/documents/${file._id}/raw` })
+      res.json({ kind: "image", file: presented, url: publicFileUrl(file) || `/api/documents/${file._id}/raw` })
       return
     }
-    res.json({ kind: "file", file: (await presentMany([file]))[0] })
+    res.json({ kind: "file", file: presented })
   }),
 )
 
@@ -241,7 +497,7 @@ documentsRouter.get(
       res.redirect(direct)
       return
     }
-    await sendStoredFile(res, file)
+    await sendStoredFile(res, file, { range: req.headers.range })
   }),
 )
 

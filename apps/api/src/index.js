@@ -8,6 +8,7 @@ import cors from "cors"
 import mongoose from "mongoose"
 import { authRouter } from "./routes/auth.js"
 import { propertiesRouter } from "./routes/properties.js"
+import { companiesRouter } from "./routes/companies.js"
 import { expensesRouter } from "./routes/expenses.js"
 import { drawsRouter } from "./routes/draws.js"
 import { documentsRouter } from "./routes/documents.js"
@@ -37,6 +38,7 @@ const api = express.Router()
 api.use(requireAuth)
 api.use(trackActivity)
 api.use("/properties", propertiesRouter)
+api.use("/companies", companiesRouter)
 api.use("/expenses", expensesRouter)
 api.use("/draws", drawsRouter)
 api.use("/documents", documentsRouter)

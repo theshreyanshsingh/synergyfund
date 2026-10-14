@@ -23,6 +23,8 @@ function DocumentsScreen() {
   const session = useSession()
   const list = useApi("/documents")
   const properties = useApi("/properties")
+  const staff = Boolean(session?.user) && session.user.role !== "contractor"
+  const companies = useApi(staff ? "/companies" : null)
   const [open, setOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState("")
@@ -33,6 +35,7 @@ function DocumentsScreen() {
   const canImport = session?.user && can(session.user, "imports.run")
   const files = list.data?.items || []
   const linked = files.filter((file) => file.propertyId)
+  const companyFiles = files.filter((file) => file.companyId)
 
   function closeUpload() {
     setOpen(false)
@@ -77,7 +80,7 @@ function DocumentsScreen() {
         action={writable ? { label: "Upload", onClick: () => setUploading(true) } : null}
         stats={[
           { key: "files", label: "Files", value: String(files.length), hint: "In the library" },
-          { key: "properties", label: "Properties with files", value: String(new Set(linked.map((file) => file.propertyId)).size), hint: `${linked.length} files linked to a property` },
+          { key: "properties", label: "Properties with files", value: String(new Set(linked.map((file) => file.propertyId)).size), hint: `${linked.length} files linked to a property${companyFiles.length ? ` · ${companyFiles.length} filed under a company` : ""}` },
           { key: "labeled", label: "Labeled", value: String(files.filter((file) => (file.labels || []).length).length), hint: "Files with at least one label" },
           { key: "photos", label: "Photos", value: String(files.filter((file) => fileType(file) === "Photo").length), hint: "Site photos and images" },
         ]}
@@ -87,7 +90,8 @@ function DocumentsScreen() {
             <DocumentLibrary
               files={files}
               properties={(properties.data?.items || []).map((property) => ({ id: property.id, address: property.address }))}
-              initialProperty={params.get("property") || "all"}
+              companies={(companies.data?.items || []).map((company) => ({ id: company.id, name: company.name }))}
+              initialProperty={params.get("company") ? `company:${params.get("company")}` : params.get("property") || "all"}
               writable={Boolean(writable)}
               canDelete={Boolean(canDelete)}
               requireProperty={session?.user?.role === "contractor"}

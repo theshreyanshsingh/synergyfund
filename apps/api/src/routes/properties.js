@@ -1,7 +1,7 @@
 import { Router } from "express"
 import { z } from "zod"
 import { loanSummary, STAGES } from "@synergifund/shared"
-import { Activity, Bill, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
+import { Activity, Bill, Company, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
 import { propertyFilter, ownsProperty } from "../services/access.js"
@@ -71,6 +71,21 @@ const writable = z.object({
   rehabRemaining: z.number().nullable().optional(),
 })
 
+// "" or "none" takes the property out of its company; anything else must be an existing company.
+async function readCompanyChoice(value) {
+  const id = String(value ?? "").trim()
+  if (!id || id === "none") return { companyId: null, company: null }
+  if (!/^[a-f0-9]{24}$/i.test(id)) return { error: "That company is not available." }
+  const company = await Company.findById(id).select("_id name")
+  return company ? { companyId: company._id, company } : { error: "That company is not available." }
+}
+
+async function companyNames(ids) {
+  const wanted = [...new Set(ids.filter(Boolean).map(String))]
+  const companies = wanted.length ? await Company.find({ _id: { $in: wanted } }).select("name") : []
+  return new Map(companies.map((company) => [String(company._id), company.name]))
+}
+
 propertiesRouter.get(
   "/",
   requirePermission("properties.read"),
@@ -88,11 +103,15 @@ propertiesRouter.get(
       res.json({ items: items.map((item) => presentProperty(item, req.user)) })
       return
     }
-    const loans = await Loan.find({ propertyId: { $in: items.map((item) => item._id) } }).select("propertyId status balance payment")
+    const [loans, companies] = await Promise.all([
+      Loan.find({ propertyId: { $in: items.map((item) => item._id) } }).select("propertyId status balance payment"),
+      companyNames(items.map((item) => item.companyId)),
+    ])
     res.json({
       items: items.map((item) => {
         const summary = loanSummary(loans.filter((loan) => String(loan.propertyId) === String(item._id)))
-        return { ...presentProperty(item, req.user), loanStatus: summary.status, loanBalance: summary.balance }
+        const companyId = item.companyId ? String(item.companyId) : ""
+        return { ...presentProperty(item, req.user), company: companies.get(companyId) || "", loanStatus: summary.status, loanBalance: summary.balance }
       }),
     })
   }),
@@ -328,13 +347,14 @@ propertiesRouter.get(
     const schedule = Number(budgets.find((item) => Number(item.budget) > 0)?.budget) || Number(property.rehabBudget) || 0
     const internal = req.user.role !== "contractor"
     if (internal) await ensureLenders()
-    const [expenseDocs, requestDocs, photos, people, loans, bills] = await Promise.all([
+    const [expenseDocs, requestDocs, photos, people, loans, bills, company] = await Promise.all([
       req.permissions.includes("expenses.read") ? Expense.find({ propertyId: property._id }).sort({ createdAt: -1 }) : [],
       req.permissions.includes("expenses.read") ? ExpenseRequest.find({ propertyId: property._id }).sort({ createdAt: -1 }) : [],
       DocumentFile.find({ propertyId: property._id, kind: "photo" }).sort({ createdAt: -1 }),
       User.find({ _id: { $in: property.assignedUserIds || [] } }).select("name email"),
       internal ? Loan.find({ propertyId: property._id }) : [],
       internal && req.permissions.includes("expenses.read") ? Bill.find({ propertyId: property._id, status: { $ne: "Paid" } }).sort({ due: 1 }) : [],
+      internal && property.companyId ? Company.findById(property.companyId).select("name entityType stateOfFormation") : null,
     ])
     if (!internal) {
       const ownRequests = new Set(requestDocs.filter((item) => String(item.requestedBy) === String(req.user._id)).map((item) => String(item._id)))
@@ -350,6 +370,7 @@ propertiesRouter.get(
     }
     res.json({
       property: presentProperty(property, req.user),
+      company: company ? { id: String(company._id), name: company.name, entityType: company.entityType || "", stateOfFormation: company.stateOfFormation || "" } : null,
       rehabSpent,
       pendingExpenses: pending[0]?.total || 0,
       contractors: people.map((person) => ({ id: String(person._id), name: person.name, email: person.email })),
@@ -383,12 +404,18 @@ propertiesRouter.post(
       sendError(res, 400, "A property needs an address.")
       return
     }
+    const choice = await readCompanyChoice(req.body.companyId)
+    if (choice.error) {
+      sendError(res, 404, choice.error)
+      return
+    }
     const scopeLines = parseList(req.body.scopeLines).flatMap((line) => {
       const next = scopeLineFrom(line)
       return next ? [next] : []
     })
     const property = await Property.create({
       ...parsed.data,
+      companyId: choice.companyId || undefined,
       labels: cleanLabelList(parseList(req.body.labels)),
       scopeLines,
       stage: STAGES.includes(parsed.data.stage) ? parsed.data.stage : "Under contract",
@@ -420,7 +447,7 @@ propertiesRouter.post(
         note: "Added with the property",
       })
     }
-    await recordActivity({ user: req.user, title: "Property added", detail: property.address, propertyId: property._id })
+    await recordActivity({ user: req.user, title: "Property added", detail: [property.address, choice.company ? `in ${choice.company.name}` : ""].filter(Boolean).join(" · "), propertyId: property._id })
     res.status(201).json({ property: presentProperty(property, req.user) })
   }),
 )
@@ -440,6 +467,21 @@ propertiesRouter.patch(
       return
     }
     if (!req.permissions.includes("internal.pricing")) delete parsed.data.houseBoughtPrice
+    let companyChange = ""
+    if ("companyId" in req.body && req.user.role !== "contractor") {
+      const choice = await readCompanyChoice(req.body.companyId)
+      if (choice.error) {
+        sendError(res, 404, choice.error)
+        return
+      }
+      const current = property.companyId ? String(property.companyId) : ""
+      const next = choice.companyId ? String(choice.companyId) : ""
+      if (current !== next) {
+        const names = await companyNames([current])
+        companyChange = `Company ${names.get(current) || "none"} → ${choice.company?.name || "none"}`
+        property.companyId = choice.companyId || undefined
+      }
+    }
     const before = property.toObject()
     Object.assign(property, parsed.data, { updatedBy: req.user.name })
     if (("address" in parsed.data && parsed.data.address !== before.address) || ("city" in parsed.data && parsed.data.city !== before.city)) {
@@ -457,6 +499,7 @@ propertiesRouter.patch(
     const after = property.toObject()
     const changes = [
       changeSummary(before, after, PROPERTY_FIELDS),
+      companyChange,
       before.houseBoughtPrice !== after.houseBoughtPrice ? "Internal pricing changed" : "",
       "scopeLines" in req.body ? `Scope of work now ${after.scopeLines.length} lines` : "",
     ].filter(Boolean).join(" · ")

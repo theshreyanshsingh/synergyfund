@@ -93,8 +93,36 @@ export const Property = register(
         },
       ],
       assignedUserIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      companyId: { type: Schema.Types.ObjectId, ref: "Company", index: true },
       position: Number,
       importSource: sourceSchema,
+      updatedBy: String,
+    },
+    { timestamps: true },
+  ),
+)
+
+// A company (LLC, corporation, trust…) that owns properties. Each property belongs to at most one.
+export const Company = register(
+  "Company",
+  new Schema(
+    {
+      name: { type: String, required: true, trim: true },
+      entityType: { type: String, default: "" },
+      stateOfFormation: { type: String, default: "" },
+      formedOn: { type: String, default: "" },
+      address: { type: String, default: "" },
+      contactName: { type: String, default: "" },
+      phone: { type: String, default: "" },
+      email: { type: String, default: "" },
+      notes: { type: String, default: "" },
+      ein: { type: String, default: "" },
+      wireBankName: { type: String, default: "" },
+      wireRoutingNumber: { type: String, default: "" },
+      wireAccountNumber: { type: String, default: "" },
+      wireEntityName: { type: String, default: "" },
+      wireAddress: { type: String, default: "" },
+      createdBy: { type: Schema.Types.ObjectId, ref: "User" },
       updatedBy: String,
     },
     { timestamps: true },
@@ -245,6 +273,9 @@ export const DocumentFile = register(
       storage: { type: String, default: "local" },
       storagePath: { type: String, required: true },
       propertyId: { type: Schema.Types.ObjectId, ref: "Property" },
+      companyId: { type: Schema.Types.ObjectId, ref: "Company", index: true },
+      // The folder inside the property's or company's Documents (see PROPERTY_FOLDERS and COMPANY_FOLDERS).
+      folder: String,
       kind: { type: String, default: "file" },
       labels: { type: [String], default: [] },
       versionGroup: String,

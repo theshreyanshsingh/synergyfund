@@ -64,8 +64,10 @@ export function CallLayer({ user }) {
   return (
     <>
       {calls.incoming.length > 0 && (
-        <div className="call-incoming-stack" role="region" aria-label="Incoming calls" aria-live="assertive">
+        // On a phone, a call that comes in while you are not already in one fills the screen, like a phone call.
+        <div className={calls.current ? "call-incoming-stack" : "call-incoming-stack is-full"} role="region" aria-label="Incoming calls" aria-live="assertive">
           {calls.incoming.map((call) => <IncomingCall key={call.id} call={call} me={calls.me} />)}
+          {calls.incoming.length > 1 && <p className="call-incoming-more">{calls.incoming.length - 1} more {calls.incoming.length === 2 ? "call" : "calls"} waiting</p>}
         </div>
       )}
       {calls.current && <ActiveCall current={calls.current} me={calls.me} myName={user?.name || "You"} audioBlocked={calls.audioBlocked} />}
@@ -103,9 +105,9 @@ function IncomingCall({ call, me }) {
         <span>{call.media === "video" ? "Incoming video call" : "Incoming voice call"}{where ? ` · ${where}` : ""}</span>
       </div>
       <div className="call-incoming-actions">
-        <button type="button" className="call-round is-danger" disabled={busy} onClick={() => declineCall(call.id)} aria-label="Decline" title="Decline"><Icon name="phoneOff" size={18} /></button>
-        <button type="button" className="call-round is-accept" disabled={busy} onClick={() => accept("audio")} aria-label="Answer with voice" title="Answer with voice"><Icon name="phone" size={18} /></button>
-        <button type="button" className="call-round is-accept" disabled={busy} onClick={() => accept("video")} aria-label="Answer with video" title="Answer with video"><Icon name="video" size={18} /></button>
+        <span className="call-incoming-choice"><button type="button" className="call-round is-danger" disabled={busy} onClick={() => declineCall(call.id)} aria-label="Decline" title="Decline"><Icon name="phoneOff" size={18} /></button><em aria-hidden="true">Decline</em></span>
+        <span className="call-incoming-choice"><button type="button" className="call-round is-accept" disabled={busy} onClick={() => accept("audio")} aria-label="Answer with voice" title="Answer with voice"><Icon name="phone" size={18} /></button><em aria-hidden="true">Voice</em></span>
+        <span className="call-incoming-choice"><button type="button" className="call-round is-accept" disabled={busy} onClick={() => accept("video")} aria-label="Answer with video" title="Answer with video"><Icon name="video" size={18} /></button><em aria-hidden="true">Video</em></span>
       </div>
     </div>
   )

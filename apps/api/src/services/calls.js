@@ -3,13 +3,20 @@ import mongoose from "mongoose"
 import { Call, ChatChannel, ChatMessage, ChatRead, Notification, User } from "../models/index.js"
 import { audience, isGuest, loadChannel, presentChannel, presentMessage, usesChat, visibleChannels } from "./chat.js"
 import { chatIo, emitToUsers } from "./chatHub.js"
-import { pushToUsers } from "./push.js"
+import { isApplePush, pushToUsers, sendPush, subscriptionsFor } from "./push.js"
 
 // Everyone in a call connects to everyone else (a mesh), which stays smooth up to about eight people.
 export const MAX_PEERS = 8
 const RING_MS = Number(process.env.CALL_RING_MS) || 45000
 // Big public channels show a "Join" button instead of ringing everybody.
 const RING_LIMIT = 12
+
+// A push notification chimes once, so a ringing phone gets the same notification again every few seconds
+// (same tag, so it replaces itself and alerts again) until the person answers, declines or the call stops ringing.
+// Apple may drop pushes that come too often, so iPhones, iPads and Safari get one every 5 seconds.
+const REPEAT_MS = Math.max(2000, Number(process.env.CALL_REPEAT_MS) || 3000)
+const APPLE_REPEAT_MS = Math.max(REPEAT_MS, Number(process.env.CALL_APPLE_REPEAT_MS) || 5000)
+const REPEAT_FOR_MS = Math.min(RING_MS, Number(process.env.CALL_REPEAT_FOR_MS) || 30000)
 
 // Seconds a dropped connection keeps its place before the person counts as gone.
 const AWAY_MS = Number(process.env.CALL_AWAY_MS) || 20000
@@ -194,6 +201,7 @@ async function endCall(state, reason) {
   state.away.clear()
   for (const timer of state.ringing.values()) clearTimeout(timer)
   state.ringing.clear()
+  stopRepeats(state)
   const outcome = state.answered ? "completed" : reason === "declined" ? "declined" : "missed"
   pushCallOver(state).catch(() => {})
   recordMissed(state).catch((error) => console.error("Missed call note failed", error))
@@ -266,23 +274,41 @@ function ringUntil(state) {
 // Each invited person rings for RING_MS, including people added later in the call.
 function ringPeople(state, userIds, invitedBy) {
   const fresh = userIds.filter((userId) => !inCall(state, userId))
+  const now = Date.now()
   for (const userId of fresh) {
     clearTimeout(state.ringing.get(userId))
     state.declined.delete(userId)
+    state.silenced.delete(userId)
+    state.finalPushed.delete(userId)
+    state.ringStarted.set(userId, now)
     state.ringing.set(userId, setTimeout(() => {
       state.ringing.delete(userId)
+      state.ringStarted.delete(userId)
+      stopRepeats(state, userId)
       emitToUsers([userId], "call:ring-stop", { callId: state.id })
+      // Rang out while the call goes on without them: their phone shows "Missed call" now, not when the call ends.
+      if (live.has(state.id) && state.answered && !inCall(state, userId) && !state.declined.has(userId)) {
+        pushMissedNow(state, userId).catch((error) => console.error("Missed call push failed", error))
+      }
     }, RING_MS))
   }
   if (!fresh.length) return
   emitToUsers(fresh, "call:ring", { call: summary(state), invitedBy: invitedBy || "" })
-  pushRing(state, fresh, invitedBy).catch((error) => console.error("Call push failed", error))
+  pushRing(state, fresh, invitedBy, now).catch((error) => console.error("Call push failed", error))
 }
 
-function stopRinging(state, userId) {
+// Stops this person's ringing. After they answer or decline on one device, their other devices
+// get a quiet notification that replaces the ringing one (the device that acted is skipped).
+function stopRinging(state, userId, { reason = "", endpoint = "" } = {}) {
+  const wasRinging = state.ringing.has(userId)
   clearTimeout(state.ringing.get(userId))
   state.ringing.delete(userId)
+  state.ringStarted.delete(userId)
+  stopRepeats(state, userId)
   emitToUsers([userId], "call:ring-stop", { callId: state.id })
+  if (reason && wasRinging && state.pushed.has(userId)) {
+    pushRingStopped(state, userId, reason, endpoint).catch((error) => console.error("Call push failed", error))
+  }
 }
 
 function placeName(state) {
@@ -292,15 +318,13 @@ function placeName(state) {
 
 // Every device with notifications on rings with "Name is calling you", like a phone,
 // even if SynergiFund is open somewhere else (that screen also shows the ringing card).
-async function pushRing(state, userIds, invitedBy) {
+async function pushRing(state, userIds, invitedBy, startedAt) {
   if (!userIds.length) return
   for (const userId of userIds) state.pushed.add(userId)
   const place = placeName(state)
   const kind = state.media === "video" ? "video" : "voice"
   const added = invitedBy && invitedBy !== state.startedByName
-  // Every device gets the call notification. The server cannot know for sure whether a phone app was just closed,
-  // so the device decides: only a computer with SynergiFund open and in focus skips it (it already shows the ringing card).
-  await pushToUsers(userIds, {
+  const message = {
     kind: "call",
     callId: state.id,
     media: state.media,
@@ -308,11 +332,79 @@ async function pushRing(state, userIds, invitedBy) {
     title: added ? `${invitedBy} is adding you to a ${kind} call` : `${state.startedByName} is calling you`,
     body: `${kind === "video" ? "Video" : "Voice"} call${added ? ` with ${state.startedByName}` : ""}${place ? ` · ${place}` : ""}`,
     href: `/calls?join=${state.id}`,
-    sentAt: Date.now(),
-    ringFor: RING_MS,
+    // When this ring began, so a device can tell a new ring from a late copy of one that already stopped.
+    ringStartedAt: startedAt,
+  }
+  for (const userId of userIds) {
+    state.ringMessages.set(userId, message)
+    startRepeats(state, userId)
+  }
+  // Every device gets the call notification. The server cannot know for sure whether a phone app was just closed,
+  // so the device decides: only a computer with SynergiFund open and in focus skips it (it already shows the ringing card).
+  await pushToUsers(userIds, { ...message, repeat: 0, sentAt: Date.now(), ringFor: RING_MS }, {
+    TTL: Math.max(60, Math.round(RING_MS / 1000)),
+    urgency: "high",
     // No "Topic" header: Apple's push service (iPhone, Safari) refuses every push that has one.
     // The notification tag already makes "Missed call" replace the ringing notification on the device.
-  }, { TTL: Math.max(60, Math.round(RING_MS / 1000)), urgency: "high" })
+  })
+}
+
+// Each ringing person gets two loops: one for their Apple devices and one for the rest (Chrome, Edge, Firefox, Android),
+// each starting from that person's own first ring, so someone added later rings at the same steady pace.
+function startRepeats(state, userId) {
+  stopRepeats(state, userId)
+  const timers = { other: null, apple: null }
+  state.repeats.set(userId, timers)
+  for (const apple of [false, true]) {
+    const key = apple ? "apple" : "other"
+    const every = apple ? APPLE_REPEAT_MS : REPEAT_MS
+    const tick = async () => {
+      if (state.repeats.get(userId) !== timers) return
+      if (!keepsRinging(state, userId)) {
+        timers[key] = null
+        return
+      }
+      timers[key] = "sending"
+      try {
+        await repeatRing(state, userId, apple, every)
+      } catch (error) {
+        console.error("Call push failed", error)
+      }
+      // A newer ring for this person, or the end of the call, replaced these loops while sending.
+      if (state.repeats.get(userId) !== timers) return
+      timers[key] = keepsRinging(state, userId) ? setTimeout(tick, every) : null
+    }
+    timers[key] = setTimeout(tick, every)
+  }
+}
+
+// One person's loops, or everyone's.
+function stopRepeats(state, userId = null) {
+  for (const id of userId ? [userId] : [...state.repeats.keys()]) {
+    const timers = state.repeats.get(id)
+    if (!timers) continue
+    for (const timer of Object.values(timers)) if (timer && timer !== "sending") clearTimeout(timer)
+    state.repeats.delete(id)
+  }
+}
+
+function keepsRinging(state, userId) {
+  const started = state.ringStarted.get(userId)
+  return Boolean(live.has(state.id) && started && state.ringing.has(userId) && Date.now() - started < REPEAT_FOR_MS
+    && !state.silenced.has(userId) && !state.declined.has(userId) && !inCall(state, userId) && state.audienceIds.includes(userId))
+}
+
+// Sends this person's ringing notification again to their Apple devices, or to their other devices.
+async function repeatRing(state, userId, apple, every) {
+  const message = state.ringMessages.get(userId)
+  if (!message) return
+  const subscriptions = (await subscriptionsFor([userId])).filter((subscription) => isApplePush(subscription.endpoint) === apple)
+  // Checked again: they may have answered while the devices were being looked up.
+  if (!subscriptions.length || !keepsRinging(state, userId)) return
+  const started = state.ringStarted.get(userId)
+  const now = Date.now()
+  // A short life: if the device is offline, an old repeat is dropped instead of buzzing late.
+  await sendPush(subscriptions, { ...message, repeat: Math.max(1, Math.round((now - started) / every)), sentAt: now, ringFor: Math.max(1000, RING_MS - (now - started)) }, { TTL: Math.max(5, Math.ceil((every * 2) / 1000)), urgency: "high" })
 }
 
 // Missed calls also land in the Notifications list.
@@ -336,17 +428,37 @@ async function pushCallOver(state) {
   const people = [...state.pushed]
   if (!people.length) return
   const kind = state.media === "video" ? "video" : "voice"
-  const missed = people.filter((userId) => !state.joinedIds.has(userId) && !state.declined.has(userId))
-  const done = people.filter((userId) => !missed.includes(userId))
+  const notJoined = people.filter((userId) => !state.joinedIds.has(userId) && !state.declined.has(userId))
+  // People whose phone already said "Missed call" when their own ringing ran out are not told twice.
+  const missed = notJoined.filter((userId) => !state.finalPushed.has(userId))
+  const done = people.filter((userId) => !notJoined.includes(userId))
   const place = placeName(state)
   const options = { TTL: 24 * 3600, urgency: "normal" }
+  const at = Date.now()
   if (missed.length) {
-    await pushToUsers(missed, { kind: "call-over", callId: state.id, tag: `call-${state.id}`, title: `Missed ${kind} call from ${state.startedByName}`, body: place || "Tap to call back", href: "/calls" }, options)
+    await pushToUsers(missed, { kind: "call-over", at, callId: state.id, tag: `call-${state.id}`, title: `Missed ${kind} call from ${state.startedByName}`, body: place || "Tap to call back", href: "/calls" }, options)
   }
   if (done.length) {
     // Replace the ringing notification on every device that got one.
-    await pushToUsers(done, { kind: "call-over", quiet: true, callId: state.id, tag: `call-${state.id}`, title: `${kind === "video" ? "Video" : "Voice"} call ended`, body: `${state.startedByName}${place ? ` · ${place}` : ""}`, href: "/calls" }, options)
+    await pushToUsers(done, { kind: "call-over", at, quiet: true, callId: state.id, tag: `call-${state.id}`, title: `${kind === "video" ? "Video" : "Voice"} call ended`, body: `${state.startedByName}${place ? ` · ${place}` : ""}`, href: "/calls" }, options)
   }
+}
+
+// Someone's ringing ran out while the others carry on talking.
+async function pushMissedNow(state, userId) {
+  if (!state.pushed.has(userId)) return
+  state.finalPushed.add(userId)
+  const kind = state.media === "video" ? "video" : "voice"
+  const place = placeName(state)
+  await pushToUsers([userId], { kind: "call-over", at: Date.now(), callId: state.id, tag: `call-${state.id}`, title: `Missed ${kind} call from ${state.startedByName}`, body: place ? `${place} · the call is still going` : "The call is still going. Open it to join.", href: `/calls?join=${state.id}` }, { TTL: 24 * 3600, urgency: "normal" })
+}
+
+// Answered or declined on one device: the person's other devices stop showing "is calling you".
+async function pushRingStopped(state, userId, reason, endpoint) {
+  const kind = state.media === "video" ? "Video" : "Voice"
+  const place = placeName(state)
+  const title = reason === "answered" ? "Answered on another device" : "Call declined"
+  await pushToUsers([userId], { kind: "call-over", at: Date.now(), quiet: true, callId: state.id, tag: `call-${state.id}`, title, body: `${kind} call · ${state.startedByName}${place ? ` · ${place}` : ""}`, href: "/calls" }, { TTL: 3600, urgency: "normal" }, endpoint ? [endpoint] : null)
 }
 
 // In a call by being part of the conversation, by being added by someone in the call, or by holding its link.
@@ -361,16 +473,32 @@ async function mayJoin(user, state, key = "") {
   return false
 }
 
-export async function declineCallFor(user, callId) {
+export async function declineCallFor(user, callId, endpoint = "") {
   const me = String(user._id)
   const state = live.get(cleanId(callId))
   if (!state || !state.invitedIds.includes(me) || inCall(state, me)) return false
   state.declined.add(me)
-  stopRinging(state, me)
-  Call.updateOne({ _id: state.id }, { $addToSet: { declinedIds: user._id } }).catch(() => {})
   const waiting = state.invitedIds.filter((id) => !state.declined.has(id) && !state.joinedIds.has(id))
-  if (!state.answered && !waiting.length) await endCall(state, "declined")
+  const ends = !state.answered && !waiting.length
+  // When declining ends the call, the "call ended" notification replaces the ringing one everywhere instead.
+  stopRinging(state, me, ends ? {} : { reason: "declined", endpoint: cleanEndpoint(endpoint) })
+  Call.updateOne({ _id: state.id }, { $addToSet: { declinedIds: user._id } }).catch(() => {})
+  if (ends) await endCall(state, "declined")
   return true
+}
+
+// The ringing notification was swiped away on a device: stop sending it again, but keep the call ringing in the app.
+export function silenceCallFor(user, callId) {
+  const state = live.get(cleanId(callId))
+  const me = String(user._id)
+  if (!state || !state.ringing.has(me)) return false
+  state.silenced.add(me)
+  stopRepeats(state, me)
+  return true
+}
+
+function cleanEndpoint(value) {
+  return typeof value === "string" && value.length < 1000 && /^https:\/\//.test(value) ? value : ""
 }
 
 function cleanMedia(value, fallback) {
@@ -466,6 +594,11 @@ export function registerCallHandlers(socket) {
         joinedIds: new Set([me]),
         declined: new Set(),
         ringing: new Map(),
+        ringStarted: new Map(),
+        ringMessages: new Map(),
+        silenced: new Set(),
+        finalPushed: new Set(),
+        repeats: new Map(),
         guestIds: new Set(),
         pushed: new Set(),
         shareKey: randomBytes(18).toString("base64url"),
@@ -506,7 +639,7 @@ export function registerCallHandlers(socket) {
       await removePeer(state, peerId, { moving: true })
     }
     const others = peerList(state, socket.id)
-    stopRinging(state, me)
+    stopRinging(state, me, { reason: "answered", endpoint: cleanEndpoint(data.endpoint) || socket.data.endpoint || "" })
     const firstAnswer = !state.answered && state.peers.size >= 2
     if (firstAnswer) {
       state.answered = true
@@ -569,7 +702,7 @@ export function registerCallHandlers(socket) {
   })
 
   handle(socket, "call:decline", async (data) => {
-    await declineCallFor(user, data.callId)
+    await declineCallFor(user, data.callId, cleanEndpoint(data.endpoint) || socket.data.endpoint || "")
   })
 
   handle(socket, "call:leave", async (data) => {

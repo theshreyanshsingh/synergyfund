@@ -1,7 +1,7 @@
 "use client"
 
 import { useSyncExternalStore } from "react"
-import { emitChat, requestChat } from "./chatSocket"
+import { currentPushEndpoint, emitChat, requestChat } from "./chatSocket"
 
 // One call at a time. Every person connects straight to every other person (a mesh),
 // so audio and video never pass through our server. The server only passes setup messages along.
@@ -595,10 +595,12 @@ async function enterCall(callId, media, given, key = "") {
   let stream = given
   try {
     if (!stream) stream = await openMedia(media === "video")
-    const reply = await requestChat("call:join", { callId, media, key, audio: true, video: stream.getVideoTracks().length > 0 })
+    const endpoint = await currentPushEndpoint().catch(() => "")
+    const reply = await requestChat("call:join", { callId, media, key, endpoint, audio: true, video: stream.getVideoTracks().length > 0 })
     if (reply.error) throw new Error(reply.error)
     keepStream(stream)
     begin(reply, media)
+    closeRingNotification(callId)
     return true
   } catch (error) {
     stopStream(stream)
@@ -612,10 +614,23 @@ async function enterCall(callId, media, given, key = "") {
   }
 }
 
+// Takes this device's "is calling you" notification away once the ringing is over here.
+// Only the ringing one: "Missed call" and "Call ended" notifications stay.
+function closeRingNotification(callId) {
+  if (typeof navigator === "undefined" || !navigator.serviceWorker?.getRegistration) return
+  navigator.serviceWorker.getRegistration()
+    .then((registration) => registration?.getNotifications({ tag: `call-${callId}` }))
+    .then((list) => {
+      for (const note of list || []) if (note.data?.kind === "call") note.close()
+    })
+    .catch(() => {})
+}
+
 export function declineCall(callId) {
-  emitChat("call:decline", { callId })
+  closeRingNotification(callId)
   set({ incoming: state.incoming.filter((item) => item.id !== callId) })
   refreshTone()
+  currentPushEndpoint().catch(() => "").then((endpoint) => emitChat("call:decline", { callId, endpoint }))
 }
 
 export function leaveCall() {
@@ -815,6 +830,7 @@ export const callEvents = {
     }
   },
   "call:ring-stop": ({ callId } = {}) => {
+    if (callId) closeRingNotification(callId)
     set({ incoming: state.incoming.filter((item) => item.id !== callId) })
     refreshTone()
   },

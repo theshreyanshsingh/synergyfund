@@ -19,6 +19,12 @@ function Calendar() { return <><rect x="4" y="5" width="16" height="15" rx="2" /
 function Building() { return <><path d="M4 20V6l8-3 8 3v14" /><path d="M9 20v-5h6v5" /></> }
 function Layers() { return <path d="M12 3 3 8l9 5 9-5-9-5zM3 12l9 5 9-5M3 16l9 5 9-5" /> }
 function Chart() { return <path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-3" /> }
+function Briefcase() { return <><rect x="3" y="7" width="18" height="13" rx="2" /><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M3 12.5h18" /></> }
+function Folder() { return <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2.2 2.2h7.3A2.5 2.5 0 0 1 21 9.7v7.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z" /> }
+function Download() { return <path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 20h14" /> }
+function Upload() { return <path d="M12 16V5M7.5 9.5 12 5l4.5 4.5M5 20h14" /> }
+function Copy() { return <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h8" /></> }
+function Eye() { return <><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="2.8" /></> }
 function Bank() { return <><path d="M3 10h18L12 4 3 10z" /><path d="M5 10v7M10 10v7M14 10v7M19 10v7M3 20h18" /></> }
 function Receipt() { return <><path d="M7 3h10v18l-2-1.2L13 21l-2-1.2L9 21l-2-1.2L5 21V3h2z" /><path d="M9 8h6M9 12h6" /></> }
 function File() { return <><path d="M7 3h7l5 5v13H7z" /><path d="M14 3v5h5" /></> }
@@ -70,4 +76,4 @@ function UserPlus() { return <><circle cx="9" cy="8" r="3.5" /><path d="M3 20a6 
 function Link() { return <><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1" /><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" /></> }
 function Share() { return <><path d="M12 15V3M8 7l4-4 4 4" /><path d="M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7" /></> }
 
-const icons = { popout: Popout, userPlus: UserPlus, link: Link, share: Share, phone: Phone, phoneOff: PhoneOff, video: Video, videoOff: VideoOff, micOff: MicOff, screen: Screen, expand: Expand, shrink: Shrink, arrowIn: ArrowIn, arrowOut: ArrowOut, grip: Grip, hash: Hash, lock: Lock, paperclip: Paperclip, smile: Smile, at: At, reply: Reply, edit: Edit, back: Back, search: Search, spark: Spark, bell: Bell, home: Home, chat: Chat, grid: Grid, check: Check, card: Card, calendar: Calendar, building: Building, layers: Layers, chart: Chart, bank: Bank, receipt: Receipt, file: File, pulse: Pulse, alert: Alert, users: Users, chevron: Chevron, plus: Plus, filter: Filter, sliders: Sliders, logout: Logout, settings: Settings, help: Help, sun: Sun, moon: Moon, menu: Menu, more: More, close: Close, mic: Mic, stop: Stop, arrowUp: ArrowUp, tick: Tick, history: History, trash: Trash, globe: Globe }
+const icons = { popout: Popout, userPlus: UserPlus, link: Link, share: Share, phone: Phone, phoneOff: PhoneOff, video: Video, videoOff: VideoOff, micOff: MicOff, screen: Screen, expand: Expand, shrink: Shrink, arrowIn: ArrowIn, arrowOut: ArrowOut, grip: Grip, hash: Hash, lock: Lock, paperclip: Paperclip, smile: Smile, at: At, reply: Reply, edit: Edit, back: Back, search: Search, spark: Spark, bell: Bell, home: Home, chat: Chat, grid: Grid, check: Check, card: Card, calendar: Calendar, building: Building, briefcase: Briefcase, folder: Folder, download: Download, upload: Upload, copy: Copy, eye: Eye, layers: Layers, chart: Chart, bank: Bank, receipt: Receipt, file: File, pulse: Pulse, alert: Alert, users: Users, chevron: Chevron, plus: Plus, filter: Filter, sliders: Sliders, logout: Logout, settings: Settings, help: Help, sun: Sun, moon: Moon, menu: Menu, more: More, close: Close, mic: Mic, stop: Stop, arrowUp: ArrowUp, tick: Tick, history: History, trash: Trash, globe: Globe }

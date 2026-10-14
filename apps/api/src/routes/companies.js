@@ -1,0 +1,360 @@
+import { Router } from "express"
+import { loanSummary } from "@synergifund/shared"
+import { Company, DocumentFile, Loan, Property } from "../models/index.js"
+import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
+import { orderProperties } from "../services/propertyOrder.js"
+import { changeSummary, recordActivity } from "../services/notify.js"
+
+// Companies (LLCs, corporations, trusts…) that own properties. Staff only: contractors never see them.
+export const companiesRouter = Router()
+companiesRouter.use(blockContractors)
+
+// Chat attachments and comp photos are not library files.
+const LIBRARY = { $nin: ["chat", "comp"] }
+
+const TEXT_FIELDS = [
+  ["name", "Name", 120],
+  ["entityType", "Type", 60],
+  ["stateOfFormation", "State of formation", 60],
+  ["formedOn", "Formed on", 10],
+  ["address", "Address", 300],
+  ["contactName", "Contact", 120],
+  ["phone", "Phone", 40],
+  ["email", "Email", 200],
+  ["notes", "Notes", 4000],
+]
+
+// Banking details: shown only on the company's own page and never written into the activity log.
+const BANK_FIELDS = [
+  ["ein", "EIN"],
+  ["wireBankName", "Bank name"],
+  ["wireRoutingNumber", "Routing number"],
+  ["wireAccountNumber", "Account number"],
+  ["wireEntityName", "Entity name"],
+  ["wireAddress", "Address"],
+]
+
+function isId(value) {
+  return /^[a-f0-9]{24}$/i.test(String(value || ""))
+}
+
+function escapeRegex(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function cleanName(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ")
+}
+
+// Reads the company fields from a request. With `partial`, fields that were not sent are left alone.
+function companyFields(body = {}, partial = false) {
+  const fields = {}
+  for (const [key, , max] of TEXT_FIELDS) {
+    if (!(key in body)) continue
+    const raw = key === "notes" || key === "address" ? String(body[key] ?? "").trim() : cleanName(body[key])
+    fields[key] = raw.slice(0, max)
+  }
+  if (!partial || "name" in fields) {
+    if (!fields.name) return { error: "Give the company a name." }
+  }
+  if (fields.formedOn && !/^\d{4}-\d{2}-\d{2}$/.test(fields.formedOn)) return { error: "The formation date needs to be in YYYY-MM-DD form." }
+  if (fields.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email)) return { error: "Enter a valid email address, or leave it blank." }
+  const banking = bankFields(body)
+  if (banking.error) return banking
+  return { fields: { ...fields, ...banking.fields } }
+}
+
+// EIN and wire instructions. Blank clears a field. Numbers are checked so a pasted typo is caught before anyone wires money.
+function bankFields(body) {
+  const fields = {}
+  if ("ein" in body) {
+    const digits = String(body.ein ?? "").replace(/\D/g, "")
+    if (digits && digits.length !== 9) return { error: "An EIN has 9 digits, like 12-3456789." }
+    fields.ein = digits ? `${digits.slice(0, 2)}-${digits.slice(2)}` : ""
+  }
+  if ("wireRoutingNumber" in body) {
+    const raw = String(body.wireRoutingNumber ?? "").trim()
+    const digits = raw.replace(/[\s-]/g, "")
+    if (digits && !/^\d{9}$/.test(digits)) return { error: "A routing number has 9 digits." }
+    fields.wireRoutingNumber = digits
+  }
+  if ("wireAccountNumber" in body) {
+    const value = String(body.wireAccountNumber ?? "").replace(/[\s-]/g, "")
+    if (value && !/^[0-9A-Za-z]{4,34}$/.test(value)) return { error: "An account number has 4 to 34 letters or digits, with no other characters." }
+    fields.wireAccountNumber = value
+  }
+  if ("wireBankName" in body) fields.wireBankName = cleanName(body.wireBankName).slice(0, 120)
+  if ("wireEntityName" in body) fields.wireEntityName = cleanName(body.wireEntityName).slice(0, 120)
+  if ("wireAddress" in body) fields.wireAddress = String(body.wireAddress ?? "").trim().replace(/\n{3,}/g, "\n\n").slice(0, 300)
+  return { fields }
+}
+
+async function nameTaken(name, exceptId = null) {
+  const filter = { name: new RegExp(`^${escapeRegex(name)}$`, "i") }
+  if (exceptId) filter._id = { $ne: exceptId }
+  return Boolean(await Company.exists(filter))
+}
+
+export function presentCompany(company, { banking = false } = {}) {
+  const shown = {
+    id: String(company._id),
+    name: company.name,
+    entityType: company.entityType || "",
+    stateOfFormation: company.stateOfFormation || "",
+    formedOn: company.formedOn || "",
+    address: company.address || "",
+    contactName: company.contactName || "",
+    phone: company.phone || "",
+    email: company.email || "",
+    notes: company.notes || "",
+    updatedBy: company.updatedBy || "",
+    createdAt: company.createdAt,
+    updatedAt: company.updatedAt,
+  }
+  if (banking) {
+    shown.ein = company.ein || ""
+    shown.wire = {
+      bankName: company.wireBankName || "",
+      routingNumber: company.wireRoutingNumber || "",
+      accountNumber: company.wireAccountNumber || "",
+      entityName: company.wireEntityName || "",
+      address: company.wireAddress || "",
+    }
+  }
+  return shown
+}
+
+async function loadCompany(req, res) {
+  const company = isId(req.params.id) ? await Company.findById(req.params.id) : null
+  if (!company) {
+    sendError(res, 404, "That company is not available.")
+    return null
+  }
+  return company
+}
+
+// Loan status and open balance for each property, from its loans.
+async function loanTotals(properties) {
+  const loans = properties.length ? await Loan.find({ propertyId: { $in: properties.map((property) => property._id) } }).select("propertyId status balance payment") : []
+  const byProperty = new Map()
+  for (const loan of loans) {
+    const key = String(loan.propertyId)
+    if (!byProperty.has(key)) byProperty.set(key, [])
+    byProperty.get(key).push(loan)
+  }
+  return new Map(properties.map((property) => [String(property._id), loanSummary(byProperty.get(String(property._id)) || [])]))
+}
+
+function sum(list, pick) {
+  const known = list.map(pick).filter((value) => value != null && Number.isFinite(Number(value)))
+  return known.length ? known.reduce((total, value) => total + Number(value), 0) : null
+}
+
+// Moves properties into a company. Properties already in another company move over. Returns those that changed.
+async function assignProperties(company, ids, user) {
+  const wanted = [...new Set((Array.isArray(ids) ? ids : []).map(String))].filter(isId)
+  if (!wanted.length) return []
+  const properties = await Property.find({ _id: { $in: wanted } }).select("_id address companyId")
+  const moving = properties.filter((property) => String(property.companyId || "") !== String(company._id))
+  if (!moving.length) return []
+  const formerIds = [...new Set(moving.map((property) => property.companyId && String(property.companyId)).filter(Boolean))]
+  const former = formerIds.length ? await Company.find({ _id: { $in: formerIds } }).select("name") : []
+  const formerNames = new Map(former.map((item) => [String(item._id), item.name]))
+  await Property.updateMany({ _id: { $in: moving.map((property) => property._id) } }, { $set: { companyId: company._id, updatedBy: user.name } })
+  for (const property of moving) {
+    const from = property.companyId ? formerNames.get(String(property.companyId)) : ""
+    await recordActivity({ user, title: "Property assigned to a company", detail: `${property.address} → ${company.name}${from ? ` (was ${from})` : ""}`, propertyId: property._id })
+  }
+  return moving
+}
+
+companiesRouter.get(
+  "/",
+  requirePermission("properties.read"),
+  asyncHandler(async (req, res) => {
+    const companies = (await Company.find()).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }))
+    const ids = companies.map((company) => company._id)
+    const [properties, files, unlinked, unassigned] = await Promise.all([
+      ids.length ? Property.find({ companyId: { $in: ids } }).select("_id companyId purchasePrice arv") : [],
+      ids.length ? DocumentFile.aggregate([{ $match: { companyId: { $in: ids }, kind: LIBRARY } }, { $group: { _id: "$companyId", count: { $sum: 1 } } }]) : [],
+      Property.find({ companyId: null, ownerEntity: { $nin: [null, ""] } }).select("_id address ownerEntity"),
+      Property.countDocuments({ companyId: null }),
+    ])
+    const [loans, propertyFiles] = await Promise.all([
+      loanTotals(properties),
+      properties.length ? DocumentFile.aggregate([{ $match: { propertyId: { $in: properties.map((property) => property._id) }, kind: LIBRARY } }, { $group: { _id: "$propertyId", count: { $sum: 1 } } }]) : [],
+    ])
+    // The company's own files plus its properties' files: everything in its Documents tab.
+    const fileCounts = new Map(files.map((item) => [String(item._id), item.count]))
+    const ownerOf = new Map(properties.map((property) => [String(property._id), String(property.companyId)]))
+    for (const item of propertyFiles) {
+      const owner = ownerOf.get(String(item._id))
+      if (owner) fileCounts.set(owner, (fileCounts.get(owner) || 0) + item.count)
+    }
+
+    // Owner names typed on properties that are not in a company yet, so they can become companies in one step.
+    const companyByName = new Map(companies.map((company) => [company.name.toLowerCase(), company]))
+    const owners = new Map()
+    for (const property of unlinked) {
+      const name = cleanName(property.ownerEntity)
+      if (!name) continue
+      const key = name.toLowerCase()
+      if (!owners.has(key)) owners.set(key, { name, companyId: companyByName.has(key) ? String(companyByName.get(key)._id) : "", propertyIds: [], addresses: [] })
+      owners.get(key).propertyIds.push(String(property._id))
+      owners.get(key).addresses.push(property.address)
+    }
+
+    res.json({
+      items: companies.map((company) => {
+        const own = properties.filter((property) => String(property.companyId) === String(company._id))
+        const summaries = own.map((property) => loans.get(String(property._id)))
+        return {
+          ...presentCompany(company),
+          properties: own.length,
+          purchaseTotal: sum(own, (property) => property.purchasePrice),
+          arvTotal: sum(own, (property) => property.arv),
+          loanBalance: sum(summaries, (summary) => summary.balance),
+          monthlyPayment: sum(summaries, (summary) => summary.payment),
+          documents: fileCounts.get(String(company._id)) || 0,
+        }
+      }),
+      unassigned,
+      owners: [...owners.values()].sort((a, b) => b.propertyIds.length - a.propertyIds.length || a.name.localeCompare(b.name)).slice(0, 20),
+    })
+  }),
+)
+
+companiesRouter.post(
+  "/",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const { fields, error } = companyFields(req.body)
+    if (error) return sendError(res, 400, error)
+    if (await nameTaken(fields.name)) return sendError(res, 409, `A company named ${fields.name} already exists.`)
+    const company = await Company.create({ ...fields, createdBy: req.user._id, updatedBy: req.user.name })
+    await recordActivity({ user: req.user, title: "Company added", detail: [company.name, company.entityType, company.stateOfFormation].filter(Boolean).join(" · ") })
+    const assigned = await assignProperties(company, req.body.propertyIds, req.user)
+    res.status(201).json({ company: presentCompany(company), assigned: assigned.length })
+  }),
+)
+
+companiesRouter.get(
+  "/:id",
+  requirePermission("properties.read"),
+  asyncHandler(async (req, res) => {
+    const company = await loadCompany(req, res)
+    if (!company) return
+    const properties = orderProperties(await Property.find({ companyId: company._id }).select("_id address city stage strategy labels purchasePrice arv rehabBudget position createdAt"))
+    const [loans, files, propertyFiles] = await Promise.all([
+      loanTotals(properties),
+      DocumentFile.countDocuments({ companyId: company._id, kind: LIBRARY }),
+      properties.length ? DocumentFile.aggregate([{ $match: { propertyId: { $in: properties.map((property) => property._id) }, kind: LIBRARY } }, { $group: { _id: "$propertyId", count: { $sum: 1 } } }]) : [],
+    ])
+    const fileCounts = new Map(propertyFiles.map((item) => [String(item._id), item.count]))
+    const items = properties.map((property) => {
+      const summary = loans.get(String(property._id))
+      return {
+        id: String(property._id),
+        address: property.address,
+        city: property.city || "",
+        stage: property.stage || "",
+        strategy: property.strategy || "",
+        labels: property.labels || [],
+        purchasePrice: property.purchasePrice ?? null,
+        arv: property.arv ?? null,
+        rehabBudget: property.rehabBudget ?? null,
+        loanStatus: summary.status,
+        loanBalance: summary.balance,
+        monthlyPayment: summary.payment,
+        documents: fileCounts.get(String(property._id)) || 0,
+      }
+    })
+    res.json({
+      company: presentCompany(company, { banking: true }),
+      properties: items,
+      totals: {
+        properties: items.length,
+        purchase: sum(items, (item) => item.purchasePrice),
+        arv: sum(items, (item) => item.arv),
+        loanBalance: sum(items, (item) => item.loanBalance),
+        monthlyPayment: sum(items, (item) => item.monthlyPayment),
+        documents: files,
+        propertyDocuments: items.reduce((total, item) => total + item.documents, 0),
+      },
+    })
+  }),
+)
+
+companiesRouter.patch(
+  "/:id",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const company = await loadCompany(req, res)
+    if (!company) return
+    const { fields, error } = companyFields(req.body, true)
+    if (error) return sendError(res, 400, error)
+    if (fields.name && fields.name.toLowerCase() !== company.name.toLowerCase() && await nameTaken(fields.name, company._id)) {
+      return sendError(res, 409, `A company named ${fields.name} already exists.`)
+    }
+    const before = company.toObject()
+    company.set({ ...fields, updatedBy: req.user.name })
+    await company.save()
+    const after = company.toObject()
+    // Banking changes are noted by name only; the numbers never go into the activity log.
+    const bankChanged = BANK_FIELDS.filter(([key]) => (before[key] || "") !== (after[key] || "")).map(([, label]) => label)
+    const changes = [
+      changeSummary(before, after, TEXT_FIELDS.map(([key, label]) => [key, label])),
+      bankChanged.length ? `${bankChanged.join(", ")} updated` : "",
+    ].filter(Boolean).join(" · ")
+    await recordActivity({ user: req.user, title: "Company updated", detail: `${company.name}${changes ? `: ${changes}` : " · saved with no changes"}` })
+    res.json({ company: presentCompany(company, { banking: true }) })
+  }),
+)
+
+companiesRouter.delete(
+  "/:id",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const company = await loadCompany(req, res)
+    if (!company) return
+    // Its properties and files stay; they are just no longer linked to a company.
+    const [properties, files] = await Promise.all([
+      Property.updateMany({ companyId: company._id }, { $unset: { companyId: 1 } }),
+      DocumentFile.updateMany({ companyId: company._id }, { $unset: { companyId: 1 } }),
+    ])
+    await company.deleteOne()
+    const kept = [
+      properties.modifiedCount ? `${properties.modifiedCount} ${properties.modifiedCount === 1 ? "property" : "properties"} unassigned` : "",
+      files.modifiedCount ? `${files.modifiedCount} ${files.modifiedCount === 1 ? "file" : "files"} kept in Documents` : "",
+    ].filter(Boolean).join(" · ")
+    await recordActivity({ user: req.user, title: "Company deleted", detail: [company.name, kept].filter(Boolean).join(" · ") })
+    res.json({ ok: true })
+  }),
+)
+
+companiesRouter.post(
+  "/:id/properties",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const company = await loadCompany(req, res)
+    if (!company) return
+    const ids = Array.isArray(req.body.propertyIds) ? req.body.propertyIds : []
+    if (!ids.some(isId)) return sendError(res, 400, "Choose at least one property.")
+    const assigned = await assignProperties(company, ids, req.user)
+    res.json({ assigned: assigned.length })
+  }),
+)
+
+companiesRouter.delete(
+  "/:id/properties/:propertyId",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const company = await loadCompany(req, res)
+    if (!company) return
+    const property = isId(req.params.propertyId) ? await Property.findOne({ _id: req.params.propertyId, companyId: company._id }).select("_id address") : null
+    if (!property) return sendError(res, 404, "That property is not in this company.")
+    await Property.updateOne({ _id: property._id }, { $unset: { companyId: 1 }, $set: { updatedBy: req.user.name } })
+    await recordActivity({ user: req.user, title: "Property removed from a company", detail: `${property.address} is no longer in ${company.name}`, propertyId: property._id })
+    res.json({ ok: true })
+  }),
+)

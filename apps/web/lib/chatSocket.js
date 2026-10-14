@@ -75,6 +75,12 @@ export function setActiveChat(channelId) {
   reportVisible()
 }
 
+// This device's push address, so the server can tell which device answered or declined a call.
+export async function currentPushEndpoint() {
+  if (!pushEndpoint) await readEndpoint()
+  return pushEndpoint
+}
+
 // Called after notifications are turned on or off on this device.
 export function refreshPushEndpoint() {
   readEndpoint().then(reportVisible)

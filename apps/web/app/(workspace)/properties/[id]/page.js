@@ -7,7 +7,6 @@ import { PROPERTY_LABELS, STAGES, STRATEGIES, can } from "@synergifund/shared"
 import { FormSheet } from "../../../../components/ui/FormSheet"
 import { DrawEditor } from "../../../../components/draws/DrawEditor"
 import { FinancingSection } from "../../../../components/properties/FinancingSection"
-import { DocumentsSection } from "../../../../components/properties/DocumentsSection"
 import { ArvSection } from "../../../../components/properties/ArvSection"
 import { ReportSheet } from "../../../../components/properties/ReportSheet"
 import { money } from "../../../../lib/format"
@@ -25,7 +24,7 @@ export default function PropertyDetailPage({ params }) {
   const search = useSearchParams()
   const session = useSession()
   const detail = useApi(`/properties/${id}`)
-  const [section, setSection] = useState(() => (["overview", "draws", "arv", "financing", "documents"].includes(search.get("tab")) ? search.get("tab") : "overview"))
+  const [section, setSection] = useState(() => (["overview", "draws", "arv", "financing"].includes(search.get("tab")) ? search.get("tab") : "overview"))
   const [note, setNote] = useState("")
   const [files, setFiles] = useState([])
   const [message, setMessage] = useState("")
@@ -36,6 +35,7 @@ export default function PropertyDetailPage({ params }) {
   const [addingDraw, setAddingDraw] = useState(false)
   const [shots, setShots] = useState([])
   const [uploading, setUploading] = useState(false)
+  const companies = useApi(editing && session?.user?.role !== "contractor" ? "/companies" : null)
   const property = detail.data?.property
   const editOpened = useRef(false)
   useEffect(() => {
@@ -64,6 +64,9 @@ export default function PropertyDetailPage({ params }) {
     figures: { budget: property.rehabBudget ?? null },
   } : null
   const loans = detail.data.loans || []
+  const company = detail.data.company || null
+  const companyChoices = [...(companies.data?.items || [])]
+  if (company && !companyChoices.some((item) => item.id === company.id)) companyChoices.unshift({ id: company.id, name: company.name })
   const upcoming = detail.data.upcoming || []
   const openDraws = (draws?.items || []).filter((draw) => draw.status !== "Funded")
   const monthlyMortgage = loans.filter((loan) => loan.status !== "Paid off").reduce((total, loan) => total + Number(loan.payment || 0), 0)
@@ -75,7 +78,8 @@ export default function PropertyDetailPage({ params }) {
   const tabs = [
     { id: "overview", label: "Overview" },
   ]
-  if (internal) tabs.push({ id: "draws", label: "Draws" }, { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" }, { id: "documents", label: "Documents" })
+  // A property's documents are kept inside its company's Documents, not on the property.
+  if (internal) tabs.push({ id: "draws", label: "Draws" }, { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" })
 
   if (!internal) {
     return (
@@ -230,8 +234,14 @@ export default function PropertyDetailPage({ params }) {
               <h2>Deal</h2>
               <dl className="property-facts">
                 {(property.labels || []).length > 0 && <div className="wide label-row">{property.labels.map((label) => <StatusPill key={label}>{label}</StatusPill>)}</div>}
+                <Fact label="Company" value={company ? (
+                  <span className="property-company-line">
+                    <Link href={`/companies/${company.id}`} className="property-company">{company.name}</Link>
+                    <Link href={`/companies/${company.id}?tab=documents&property=${id}`} className="property-company-docs">Documents</Link>
+                  </span>
+                ) : "Not in a company"} />
                 <Fact label="Strategy" value={property.strategy} />
-                <Fact label="Owner" value={property.ownerEntity} />
+                {(!company || (property.ownerEntity && property.ownerEntity.trim().toLowerCase() !== company.name.toLowerCase())) && <Fact label="Owner" value={property.ownerEntity} />}
                 <Fact label="Market" value={property.rentMarket} />
                 <Fact label="Next step" value={property.nextAction} wide />
                 <Fact label="Access" value={property.accessInfo} wide />
@@ -319,10 +329,6 @@ export default function PropertyDetailPage({ params }) {
         </>
       )}
 
-      {section === "documents" && (
-        <DocumentsSection property={property} writable={Boolean(session?.user && can(session.user, "documents.write"))} canDelete={Boolean(session?.user && can(session.user, "documents.delete"))} />
-      )}
-
       {section === "financing" && (
         <FinancingSection propertyId={id} loans={loans} writable={Boolean(canWrite)} onChanged={() => detail.reload()} />
       )}
@@ -338,6 +344,7 @@ export default function PropertyDetailPage({ params }) {
             strategy: editing.strategy,
             nextAction: editing.nextAction,
             ownerEntity: editing.ownerEntity,
+            companyId: editing.companyId,
             accessInfo: editing.accessInfo,
             rentStatus: editing.rentStatus,
             rentMarket: editing.rentMarket,
@@ -376,6 +383,12 @@ export default function PropertyDetailPage({ params }) {
             <label className="field"><span>Actual rent</span><input value={editing.actualRent} onChange={(event) => setEditing({ ...editing, actualRent: event.target.value })} /></label>
             <label className="field"><span>Rent status</span><input value={editing.rentStatus} onChange={(event) => setEditing({ ...editing, rentStatus: event.target.value })} /></label>
             <label className="field"><span>Market</span><input value={editing.rentMarket} onChange={(event) => setEditing({ ...editing, rentMarket: event.target.value })} /></label>
+            <label className="field"><span>Company</span>
+              <select value={editing.companyId} onChange={(event) => setEditing({ ...editing, companyId: event.target.value })}>
+                <option value="">Not in a company</option>
+                {companyChoices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </label>
             <label className="field"><span>Owner</span><input value={editing.ownerEntity} onChange={(event) => setEditing({ ...editing, ownerEntity: event.target.value })} /></label>
             <label className="field wide"><span>Next step</span><input value={editing.nextAction} onChange={(event) => setEditing({ ...editing, nextAction: event.target.value })} /></label>
             <label className="field wide"><span>Access</span><input value={editing.accessInfo} onChange={(event) => setEditing({ ...editing, accessInfo: event.target.value })} /></label>
@@ -557,6 +570,7 @@ function propertyForm(property) {
     rentStatus: property.rentStatus || "",
     rentMarket: property.rentMarket || "",
     ownerEntity: property.ownerEntity || "",
+    companyId: property.companyId || "",
     accessInfo: property.accessInfo || "",
     nextAction: property.nextAction || "",
     houseBoughtPrice: property.houseBoughtPrice ?? "",

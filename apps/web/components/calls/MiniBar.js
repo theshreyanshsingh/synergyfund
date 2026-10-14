@@ -56,7 +56,9 @@ export function MiniBar({ current, title, status, myName }) {
     if (!state.moved) setDragging(true)
     state.moved = true
     event.preventDefault()
-    setPos(keepInside({ x: event.clientX - state.dx, y: event.clientY - state.dy }, box.current))
+    // Kept here as well: on release the bar may not have been redrawn at the last spot yet.
+    state.last = keepInside({ x: event.clientX - state.dx, y: event.clientY - state.dy }, box.current)
+    setPos(state.last)
   }
 
   function onPointerUp(event) {
@@ -67,8 +69,9 @@ export function MiniBar({ current, title, status, myName }) {
     if (!state) return
     if (state.moved) {
       const rect = box.current.getBoundingClientRect()
+      const spot = state.last || { x: Math.round(rect.left), y: Math.round(rect.top) }
       try {
-        localStorage.setItem(SPOT, JSON.stringify({ x: Math.round(rect.left), y: Math.round(rect.top) }))
+        localStorage.setItem(SPOT, JSON.stringify({ x: spot.x, y: spot.y }))
       } catch {}
     } else if (state.onName) {
       setMinimized(false)

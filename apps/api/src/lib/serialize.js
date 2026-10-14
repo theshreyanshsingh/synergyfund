@@ -91,6 +91,7 @@ export function presentProperty(property, user) {
     labels: source.labels || [],
     scopeLines: source.scopeLines || [],
     assignedUserIds: (source.assignedUserIds || []).map(String),
+    companyId: source.companyId ? String(source.companyId) : "",
     importSource: source.importSource || null,
     updatedBy: source.updatedBy || "",
   }

@@ -67,10 +67,33 @@ export async function withProofUrls(itemOrItems) {
   return Array.isArray(itemOrItems) ? next : next[0]
 }
 
+// Browsers send file names as UTF-8; without this, "año.pdf" would be saved as "aÃ±o.pdf".
 export const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
+  defParamCharset: "utf8",
 })
+
+// Documents can be bigger than other uploads: scanned PDFs and property videos. Cloudflare stops uploads at 100 MB.
+export const DOCUMENT_LIMIT_MB = 95
+const documentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: DOCUMENT_LIMIT_MB * 1024 * 1024 },
+  defParamCharset: "utf8",
+})
+
+export function receiveDocument(field) {
+  return (req, res, next) => {
+    documentUpload.single(field)(req, res, (error) => {
+      if (!error) {
+        next()
+        return
+      }
+      const tooBig = error.code === "LIMIT_FILE_SIZE"
+      sendError(res, tooBig ? 413 : 400, tooBig ? `That file is larger than ${DOCUMENT_LIMIT_MB} MB.` : "The upload could not be read.")
+    })
+  }
+}
 
 export function receiveFile(field) {
   return (req, res, next) => {
@@ -125,20 +148,75 @@ export async function materializeStoredFile(file) {
   return { path: temp, cleanup: () => fs.promises.unlink(temp).catch(() => {}) }
 }
 
-const SAFE_INLINE = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/heic", "application/pdf", "text/plain"])
+const SAFE_INLINE = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/heic", "application/pdf", "text/plain", "video/mp4", "video/quicktime", "video/webm", "video/x-m4v"])
 
-export async function sendStoredFile(res, file, { download = false } = {}) {
+// Byte ranges let videos play and skip ahead (iPhones and Safari will not play a video without them).
+function readRange(header, size) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(header || "").trim())
+  if (!match || !size || (!match[1] && !match[2])) return null
+  let start = match[1] ? Number(match[1]) : Math.max(0, size - Number(match[2]))
+  let end = match[1] && match[2] ? Number(match[2]) : size - 1
+  end = Math.min(end, size - 1)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) return { invalid: true }
+  return { start, end }
+}
+
+// Some browsers send no type, or a generic one, for PDFs, photos and videos; the name tells what they are.
+const TYPE_BY_NAME = [
+  [/\.pdf$/i, "application/pdf"],
+  [/\.jpe?g$/i, "image/jpeg"],
+  [/\.png$/i, "image/png"],
+  [/\.gif$/i, "image/gif"],
+  [/\.webp$/i, "image/webp"],
+  [/\.heic$/i, "image/heic"],
+  [/\.mp4$/i, "video/mp4"],
+  [/\.m4v$/i, "video/x-m4v"],
+  [/\.mov$/i, "video/quicktime"],
+  [/\.webm$/i, "video/webm"],
+]
+
+function storedType(file) {
   const mime = String(file.mime || "").toLowerCase().split(";")[0].trim()
+  if (mime && mime !== "application/octet-stream") return mime
+  return TYPE_BY_NAME.find(([pattern]) => pattern.test(file.name || ""))?.[1] || mime
+}
+
+export async function sendStoredFile(res, file, { download = false, range = "" } = {}) {
+  const mime = storedType(file)
   const inline = !download && SAFE_INLINE.has(mime)
+  const size = Number(file.size) || 0
   res.setHeader("Content-Type", inline ? mime : "application/octet-stream")
-  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${safeHeaderName(file.name)}"`)
+  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${safeHeaderName(file.name)}"; filename*=UTF-8''${encodeURIComponent(file.name || "file")}`)
   res.setHeader("X-Content-Type-Options", "nosniff")
   if (mime !== "application/pdf") res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'")
-  const stream = await openStoredStream(file)
+  if (size) res.setHeader("Accept-Ranges", "bytes")
+  const part = inline && range ? readRange(range, size) : null
+  if (part?.invalid) {
+    res.setHeader("Content-Range", `bytes */${size}`)
+    res.status(416).end()
+    return
+  }
+  if (part) {
+    res.status(206)
+    res.setHeader("Content-Range", `bytes ${part.start}-${part.end}/${size}`)
+    res.setHeader("Content-Length", String(part.end - part.start + 1))
+  } else if (size) {
+    res.setHeader("Content-Length", String(size))
+  }
+  const stream = await openStoredStream(file, part)
   stream.on("error", () => {
     if (!res.headersSent) res.status(404).end()
+    else res.destroy()
   })
   stream.pipe(res)
+}
+
+// The whole file in memory, for building a zip of several files.
+export async function readStoredFile(file) {
+  const stream = await openStoredStream(file)
+  const chunks = []
+  for await (const chunk of stream) chunks.push(chunk)
+  return Buffer.concat(chunks)
 }
 
 export async function deleteStoredFile(file) {
@@ -151,10 +229,10 @@ export async function deleteStoredFile(file) {
   await fs.promises.unlink(uploadsPath(file.storagePath)).catch(() => {})
 }
 
-async function openStoredStream(file) {
-  if (file.storage !== "s3") return fs.createReadStream(uploadsPath(file.storagePath))
+async function openStoredStream(file, part = null) {
+  if (file.storage !== "s3") return fs.createReadStream(uploadsPath(file.storagePath), part ? { start: part.start, end: part.end } : undefined)
   const config = storageConfig()
-  const response = await s3().send(new GetObjectCommand({ Bucket: config.bucket, Key: file.storagePath }))
+  const response = await s3().send(new GetObjectCommand({ Bucket: config.bucket, Key: file.storagePath, ...(part ? { Range: `bytes=${part.start}-${part.end}` } : {}) }))
   if (response.Body instanceof Readable) return response.Body
   return Readable.fromWeb(response.Body)
 }
@@ -177,6 +255,7 @@ function clean(value) {
   return String(value || "").trim()
 }
 
+// The plain filename in the header must be Latin-1; the full name travels in filename* as UTF-8.
 function safeHeaderName(name) {
-  return String(name || "file").replace(/["\r\n]/g, "")
+  return String(name || "file").replace(/["\r\n\\]/g, "").replace(/[^\x20-\x7e]/g, "_")
 }

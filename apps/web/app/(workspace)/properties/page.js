@@ -1,6 +1,7 @@
 "use client"
 
 import { Suspense, useEffect, useRef, useState } from "react"
+import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { PageSpinner } from "../../../components/ui/Spinner"
 import { PROPERTY_LABELS, can, STAGES, STRATEGIES } from "@synergifund/shared"
@@ -33,6 +34,8 @@ function PropertiesScreen() {
   const canImport = session?.user && can(session.user, "imports.run") && can(session.user, "draws.write")
   const contractor = session?.user?.role === "contractor"
   const canMembers = session?.user && can(session.user, "members.manage")
+  const companies = useApi(open && session?.user && !contractor ? "/companies" : null)
+  const [companyId, setCompanyId] = useState("")
   const [orderOverride, setOrderOverride] = useState(null)
   const [orderError, setOrderError] = useState("")
   const moving = useRef(false)
@@ -81,6 +84,7 @@ function PropertiesScreen() {
       setLabels([])
       setLabelDraft("")
       setAssigned([])
+      setCompanyId("")
       list.reload()
     } catch (err) {
       setError(err.message)
@@ -116,10 +120,12 @@ function PropertiesScreen() {
         filters={[
           { key: "stage", label: "Status", options: STAGES, value: (row) => row.stage },
           { key: "strategy", label: "Goal", options: STRATEGIES, value: (row) => row.strategy },
+          ...(contractor ? [] : [{ key: "company", label: "Company", options: [], value: (row) => row.company }]),
         ]}
         columns={[
           { key: "address", label: "Name", render: (row) => <span className="person-copy"><strong>{row.address}</strong><small>{row.city || "Location not entered"}</small></span> },
           ...(contractor ? [] : [
+            { key: "company", label: "Company", render: (row) => row.companyId ? <Link href={`/companies/${row.companyId}`} className="table-link" onClick={(event) => event.stopPropagation()}>{row.company || "Company"}</Link> : <span className="muted-cell">—</span> },
             { key: "rehabBudget", label: "Rehab budget", render: (row) => row.rehabBudget == null ? "—" : money(row.rehabBudget) },
           ]),
           { key: "stage", label: "Status", render: (row) => <StatusPill>{row.stage}</StatusPill> },
@@ -143,6 +149,14 @@ function PropertiesScreen() {
             <label className="field"><span>City</span><input name="city" value={form.city} onChange={set("city")} /></label>
             <label className="field"><span>Status</span><select name="stage" value={form.stage} onChange={set("stage")}>{STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
             <label className="field"><span>Strategy</span><select name="strategy" value={form.strategy} onChange={set("strategy")}>{STRATEGIES.map((item) => <option key={item}>{item}</option>)}</select></label>
+            {!contractor && (
+              <label className="field"><span>Company</span>
+                <select name="companyId" value={companyId} onChange={(event) => setCompanyId(event.target.value)}>
+                  <option value="">Not in a company</option>
+                  {(companies.data?.items || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </label>
+            )}
             <label className="field"><span>Purchase price</span><input name="purchasePrice" value={form.purchasePrice} onChange={set("purchasePrice")} /></label>
             <label className="field"><span>ARV</span><input name="arv" value={form.arv} onChange={set("arv")} /></label>
             <label className="field"><span>Rehab budget</span><input name="rehabBudget" value={form.rehabBudget} onChange={set("rehabBudget")} /></label>

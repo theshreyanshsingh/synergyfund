@@ -10,7 +10,9 @@ export function CommandPalette({ user, open, onClose }) {
   const router = useRouter()
   const [query, setQuery] = useState("")
   const [properties, setProperties] = useState([])
+  const [companies, setCompanies] = useState([])
   const [active, setActive] = useState(0)
+  const staff = Boolean(user) && user.role !== "contractor"
 
   useEffect(() => {
     if (!open) {
@@ -19,12 +21,13 @@ export function CommandPalette({ user, open, onClose }) {
       return undefined
     }
     api("/properties").then((data) => setProperties(data.items || [])).catch(() => {})
+    if (staff) api("/companies").then((data) => setCompanies(data.items || [])).catch(() => {})
     function onKey(event) {
       if (event.key === "Escape") onClose()
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [open, onClose])
+  }, [open, onClose, staff])
 
   const groups = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -36,11 +39,16 @@ export function CommandPalette({ user, open, onClose }) {
       .map((property) => ({ id: property.id, label: property.address, hint: property.city || property.stage || "Property", href: `/properties/${property.id}`, icon: "building" }))
       .filter(match)
       .slice(0, 8)
+    const owners = companies
+      .map((company) => ({ id: company.id, label: company.name, hint: [company.entityType, `${company.properties} ${company.properties === 1 ? "property" : "properties"}`].filter(Boolean).join(" · "), href: `/companies/${company.id}`, icon: "briefcase" }))
+      .filter(match)
+      .slice(0, 6)
     return [
       pages.length ? { label: "Pages", items: pages } : null,
       deals.length ? { label: "Properties", items: deals } : null,
+      owners.length ? { label: "Companies", items: owners } : null,
     ].filter(Boolean)
-  }, [query, properties, user])
+  }, [query, properties, companies, user])
 
   const flat = groups.flatMap((group) => group.items)
 
@@ -74,7 +82,7 @@ export function CommandPalette({ user, open, onClose }) {
       <div className="palette" role="dialog" aria-label="Search" onMouseDown={(event) => event.stopPropagation()}>
         <label className="palette-search">
           <Icon name="search" size={16} />
-          <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={onKeyDown} placeholder="Search properties and pages" />
+          <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={onKeyDown} placeholder={staff ? "Search properties, companies and pages" : "Search properties and pages"} />
           <kbd>esc</kbd>
         </label>
         <div className="palette-list">

@@ -10,6 +10,15 @@ export function configurePush() {
   return true
 }
 
+// Apple's push service (iPhone, iPad, Safari on a Mac).
+export function isApplePush(endpoint) {
+  try {
+    return new URL(endpoint).hostname.endsWith("push.apple.com")
+  } catch {
+    return false
+  }
+}
+
 function serviceName(endpoint) {
   try {
     const host = new URL(endpoint).hostname
@@ -49,6 +58,11 @@ export async function sendPush(subscriptions, { title, body, href, ...extra }, o
     }
   }
   return { sent, failed, errors }
+}
+
+export async function subscriptionsFor(userIds) {
+  if (!userIds.length || !configurePush()) return []
+  return PushSubscription.find({ userId: { $in: userIds } })
 }
 
 // skipEndpoints: devices that already show this in the app right now.

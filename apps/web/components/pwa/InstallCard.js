@@ -1,21 +1,23 @@
 "use client"
 
 import { useState } from "react"
-import { enablePush, installApp, installSteps, usePwa } from "../../lib/pwa"
+import { enablePush, installApp, usePwa } from "../../lib/pwa"
+import { InstallGuide } from "./InstallGuide"
 
 // Step one: install the app. Step two: turn on notifications. Then it disappears.
 export function InstallCard({ className = "" }) {
   const pwa = usePwa()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
-  const [steps, setSteps] = useState(false)
+  const [guide, setGuide] = useState(false)
 
   if (!pwa.ready || pwa.pushOn) return null
 
   if (!pwa.installed && pwa.installable) {
+    // Chrome and Edge (Android and computers) show their own install prompt; iPhone, iPad and Safari need a short guide.
     async function install() {
       if (!pwa.installEvent) {
-        setSteps(true)
+        setGuide(true)
         return
       }
       setBusy(true)
@@ -29,11 +31,10 @@ export function InstallCard({ className = "" }) {
       <div className={`install-card ${className}`.trim()}>
         <div>
           <strong>Install the SynergiFund app</strong>
-          <span>{steps || (!pwa.installEvent && pwa.platform === "ios") ? installSteps(pwa) : "Open it from your home screen or dock like any other app."}</span>
+          <span>{pwa.platform === "ios" ? "Add it to your Home Screen to get call and message notifications." : "Open it from your home screen or dock like any other app."}</span>
         </div>
-        {(pwa.installEvent || pwa.platform !== "ios") && !steps && (
-          <button type="button" className="primary" disabled={busy} onClick={install}>{busy ? "Installing…" : "Install"}</button>
-        )}
+        <button type="button" className="primary" disabled={busy} onClick={install}>{busy ? "Installing…" : "Install"}</button>
+        {guide && <InstallGuide platform={pwa.platform} onClose={() => setGuide(false)} />}
       </div>
     )
   }
