@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { can } from "@synergifund/shared"
 import { CompanyFields, EinField, PropertyPicker, WireFields, companyForm } from "../../../../components/companies/CompanyParts"
+import { ExposureBadge } from "../../../../components/companies/ExposureBadge"
 import { DocStatus, FolderBrowser } from "../../../../components/documents/FolderBrowser"
 import { DetailFrame } from "../../../../components/ui/DetailFrame"
 import { FormSheet } from "../../../../components/ui/FormSheet"
@@ -208,6 +209,8 @@ export default function CompanyPage({ params }) {
       backLabel="Companies"
       title={company.name}
       meta={[company.entityType, company.stateOfFormation, plural(properties.length, "property", "properties")].filter(Boolean).join(" · ")}
+      status={properties.length ? <ExposureBadge count={properties.length} /> : null}
+      metaAside={properties.length ? <ExposureBadge count={properties.length} /> : null}
       actions={writable ? [
         <button key="delete" type="button" className="danger" onClick={remove}>Delete</button>,
         <button key="modify" type="button" className="primary" onClick={() => { setError(""); setEditing(companyForm(company)) }}>Modify</button>,

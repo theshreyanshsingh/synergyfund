@@ -205,6 +205,19 @@ export function quickAccessFiles(files = [], item) {
   return files.filter((file) => (file.labels || []).some((label) => wanted.has(String(label).trim().toLowerCase())))
 }
 export const COMPANY_DOCUMENT_LABELS = ["Articles of organization", "Operating agreement", "EIN letter", "Annual report", "Bank statement", "Tax", "Insurance", "Other"]
+// How exposed a company is, by how many properties it holds. No properties: no exposure level.
+export const EXPOSURE_LEVELS = [
+  { id: "low", label: "Low Exposure", min: 1, max: 2 },
+  { id: "moderate", label: "Moderate Exposure", min: 3, max: 4 },
+  { id: "high", label: "High Exposure", min: 5, max: 7 },
+  { id: "critical", label: "Critical Exposure", min: 8, max: Infinity },
+]
+
+export function companyExposure(count) {
+  const properties = Math.max(0, Math.floor(Number(count) || 0))
+  return EXPOSURE_LEVELS.find((level) => properties >= level.min && properties <= level.max) || null
+}
+
 export const COMPANY_TYPES = ["LLC", "Corporation", "S corporation", "Partnership", "Limited partnership", "Trust", "Sole proprietorship", "Other"]
 const STANDARD_DOCUMENT_LABELS = [...new Set([...DOCUMENT_LABELS, ...COMPANY_DOCUMENT_LABELS])]
 

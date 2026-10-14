@@ -1,7 +1,8 @@
 import Link from "next/link"
 import { HeaderActions } from "./HeaderActions"
 
-export function DetailFrame({ backHref, backLabel, title, meta, status, actions, children }) {
+// metaAside: shown at the end of the line under the title on phones and tablets, where the header status is hidden.
+export function DetailFrame({ backHref, backLabel, title, meta, status, metaAside, actions, children }) {
   return (
     <div className="workspace">
       <div className="detail-bar">
@@ -17,7 +18,12 @@ export function DetailFrame({ backHref, backLabel, title, meta, status, actions,
           </div>
         )}
       </div>
-      {meta && <p className="detail-meta detail-meta-below">{meta}</p>}
+      {meta && (
+        <p className={metaAside ? "detail-meta detail-meta-below has-aside" : "detail-meta detail-meta-below"}>
+          <span>{meta}</span>
+          {metaAside && <span className="detail-meta-aside">{metaAside}</span>}
+        </p>
+      )}
       {children}
     </div>
   )

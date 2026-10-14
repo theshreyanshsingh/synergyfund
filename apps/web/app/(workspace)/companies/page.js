@@ -2,9 +2,10 @@
 
 import { Suspense, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { can } from "@synergifund/shared"
+import { EXPOSURE_LEVELS, can, companyExposure } from "@synergifund/shared"
 import { CompanyFields, PropertyPicker, companyForm } from "../../../components/companies/CompanyParts"
 import { ImportCompanies } from "../../../components/companies/ImportCompanies"
+import { ExposureBadge } from "../../../components/companies/ExposureBadge"
 import { DocStatus } from "../../../components/documents/FolderBrowser"
 import { FormSheet } from "../../../components/ui/FormSheet"
 import { PageSpinner } from "../../../components/ui/Spinner"
@@ -142,7 +143,7 @@ function CompaniesScreen() {
         ] : []}
         columns={[
           { key: "name", label: "Company", avatar: (row) => row.name, render: (row) => <span className="person-copy"><strong>{row.name}</strong><small>{[row.entityType, row.stateOfFormation].filter(Boolean).join(" · ") || "Type not set"}</small></span> },
-          { key: "properties", label: "Properties", render: (row) => row.properties },
+          { key: "properties", label: "Properties", render: (row) => <span className="exposure-cell">{row.properties}<ExposureBadge count={row.properties} /></span> },
           { key: "loanBalance", label: "Loan balance", className: "num", render: (row) => row.loanBalance == null ? "—" : money(row.loanBalance) },
           { key: "monthlyPayment", label: "Monthly", className: "num", render: (row) => row.monthlyPayment == null ? "—" : money(row.monthlyPayment) },
           {
@@ -156,6 +157,7 @@ function CompaniesScreen() {
           },
           { key: "documents", label: "Files", render: (row) => row.documents },
         ]}
+        filters={[{ key: "exposure", label: "Exposure", options: EXPOSURE_LEVELS.map((level) => level.label), value: (row) => companyExposure(row.properties)?.label || "" }]}
         rows={items}
         onRow={(row) => router.push(`/companies/${row.id}`)}
         empty={list.error || "No companies yet. Add one, then assign the properties it owns."}

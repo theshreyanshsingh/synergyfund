@@ -2615,3 +2615,19 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .quick-copy em { white-space: normal; }
   .quick-actions { grid-column: 2 / -1; }
 }
+
+/* Company exposure: a small badge from how many properties it holds */
+.exposure { --tone: #15803d; --tone-bg: #dcfce7; display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--tone) 28%, transparent); border-radius: 999px; background: var(--tone-bg); color: var(--tone); font-size: 10.5px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.exposure.is-moderate { --tone: #a16207; --tone-bg: #fef9c3; }
+.exposure.is-high { --tone: #c2410c; --tone-bg: #ffedd5; }
+.exposure.is-critical { --tone: #b91c1c; --tone-bg: #fee2e2; }
+[data-theme="dark"] .exposure { --tone: #4ade80; --tone-bg: rgba(74, 222, 128, .13); }
+[data-theme="dark"] .exposure.is-moderate { --tone: #facc15; --tone-bg: rgba(250, 204, 21, .13); }
+[data-theme="dark"] .exposure.is-high { --tone: #fb923c; --tone-bg: rgba(251, 146, 60, .14); }
+[data-theme="dark"] .exposure.is-critical { --tone: #f87171; --tone-bg: rgba(248, 113, 113, .14); }
+.exposure-cell { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* Phones and tablets: a badge (like a company's exposure) at the right end of the line under the title, above the tabs. */
+@media (max-width: 1100px) {
+  .app:not(.is-contractor) .main .detail-meta-below.has-aside { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; }
+  .detail-meta-aside { display: inline-flex; flex: none; margin-left: auto; }
+}
