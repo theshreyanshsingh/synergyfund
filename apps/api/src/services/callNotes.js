@@ -20,13 +20,20 @@ const SETTLE_MS = 6000
 const SETTLE_MAX_MS = 120000
 const HINTS_MS = 10 * 60 * 1000
 
-// Per note: pieces being transcribed now, cached word hints, and whether its notes are being written.
+// Per note, while it is being taken or written: pieces being transcribed now, cached word hints, and whether its
+// notes are being written. Removed once the notes are written.
 const jobs = new Map()
 
 function job(noteId) {
   const id = String(noteId)
   if (!jobs.has(id)) jobs.set(id, { pending: 0, hints: null, hintsAt: 0, writing: false, closed: false })
   return jobs.get(id)
+}
+
+// Marks notes failed when writing them broke unexpectedly, so they never stay "being written" for ever.
+async function markFailed(noteId, error) {
+  console.error("Call notes: writing failed", error)
+  await CallNote.updateOne({ _id: noteId, status: "writing" }, { $set: { status: "failed", error: "Something went wrong writing the notes. Try again." } }).catch(() => {})
 }
 
 export function transcribeModel() {
@@ -78,15 +85,17 @@ export async function stopNotes(noteId, user = null) {
 }
 
 // One piece of someone's speech. `endedAgoMs` is how long ago it finished on their device, so it is placed in time
-// by this server's clock, never theirs.
+// by this server's clock, never theirs. Anyone who was on these notes is heard, including the last words of someone
+// who just hung up (their piece arrives a moment after they left).
 export async function acceptPiece({ user, noteId, audio, durationMs, endedAgoMs }) {
   const note = await CallNote.findById(noteId).select("status onAt offAt participants callId")
   if (!note) return { status: 404, error: "Those call notes were not found." }
   if (!note.participants.some((person) => String(person.userId) === String(user._id))) return { status: 403, error: "You are not in this call." }
-  const work = job(note._id)
   const now = Date.now()
-  const late = note.status === "writing" && note.offAt && now - note.offAt.getTime() <= LATE_MS && !work.closed
+  const existing = jobs.get(String(note._id))
+  const late = note.status === "writing" && note.offAt && now - note.offAt.getTime() <= LATE_MS && existing && !existing.closed
   if (note.status !== "recording" && !late) return { status: 409, error: "AI notes are off." }
+  const work = existing || job(note._id)
   const duration = Math.min(MAX_PIECE_MS, Math.max(0, Number(durationMs) || 0))
   const ago = Math.min(LATE_MS, Math.max(0, Number(endedAgoMs) || 0))
   const at = new Date(Math.max(note.onAt.getTime(), now - ago - duration))
@@ -160,7 +169,7 @@ function settleThenWrite(noteId) {
     }
     work.closed = true
     writeNotes(noteId)
-      .catch((error) => console.error("Call notes: writing failed", error))
+      .catch((error) => markFailed(noteId, error))
       .finally(() => jobs.delete(String(noteId)))
   }
   setTimeout(tick, 1000)
@@ -288,11 +297,12 @@ async function postNotes(note) {
   emitToUsers(ids, "message:new", { message: presentMessage(message), channel: presentChannel(channel, property) })
 }
 
-// Try writing failed notes again.
+// Try writing failed notes again. The writing happens in the background (it can take a minute); the notes page
+// shows "Writing the notes…" and checks back until they are done.
 export async function retryNotes(noteId) {
   const result = await CallNote.updateOne({ _id: noteId, status: "failed", "segments.0": { $exists: true } }, { $set: { status: "writing", error: "" } })
   if (!result.modifiedCount) return false
-  await writeNotes(noteId)
+  writeNotes(noteId).catch((error) => markFailed(noteId, error))
   return true
 }
 

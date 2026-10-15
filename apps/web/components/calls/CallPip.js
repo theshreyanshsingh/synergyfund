@@ -4,7 +4,7 @@ import { useEffect, useSyncExternalStore } from "react"
 import { createRoot } from "react-dom/client"
 import { callTitle, canShareScreen, leaveCall, toggleCamera, toggleMute, toggleScreen, useCalls } from "../../lib/calls"
 import { Icon } from "../ui/Icon"
-import { statusText, Tile, useNow } from "./CallParts"
+import { NotesOn, statusText, Tile, useNow } from "./CallParts"
 
 // A small call window that floats above other tabs and apps (Chrome and Edge on computers),
 // like Google Meet's. It opens by itself when you switch away during a call, or from "Pop out".
@@ -137,6 +137,7 @@ function PipView({ myName }) {
           <strong>{callTitle(current.call, calls.me)}</strong>
           <em>{statusText(current, now)}{peers.length ? ` · ${peers.length + 1} people` : ""}</em>
         </div>
+        {current.call?.notes && <NotesOn notes={current.call.notes} compact />}
       </header>
       <div className={`call-pip-tiles count-${Math.min(shown.length + (sharing ? 0 : 1), 5)}`}>
         {shown.map((peer) => (

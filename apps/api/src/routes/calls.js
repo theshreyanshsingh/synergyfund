@@ -1,11 +1,13 @@
 import { Router } from "express"
 import mongoose from "mongoose"
 import multer from "multer"
-import { Call, CallNote, ChatMessage, PushSubscription } from "../models/index.js"
+import { Call, CallNote, ChatChannel, ChatMessage, PushSubscription } from "../models/index.js"
 import { asyncHandler, sendError } from "../lib/http.js"
 import { configurePush, isApplePush, sendPush } from "../services/push.js"
-import { presentChannel, usesChat, visibleChannels } from "../services/chat.js"
+import { audience, presentChannel, presentMessage, propertyFor, usesChat, visibleChannels } from "../services/chat.js"
 import { declineCallFor, liveCall, liveCallsFor, network, relayProvider, silenceCallFor } from "../services/calls.js"
+import { emitToUsers } from "../services/chatHub.js"
+import { recordActivity } from "../services/notify.js"
 import { MAX_PIECE_BYTES, acceptPiece, presentNote, retryNotes } from "../services/callNotes.js"
 
 export const callsRouter = Router()
@@ -124,9 +126,10 @@ callsRouter.post(
     const note = await openNote(req, res)
     if (!note) return
     if (note.status !== "failed") return sendError(res, 400, "These notes are not waiting to be written again.")
-    const done = await retryNotes(note._id)
+    const started = await retryNotes(note._id)
     const fresh = await CallNote.findById(note._id)
-    res.json({ ok: done, note: presentNote(fresh, { full: true }) })
+    const me = String(req.user._id)
+    res.json({ ok: started, note: { ...presentNote(fresh, { full: true }), canManage: req.user.role === "admin" || String(fresh.startedBy) === me } })
   }),
 )
 
@@ -138,8 +141,17 @@ callsRouter.delete(
     if (!note) return
     if (req.user.role !== "admin" && String(note.startedBy) !== String(req.user._id)) return sendError(res, 403, "Only whoever turned these notes on, or an admin, can delete them.")
     if (note.status === "recording" || note.status === "writing") return sendError(res, 409, "These notes are still being taken. Turn AI notes off first.")
-    if (note.messageId) await ChatMessage.updateOne({ _id: note.messageId }, { $set: { deletedAt: new Date(), text: "" } })
+    // Their card in the conversation goes too, for everyone looking at it.
+    const message = note.messageId ? await ChatMessage.findByIdAndUpdate(note.messageId, { $set: { deletedAt: new Date(), text: "" } }, { new: true }) : null
+    if (message) {
+      const channel = await ChatChannel.findById(message.channelId)
+      if (channel) {
+        const people = await audience(channel, await propertyFor(channel)).catch(() => [])
+        emitToUsers(people.map((person) => String(person._id)), "message:update", { message: presentMessage(message) })
+      }
+    }
     await note.deleteOne()
+    await recordActivity({ user: req.user, title: "Call notes deleted", detail: note.title || "AI notes" })
     res.json({ ok: true })
   }),
 )

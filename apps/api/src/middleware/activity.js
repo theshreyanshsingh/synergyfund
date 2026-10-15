@@ -39,7 +39,8 @@ export function trackActivity(req, res, next) {
   const path = req.path
   res.on("finish", () => {
     if (res.statusCode >= 400 || !req.user || activityRecorded(req.user)) return
-    if (path.startsWith("/chat/")) return
+    // Chat messages and call plumbing (AI notes speech pieces every few seconds, declines, test rings) are not activity.
+    if (path.startsWith("/chat/") || path.startsWith("/calls/")) return
     Activity.create({ actorId: req.user._id, actorName: req.user.name, title: fallbackTitle(req, path), detail: fallbackDetail(req) }).catch((error) => console.error("Activity log failed", error))
   })
   next()

@@ -28,6 +28,8 @@ export function startNotesRecording(noteId, track) {
   const context = audioContext()
   if (!context) return false
   context.resume?.().catch(() => {})
+  // A phone may keep sound asleep until the screen is touched (someone else turned notes on); wake it on the next tap.
+  if (context.state !== "running") document.addEventListener("pointerdown", () => context.resume?.().catch(() => {}), { once: true, capture: true })
   const source = context.createMediaStreamSource(new MediaStream([track]))
   // ScriptProcessor works in every browser that can make calls, including Safari on iPhone.
   const processor = context.createScriptProcessor(FRAME, 1, 1)
@@ -77,10 +79,12 @@ function listen(run, input) {
   let sum = 0
   for (let index = 0; index < frame.length; index += 1) sum += frame[index] * frame[index]
   const level = Math.sqrt(sum / frame.length)
-  // The background level drifts with the room; speech is well above it.
+  // Speech is well above the room's background level. That level follows quiet moments down quickly and creeps up
+  // slowly, so steady noise (a fan, traffic) soon stops counting as speech, while normal talking with pauses does.
   const threshold = Math.max(0.012, run.noise * 3.2)
   const speech = level > threshold
-  if (!speech) run.noise = run.noise * 0.95 + level * 0.05
+  if (level < run.noise) run.noise = run.noise * 0.7 + level * 0.3
+  else run.noise = run.noise * 0.997 + level * 0.003
   if (!run.speaking) {
     run.preRoll.push(frame)
     let kept = run.preRoll.reduce((total, item) => total + item.length, 0)

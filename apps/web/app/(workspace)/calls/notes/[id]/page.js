@@ -1,6 +1,6 @@
 "use client"
 
-import { use, useEffect, useState } from "react"
+import { use, useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { PERMISSIONS, can } from "@synergifund/shared"
 import { DetailFrame } from "../../../../../components/ui/DetailFrame"
@@ -43,27 +43,28 @@ export default function CallNotesPage({ params }) {
   const [added, setAdded] = useState({})
   const canAddTasks = Boolean(session?.user && can(session.user, PERMISSIONS.tasksManage))
 
-  // While the notes are being taken or written, check back every few seconds.
-  useEffect(() => {
-    let active = true
-    let timer = null
-    async function load() {
-      try {
-        const data = await api(`/calls/notes/${id}`)
-        if (!active) return
-        setNote(data.note)
-        setError("")
-        if (data.note.status === "recording" || data.note.status === "writing") timer = setTimeout(load, 4000)
-      } catch (err) {
-        if (active) setError(err.message)
-      }
-    }
-    load()
-    return () => {
-      active = false
-      clearTimeout(timer)
+  const [loads, setLoads] = useState(0)
+  const load = useCallback(async () => {
+    try {
+      const data = await api(`/calls/notes/${id}`)
+      setNote(data.note)
+      setError("")
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoads((count) => count + 1)
     }
   }, [id])
+  useEffect(() => {
+    load()
+  }, [load])
+  // While the notes are being taken or written (also after Try again), check back every few seconds.
+  const inProgress = note?.status === "recording" || note?.status === "writing"
+  useEffect(() => {
+    if (!inProgress) return undefined
+    const timer = setTimeout(load, 4000)
+    return () => clearTimeout(timer)
+  }, [inProgress, loads, load])
 
   async function retry() {
     setBusy("retry")
@@ -71,7 +72,7 @@ export default function CallNotesPage({ params }) {
     try {
       const data = await api(`/calls/notes/${id}/retry`, { method: "POST", body: {} })
       setNote(data.note)
-      if (!data.ok) setError("The notes still could not be written. Try again in a few minutes.")
+      if (!data.ok) setError("The notes could not be written again. Reload the page and try again.")
     } catch (err) {
       setError(err.message)
     } finally {

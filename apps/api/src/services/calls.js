@@ -211,7 +211,8 @@ async function endCall(state, reason) {
   if (state.notes) {
     const noteId = state.notes.id
     state.notes = null
-    stopNotes(noteId).catch((error) => console.error("Call notes: stopping failed", error))
+    // Stopped before anyone is told the call ended, so the last words they send are counted.
+    await stopNotes(noteId).catch((error) => console.error("Call notes: stopping failed", error))
   }
   pushCallOver(state).catch(() => {})
   recordMissed(state).catch((error) => console.error("Missed call note failed", error))
@@ -689,6 +690,13 @@ export function registerCallHandlers(socket) {
           return reply({ error: "That call has ended." })
         }
         state.notes = { id: String(note._id), by: me, byName: user.name, since: note.onAt }
+        // Anyone who joined while the notes were being set up is on them too.
+        const counted = new Set(people.map((person) => String(person.userId)))
+        for (const peer of state.peers.values()) {
+          if (counted.has(peer.userId)) continue
+          counted.add(peer.userId)
+          await addNoteParticipant(note._id, { _id: peer.userId, name: peer.name })
+        }
       } finally {
         state.notesStarting = false
       }
