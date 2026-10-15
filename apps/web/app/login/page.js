@@ -2,9 +2,8 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { homeFor } from "@synergifund/shared"
 import { api } from "../../lib/api"
-import { useSession } from "../../components/shell/Providers"
+import { landingFor, useSession } from "../../components/shell/Providers"
 import { PasswordInput } from "../../components/ui/PasswordInput"
 
 export default function LoginPage() {
@@ -22,7 +21,7 @@ export default function LoginPage() {
     try {
       const data = await api("/auth/login", { method: "POST", body: { email, password } })
       session.setUser(data.user)
-      router.replace(homeFor(data.user))
+      router.replace(landingFor(data.user))
     } catch (err) {
       setError(err.message)
     } finally {

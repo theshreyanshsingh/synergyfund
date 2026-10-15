@@ -134,8 +134,10 @@ expensesRouter.post(
       drawId: req.body.drawId || undefined,
       scopeLineId,
     })
+    // Admins, and finance (they approve expenses); not whoever submitted it.
     await notify({
       roles: ["admin", "finance"],
+      exceptUserIds: [req.user._id],
       title: "Expense submitted",
       body: `${req.user.name} submitted ${request.title} for $${amount.toLocaleString("en-US")}.`,
       href: "/expenses",
@@ -283,6 +285,7 @@ expensesRouter.post(
     await request.save()
     await notify({
       roles: ["admin", "finance"],
+      exceptUserIds: [req.user._id],
       title: "Expense submitted again",
       body: `${req.user.name} sent ${request.title} again for $${Number(request.amount).toLocaleString("en-US")}.`,
       href: "/expenses",
@@ -317,7 +320,7 @@ expensesRouter.post(
       request.reviewedBy = req.user._id
       await request.save()
       await recordActivity({ user: req.user, title: "Expense rejected", detail: request.title, propertyId: request.propertyId })
-      await notify({ userIds: [request.requestedBy], roles: ["admin"], title: "Expense rejected", body: `${request.title} was rejected. ${request.reviewNote}`, href: "/expenses", event: "expense.rejected" })
+      await notify({ userIds: [request.requestedBy], roles: ["admin"], exceptUserIds: [req.user._id], title: "Expense rejected", body: `${request.title} was rejected. ${request.reviewNote}`, href: "/expenses", event: "expense.rejected" })
       res.json({ request: await withProofUrls(presentRequest(request)) })
       return
     }
@@ -346,7 +349,7 @@ expensesRouter.post(
       request.reviewNote = req.body.note || ""
       request.reviewedBy = req.user._id
       await request.save()
-      await notify({ roles: ["admin"], title: "Second approval needed", body: `${request.title} is above $${APPROVAL_THRESHOLD.toLocaleString("en-US")}.`, href: "/expenses", event: "expense.second_approval" })
+      await notify({ roles: ["admin"], exceptUserIds: [req.user._id], title: "Second approval needed", body: `${request.title} is above $${APPROVAL_THRESHOLD.toLocaleString("en-US")}.`, href: "/expenses", event: "expense.second_approval" })
       res.json({ request: await withProofUrls(presentRequest(request)) })
       return
     }
@@ -374,7 +377,7 @@ expensesRouter.post(
     })
     await refreshRehabRemaining(expense.propertyId)
     await notify({ userIds: [request.requestedBy], title: "Expense approved", body: `${request.title} posted to the property books.`, href: "/expenses", event: "expense.approved" })
-    await recordActivity({ user: req.user, title: "Expense approved", detail: request.reapplied ? `${request.title} · reapplied` : request.title, propertyId: request.propertyId })
+    await recordActivity({ user: req.user, title: "Expense approved", detail: request.reapplied ? `${request.title} · reapplied` : request.title, propertyId: request.propertyId, alertExcept: [request.requestedBy] })
     res.json({ request: await withProofUrls(presentRequest(request)), expense: await withProofUrls(presentExpense(expense)) })
   }),
 )

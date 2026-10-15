@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
-import { DOCUMENT_LABELS, allowedDocument, documentAccept, documentType, folderName, foldersFor } from "@synergifund/shared"
+import { allowedDocument, documentAccept, documentType, folderName, foldersFor } from "@synergifund/shared"
 import { FormSheet } from "../ui/FormSheet"
 import { api, uploadForm } from "../../lib/api"
 
@@ -88,12 +88,11 @@ function placeBody(value) {
   return { propertyId: value, companyId: "" }
 }
 
-export function DocumentLibrary({ files, properties = [], companies = [], fixedPropertyId = "", fixedCompanyId = "", labelOptions = DOCUMENT_LABELS, writable, canDelete, onChanged, initialProperty = "all", emptyText, uploadOpen, onUploadOpenChange, toolbarUpload = true, requireProperty = false, canEdit = () => true }) {
+export function DocumentLibrary({ files, properties = [], companies = [], fixedPropertyId = "", fixedCompanyId = "", writable, canDelete, onChanged, initialProperty = "all", emptyText, uploadOpen, onUploadOpenChange, toolbarUpload = true, requireProperty = false, canEdit = () => true }) {
   const fixedPlace = fixedPropertyId || (fixedCompanyId ? `${COMPANY}${fixedCompanyId}` : "")
   const [query, setQuery] = useState("")
   const [propertyFilter, setPropertyFilter] = useState(fixedPlace || initialProperty)
   const [type, setType] = useState("all")
-  const [label, setLabel] = useState("")
   const [uploadingState, setUploadingState] = useState(false)
   const uploading = uploadOpen ?? uploadingState
   const setUploading = onUploadOpenChange || setUploadingState
@@ -114,23 +113,14 @@ export function DocumentLibrary({ files, properties = [], companies = [], fixedP
 
   const byType = useMemo(() => byProperty.filter((file) => type === "all" || typeGroup(file) === type), [byProperty, type])
 
-  const labelCounts = useMemo(() => {
-    const counts = new Map()
-    for (const file of byType) for (const item of file.labels || []) counts.set(item, (counts.get(item) || 0) + 1)
-    const ordered = [...labelOptions.filter((item) => counts.has(item)), ...[...counts.keys()].filter((item) => !labelOptions.includes(item)).sort()]
-    return ordered.map((item) => ({ label: item, count: counts.get(item) }))
-  }, [byType, labelOptions])
-  const activeLabel = label === "__none" || labelCounts.some((item) => item.label === label) ? label : ""
-
   const shown = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return byType.filter((file) => {
-      if (activeLabel === "__none" && (file.labels || []).length) return false
-      if (activeLabel && activeLabel !== "__none" && !(file.labels || []).includes(activeLabel)) return false
       if (!needle) return true
+      // Labels are not shown any more, but Quick Access ones ("Purchase Contract") still help a search find a file.
       return [file.name, file.property, file.company, fileFolder(file), ...(file.labels || []), fileType(file), file.uploadedBy].join(" ").toLowerCase().includes(needle)
     })
-  }, [byType, activeLabel, query])
+  }, [byType, query])
 
   const noneLabel = companies.length || files.some((file) => file.companyId) ? "Not linked to a property or company" : "Not linked to a property"
 
@@ -167,8 +157,7 @@ export function DocumentLibrary({ files, properties = [], companies = [], fixedP
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
   }, [companies, files])
 
-  const unlabeled = count(byType, (file) => !(file.labels || []).length)
-  const filtering = query || type !== "all" || activeLabel || (!fixedPlace && activeProperty !== "all")
+  const filtering = query || type !== "all" || (!fixedPlace && activeProperty !== "all")
 
   async function remove(file) {
     if (!window.confirm(`Delete ${file.name}? This cannot be undone.`)) return
@@ -186,12 +175,12 @@ export function DocumentLibrary({ files, properties = [], companies = [], fixedP
       <div className="doc-toolbar">
         <label className="doc-search">
           <span className="sr-only">Search files</span>
-          <input type="search" value={query} placeholder="Search by name, label or property" onChange={(event) => setQuery(event.target.value)} />
+          <input type="search" value={query} placeholder="Search by name or property" onChange={(event) => setQuery(event.target.value)} />
         </label>
         {!fixedPlace && (
           <label className="doc-select">
             <span>{companyOptions.length ? "Filed under" : "Property"}</span>
-            <select value={activeProperty} onChange={(event) => { setPropertyFilter(event.target.value); setLabel("") }}>
+            <select value={activeProperty} onChange={(event) => setPropertyFilter(event.target.value)}>
               <option value="all">{companyOptions.length ? "All files" : "All properties"} ({files.length})</option>
               {companyOptions.length ? (
                 <>
@@ -212,25 +201,13 @@ export function DocumentLibrary({ files, properties = [], companies = [], fixedP
         {writable && toolbarUpload && <button type="button" className="primary doc-upload" onClick={() => setUploading(true)}>Upload</button>}
       </div>
 
-      {(labelCounts.length > 0 || unlabeled > 0) && byType.length > 0 && (
-        <div className="doc-chips" role="group" aria-label="Filter by label">
-          <button type="button" className={!activeLabel ? "doc-chip is-on" : "doc-chip"} onClick={() => setLabel("")}>All <em>{byType.length}</em></button>
-          {labelCounts.map((item) => (
-            <button key={item.label} type="button" className={activeLabel === item.label ? "doc-chip is-on" : "doc-chip"} onClick={() => setLabel(activeLabel === item.label ? "" : item.label)}>{item.label} <em>{item.count}</em></button>
-          ))}
-          {unlabeled > 0 && labelCounts.length > 0 && (
-            <button type="button" className={activeLabel === "__none" ? "doc-chip is-on" : "doc-chip"} onClick={() => setLabel(activeLabel === "__none" ? "" : "__none")}>No label <em>{unlabeled}</em></button>
-          )}
-        </div>
-      )}
-
       {error && <p className="banner">{error}</p>}
 
       {shown.length === 0 && (
         <div className="doc-empty">
           <strong>{filtering ? "No files match these filters." : emptyText || "No files yet."}</strong>
           {filtering ? (
-            <button type="button" className="tool" onClick={() => { setQuery(""); setType("all"); setLabel(""); if (!fixedPlace) setPropertyFilter("all") }}>Clear filters</button>
+            <button type="button" className="tool" onClick={() => { setQuery(""); setType("all"); if (!fixedPlace) setPropertyFilter("all") }}>Clear filters</button>
           ) : writable ? (
             <button type="button" className="tool" onClick={() => setUploading(true)}>Upload a file</button>
           ) : null}
@@ -251,7 +228,7 @@ export function DocumentLibrary({ files, properties = [], companies = [], fixedP
             )}
             <ul className="doc-list">
               {visible.map((file) => (
-                <DocumentRow key={file.id} file={file} showProperty={fixedPlace ? false : !group.title} writable={writable && canEdit(file)} canDelete={canDelete} onEdit={() => setEditing(file)} onDelete={() => remove(file)} onLabel={(item) => setLabel(item)} />
+                <DocumentRow key={file.id} file={file} showProperty={fixedPlace ? false : !group.title} writable={writable && canEdit(file)} canDelete={canDelete} onEdit={() => setEditing(file)} onDelete={() => remove(file)} />
               ))}
             </ul>
             {!open && (
@@ -288,7 +265,7 @@ export function DocumentLibrary({ files, properties = [], companies = [], fixedP
   )
 }
 
-function DocumentRow({ file, showProperty, writable, canDelete, onEdit, onDelete, onLabel }) {
+function DocumentRow({ file, showProperty, writable, canDelete, onEdit, onDelete }) {
   const kind = fileType(file)
   const thumb = isImage(file) ? file.url || `/api/documents/${file.id}/raw` : ""
   return (
@@ -306,7 +283,6 @@ function DocumentRow({ file, showProperty, writable, canDelete, onEdit, onDelete
         {showProperty && file.property && <Link href={propertyHome(file)} className="doc-tag is-property">{file.property}</Link>}
         {showProperty && file.company && <Link href={`/companies/${file.companyId}?tab=documents`} className="doc-tag is-company">{file.company}</Link>}
         {fileFolder(file) && <span className="doc-tag is-folder">{fileFolder(file)}</span>}
-        {(file.labels || []).map((item) => <button key={item} type="button" className="doc-tag" onClick={() => onLabel(item)}>{item}</button>)}
       </span>
       <span className="doc-actions">
         <a href={`/api/documents/${file.id}/download`}>Download</a>

@@ -81,7 +81,7 @@ function DocumentsScreen() {
         stats={[
           { key: "files", label: "Files", value: String(files.length), hint: "In the library" },
           { key: "properties", label: "Properties with files", value: String(new Set(linked.map((file) => file.propertyId)).size), hint: `${linked.length} files linked to a property${companyFiles.length ? ` · ${companyFiles.length} filed under a company` : ""}` },
-          { key: "labeled", label: "Labeled", value: String(files.filter((file) => (file.labels || []).length).length), hint: "Files with at least one label" },
+          { key: "unfiled", label: "Not filed", value: String(files.filter((file) => !file.propertyId && !file.companyId).length), hint: "Not linked to a property or company" },
           { key: "photos", label: "Photos", value: String(files.filter((file) => fileType(file) === "Photo").length), hint: "Site photos and images" },
         ]}
       >

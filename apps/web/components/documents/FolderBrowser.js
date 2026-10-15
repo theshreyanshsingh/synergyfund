@@ -518,7 +518,6 @@ function FileRow({ file, where, viewHref, checked, onToggle, writable, canDelete
       </Link>
       <span className="doc-tags">
         {where && <span className="doc-tag is-folder">{where}</span>}
-        {(file.labels || []).map((item) => <span key={item} className="doc-tag">{item}</span>)}
       </span>
       <span className="doc-actions">
         <Link href={viewHref}>View</Link>

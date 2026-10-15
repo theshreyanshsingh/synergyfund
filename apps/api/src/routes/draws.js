@@ -663,11 +663,13 @@ drawsRouter.post(
     ])
     if (property) await syncRehabRemaining([property], propertyExpenses)
     const report = await comparePhotosForDraw(draw)
+    // Every admin except whoever pulled it.
     await notify({
-      roles: ["admin", "finance", "investor"],
+      roles: ["admin"],
+      exceptUserIds: [req.user._id],
       title: "Draw pulled",
-      body: report.summary,
-      href: "/draws",
+      body: [await addressOf(draw.propertyId), report.summary].filter(Boolean).join(": "),
+      href: `/properties/${draw.propertyId}?tab=draws`,
       event: "draw.pulled",
     })
     await recordActivity({ user: req.user, title: "Draw pulled", detail: draw.title, propertyId: draw.propertyId })

@@ -128,7 +128,7 @@ function PropertiesScreen() {
             { key: "company", label: "Company", render: (row) => row.companyId ? <Link href={`/companies/${row.companyId}`} className="table-link" onClick={(event) => event.stopPropagation()}>{row.company || "Company"}</Link> : <span className="muted-cell">—</span> },
             { key: "rehabBudget", label: "Rehab budget", render: (row) => row.rehabBudget == null ? "—" : money(row.rehabBudget) },
           ]),
-          { key: "stage", label: "Status", render: (row) => <StatusPill>{row.stage}</StatusPill> },
+          { key: "stage", label: "Status", peek: true, render: (row) => <StatusPill>{row.stage}</StatusPill> },
           ...(contractor ? [] : [
             { key: "nextAction", label: "Next step", render: (row) => row.nextAction || "Set the next action" },
             { key: "strategy", label: "Goal", render: (row) => row.strategy || "Not set" },
@@ -140,6 +140,9 @@ function PropertiesScreen() {
         reorder={writable && !contractor ? { onMove: moveProperties } : undefined}
         important={contractor ? undefined : (row) => row.health === "Needs attention" || !row.purchasePrice}
         onRow={(row) => router.push(`/properties/${row.id}`)}
+        // Phones: one line per property; a tap shows its details, a second tap (or Open) opens it.
+        collapsible={!contractor}
+        openLabel="Open property"
         empty={list.error || "No properties yet."}
       />
       {open && (

@@ -143,7 +143,7 @@ function CompaniesScreen() {
         ] : []}
         columns={[
           { key: "name", label: "Company", avatar: (row) => row.name, render: (row) => <span className="person-copy"><strong>{row.name}</strong><small>{[row.entityType, row.stateOfFormation].filter(Boolean).join(" · ") || "Type not set"}</small></span> },
-          { key: "properties", label: "Properties", render: (row) => <span className="exposure-cell">{row.properties}<ExposureBadge count={row.properties} /></span> },
+          { key: "properties", label: "Properties", peek: true, render: (row) => <span className="exposure-cell">{row.properties}<ExposureBadge count={row.properties} /></span> },
           { key: "loanBalance", label: "Loan balance", className: "num", render: (row) => row.loanBalance == null ? "—" : money(row.loanBalance) },
           { key: "monthlyPayment", label: "Monthly", className: "num", render: (row) => row.monthlyPayment == null ? "—" : money(row.monthlyPayment) },
           {
@@ -160,6 +160,9 @@ function CompaniesScreen() {
         filters={[{ key: "exposure", label: "Exposure", options: EXPOSURE_LEVELS.map((level) => level.label), value: (row) => companyExposure(row.properties)?.label || "" }]}
         rows={items}
         onRow={(row) => router.push(`/companies/${row.id}`)}
+        // Phones: one line per company; a tap shows its details, a second tap (or Open) opens it.
+        collapsible
+        openLabel="Open company"
         empty={list.error || "No companies yet. Add one, then assign the properties it owns."}
       />
       {importing && writable && (

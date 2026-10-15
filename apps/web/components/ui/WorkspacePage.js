@@ -25,6 +25,8 @@ export function WorkspacePage({
   loading = false,
   selectable = true,
   compact = false,
+  collapsible = false,
+  openLabel,
   reorder,
   children,
 }) {
@@ -181,7 +183,7 @@ export function WorkspacePage({
                   </button>
                   {customizeOpen && columns && (
                     <div className="pop pop-right">
-                      {columns.map((column) => (
+                      {columns.filter((column) => column.label).map((column) => (
                         <label key={column.key}>
                           <input
                             type="checkbox"
@@ -198,7 +200,7 @@ export function WorkspacePage({
             </div>
           )}
           {reorder && shown.length !== rows.length && rows.length > 1 && <p className="reorder-note">Clear the search and filters to drag properties into a new order.</p>}
-          <DataTable columns={visibleColumns} rows={shown} selected={selected} onToggle={toggle} onRow={onRow} empty={rows.length > 0 ? "Nothing matches your search or filters." : empty} loading={loading} selectable={selectable} compact={compact} onMove={reorder && shown.length === rows.length ? reorder.onMove : null} />
+          <DataTable columns={visibleColumns} rows={shown} selected={selected} onToggle={toggle} onRow={onRow} empty={rows.length > 0 ? "Nothing matches your search or filters." : empty} loading={loading} selectable={selectable} compact={compact} collapsible={collapsible} openLabel={openLabel} onMove={reorder && shown.length === rows.length ? reorder.onMove : null} />
         </section>
       )}
     </div>

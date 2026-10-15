@@ -174,7 +174,7 @@ async function assignProperties(company, ids, user) {
   await Property.updateMany({ _id: { $in: moving.map((property) => property._id) } }, { $set: { companyId: company._id, updatedBy: user.name } })
   for (const property of moving) {
     const from = property.companyId ? formerNames.get(String(property.companyId)) : ""
-    await recordActivity({ user, title: "Property assigned to a company", detail: `${property.address} → ${company.name}${from ? ` (was ${from})` : ""}`, propertyId: property._id })
+    await recordActivity({ user, title: "Property assigned to a company", detail: `${property.address} → ${company.name}${from ? ` (was ${from})` : ""}`, propertyId: property._id, href: `/companies/${company._id}?tab=properties` })
   }
   return moving
 }
@@ -252,7 +252,7 @@ companiesRouter.post(
     if (error) return sendError(res, 400, error)
     if (await nameTaken(fields.name)) return sendError(res, 409, `A company named ${fields.name} already exists.`)
     const company = await Company.create({ ...fields, createdBy: req.user._id, updatedBy: req.user.name })
-    await recordActivity({ user: req.user, title: "Company added", detail: [company.name, company.entityType, company.stateOfFormation].filter(Boolean).join(" · ") })
+    await recordActivity({ user: req.user, title: "Company added", detail: [company.name, company.entityType, company.stateOfFormation].filter(Boolean).join(" · "), href: `/companies/${company._id}` })
     const assigned = await assignProperties(company, req.body.propertyIds, req.user)
     res.status(201).json({ company: presentCompany(company), assigned: assigned.length })
   }),
@@ -504,7 +504,7 @@ companiesRouter.patch(
       changeSummary(before, after, TEXT_FIELDS.map(([key, label]) => [key, label])),
       bankChanged.length ? `${bankChanged.join(", ")} updated` : "",
     ].filter(Boolean).join(" · ")
-    await recordActivity({ user: req.user, title: "Company updated", detail: `${company.name}${changes ? `: ${changes}` : " · saved with no changes"}` })
+    await recordActivity({ user: req.user, title: "Company updated", detail: `${company.name}${changes ? `: ${changes}` : " · saved with no changes"}`, href: `/companies/${company._id}` })
     res.json({ company: presentCompany(company, { banking: true }) })
   }),
 )
@@ -552,7 +552,7 @@ companiesRouter.delete(
     const property = isId(req.params.propertyId) ? await Property.findOne({ _id: req.params.propertyId, companyId: company._id }).select("_id address") : null
     if (!property) return sendError(res, 404, "That property is not in this company.")
     await Property.updateOne({ _id: property._id }, { $unset: { companyId: 1 }, $set: { updatedBy: req.user.name } })
-    await recordActivity({ user: req.user, title: "Property removed from a company", detail: `${property.address} is no longer in ${company.name}`, propertyId: property._id })
+    await recordActivity({ user: req.user, title: "Property removed from a company", detail: `${property.address} is no longer in ${company.name}`, propertyId: property._id, href: `/companies/${company._id}?tab=properties` })
     res.json({ ok: true })
   }),
 )

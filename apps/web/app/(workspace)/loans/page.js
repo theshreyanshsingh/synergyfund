@@ -82,7 +82,7 @@ export default function LoansPage() {
           columns={[
             { key: "lender", label: "Lender", avatar: (row) => row.lender, render: (row) => <span className="person-copy"><strong>{row.lender}</strong><small>{row.label}</small></span> },
             { key: "address", label: "Property", render: (row) => <span className="person-copy"><strong>{row.address || "No property"}</strong><small>{[row.city, row.loanNumber].filter(Boolean).join(" · ")}</small></span> },
-            { key: "balance", label: "Balance", render: (row) => money(row.balance) },
+            { key: "balance", label: "Balance", peek: true, render: (row) => money(row.balance) },
             { key: "payment", label: "Payment", render: (row) => money(row.payment) },
             { key: "maturity", label: "Maturity", render: (row) => row.maturity || "No date" },
             { key: "status", label: "Loan status", render: (row) => <StatusPill>{row.status || "Current"}</StatusPill> },
@@ -91,6 +91,9 @@ export default function LoansPage() {
           rows={items}
           important={(row) => row.termsStatus === "Needs verification"}
           onRow={(row) => router.push(row.lenderId ? `/loans/lenders/${row.lenderId}` : `/properties/${row.propertyId}`)}
+          // Phones: one line per loan (lender and balance); a tap shows the rest, a second tap opens it.
+          collapsible
+          openLabel={(row) => (row.lenderId ? "Open lender" : "Open property")}
           empty="No loans yet. Add a lender, then attach a property."
         />
       ) : (

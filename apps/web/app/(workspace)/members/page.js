@@ -147,7 +147,7 @@ export default function MembersPage() {
               </span>
             ),
           },
-          { key: "role", label: "Role", render: (row) => <StatusPill>{roleLabel[row.role] || row.role}</StatusPill> },
+          { key: "role", label: "Role", peek: true, render: (row) => <StatusPill>{roleLabel[row.role] || row.role}</StatusPill> },
           {
             key: "access",
             label: "Access",
@@ -171,6 +171,9 @@ export default function MembersPage() {
         rows={people}
         important={(row) => (row.extraPermissions || []).length > 0 || (row.deniedPermissions || []).length > 0}
         onRow={openMember}
+        // Phones: name and role on one line with Modify and Delete; a tap shows access and title.
+        collapsible
+        openLabel="Edit member"
         empty="Invite the first person and choose what they can do."
       />
       {draft && (

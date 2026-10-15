@@ -1,3 +1,5 @@
+import { appOrigin } from "../appUrl.js"
+
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 const MAX_ATTEMPTS = 4
 const TIMEOUT_MS = 120000
@@ -42,7 +44,7 @@ export async function chat({ model, messages, tools, toolChoice, temperature = 0
         headers: {
           Authorization: `Bearer ${key}`,
           "Content-Type": "application/json",
-          "HTTP-Referer": process.env.WEB_ORIGIN || "http://localhost:3000",
+          "HTTP-Referer": appOrigin(),
           "X-Title": "SynergiFund",
         },
         body: JSON.stringify(body),

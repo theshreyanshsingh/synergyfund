@@ -2,15 +2,15 @@
 
 import { memo, useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { usePathname, useRouter } from "next/navigation"
+import { usePathname } from "next/navigation"
 import { can, initials, navFor, PERMISSIONS } from "@synergifund/shared"
 import { api } from "../../lib/api"
 import { useChatEvents } from "../../lib/chatSocket"
 import { Icon } from "../ui/Icon"
 import { InstallCard } from "../pwa/InstallCard"
+import { useSession } from "./Providers"
 
 export const Sidebar = memo(function Sidebar({ user, onSearch, onToggle, onNavigate }) {
-  const router = useRouter()
   const [open, setOpen] = useState(false)
   const items = navFor(user)
   const primary = items.filter((item) => item.zone === "primary")
@@ -21,10 +21,9 @@ export const Sidebar = memo(function Sidebar({ user, onSearch, onToggle, onNavig
     else sections.push({ label: item.section, items: [item] })
   }
 
-  async function logout() {
-    await api("/auth/logout", { method: "POST" })
-    router.replace("/login")
-    router.refresh()
+  const session = useSession()
+  function logout() {
+    session.signOut()
   }
 
   return (
@@ -90,12 +89,17 @@ function ThemeButton() {
 }
 
 function SidebarNav({ primary, sections, onNavigate, chat, me }) {
+  const pathname = usePathname()
   const [counts, setCounts] = useState({ notifications: 0, chat: 0 })
   const timer = useRef(null)
   useEffect(() => {
     api("/counts").then(setCounts).catch(() => {})
     return () => clearTimeout(timer.current)
   }, [])
+  // Opening Notifications reads them, so the count clears.
+  useEffect(() => {
+    if (pathname === "/notifications") setCounts((current) => ({ ...current, notifications: 0 }))
+  }, [pathname])
   function refreshChat() {
     clearTimeout(timer.current)
     timer.current = setTimeout(() => {
@@ -107,6 +111,7 @@ function SidebarNav({ primary, sections, onNavigate, chat, me }) {
     if (channel?.kind === "direct" || message.mentionsChannel || (message.mentionIds || []).includes(me)) refreshChat()
   }
   function onNotification() {
+    if (pathname === "/notifications") return
     setCounts((current) => ({ ...current, notifications: (current.notifications || 0) + 1 }))
   }
   useChatEvents({ "message:new": onMessage, read: refreshChat, "channel:remove": refreshChat, "chat:refresh": refreshChat, reconnect: refreshChat, "notification:new": onNotification }, chat)

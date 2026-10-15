@@ -13,7 +13,6 @@ import { InstallCard } from "../pwa/InstallCard"
 import { CallLayer } from "../calls/CallLayer"
 import { SoundAlerts } from "./SoundAlerts"
 import { DownloadTray } from "./DownloadTray"
-import { api } from "../../lib/api"
 
 const NARROW = "(max-width: 1100px)"
 
@@ -33,7 +32,7 @@ export function AppShell({ children }) {
 
   useEffect(() => {
     if (session?.user?.role !== "contractor") return
-    const allowed = pathname === "/properties" || pathname.startsWith("/properties/") || pathname === "/expenses" || pathname === "/settings" || pathname === "/chat" || pathname === "/calls"
+    const allowed = pathname === "/properties" || pathname.startsWith("/properties/") || pathname === "/expenses" || pathname === "/tasks" || pathname === "/settings" || pathname === "/chat" || pathname === "/calls"
     if (!allowed) router.replace("/properties")
   }, [pathname, session, router])
 
@@ -68,6 +67,8 @@ export function AppShell({ children }) {
           </Link>
           <nav className="contractor-nav" aria-label="Main">
             <Link href="/expenses" className={pathname === "/expenses" ? "contractor-link is-on" : "contractor-link"}>Expenses</Link>
+            {/* Tasks assigned to them, which their "Task assigned" emails open. */}
+            {can(session.user, PERMISSIONS.tasksEdit) && <Link href="/tasks" className={pathname === "/tasks" ? "contractor-link is-on" : "contractor-link"}>To-do</Link>}
             {can(session.user, PERMISSIONS.chatUse) && <Link href="/chat" className={pathname === "/chat" ? "contractor-link is-on" : "contractor-link"}>Chat</Link>}
             {can(session.user, PERMISSIONS.chatUse) && <Link href="/calls" className={pathname === "/calls" ? "contractor-link is-on" : "contractor-link"}>Calls</Link>}
             <Link href="/settings" className={pathname === "/settings" ? "contractor-link is-on" : "contractor-link"}>Settings</Link>
@@ -75,7 +76,7 @@ export function AppShell({ children }) {
           <div className="contractor-tools">
             <span className="contractor-person">{session.user.name}</span>
             <ThemeToggle />
-            <button type="button" className="tool" onClick={async () => { await api("/auth/logout", { method: "POST" }); router.replace("/login"); router.refresh() }}>Logout</button>
+            <button type="button" className="tool" onClick={() => session.signOut()}>Logout</button>
           </div>
         </header>
         <main className="main">

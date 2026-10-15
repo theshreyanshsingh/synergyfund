@@ -458,7 +458,7 @@ export const NAV = [
   { href: "/settings", label: "Settings", icon: "settings", section: "Team" },
 ]
 
-const CONTRACTOR_NAV = new Set(["/properties", "/expenses", "/chat", "/calls"])
+const CONTRACTOR_NAV = new Set(["/properties", "/expenses", "/tasks", "/chat", "/calls"])
 
 export function navFor(user) {
   const items = NAV.filter((item) => !item.permission || can(user, item.permission))

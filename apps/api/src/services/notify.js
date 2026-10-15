@@ -2,6 +2,7 @@ import { Resend } from "resend"
 import { User, Notification, MailMessage, Activity } from "../models/index.js"
 import { pushToUsers } from "./push.js"
 import { emitToUsers } from "./chatHub.js"
+import { appOrigin } from "./appUrl.js"
 
 const BATCH_SIZE = 100
 const MAX_ATTEMPTS = 3
@@ -19,8 +20,7 @@ function escapeHtml(value) {
 
 function appLink(href) {
   if (!href) return ""
-  const origin = String(process.env.WEB_ORIGIN || "http://localhost:3000").replace(/\/+$/, "")
-  return `${origin}${href.startsWith("/") ? href : `/${href}`}`
+  return `${appOrigin()}${href.startsWith("/") ? href : `/${href}`}`
 }
 
 function cleanDetails(details) {
@@ -115,11 +115,12 @@ export async function sendMail({ people, title, body, details, href, event }) {
   return { status: record.status, error: record.error, sent: record.sentCount }
 }
 
-export async function notify({ roles = [], userIds = [], title, body, details, href, event, push = true }) {
+// `exceptUserIds`: people left out, usually whoever made the change. `email: false` sends only the in-app notice and push.
+export async function notify({ roles = [], userIds = [], exceptUserIds = [], title, body, details, href, event, push = true, email = true }) {
   try {
     const roleUsers = roles.length ? await User.find({ role: { $in: roles } }).select("_id email name") : []
     const direct = userIds.length ? await User.find({ _id: { $in: userIds.filter(Boolean) } }).select("_id email name") : []
-    const seen = new Set()
+    const seen = new Set(exceptUserIds.filter(Boolean).map(String))
     const people = [...roleUsers, ...direct].filter((person) => {
       const id = String(person._id)
       if (seen.has(id)) return false
@@ -133,6 +134,10 @@ export async function notify({ roles = [], userIds = [], title, body, details, h
       console.error("Push notification failed", error)
       return { sent: 0, failed: 0 }
     }) : Promise.resolve({ sent: 0, failed: 0 })
+    if (!email) {
+      await pushed
+      return { status: "Sent", error: "", sent: people.length }
+    }
     const mail = await sendMail({ people, title, body, details, href, event })
     await pushed
     if (mail.status !== "Sent") console.error(`Email for ${event} ${mail.status}: ${mail.error}`)
@@ -157,9 +162,100 @@ export async function notifyPropertyAccess({ actor, person, properties }) {
   })
 }
 
+// Important changes that every admin hears about, in Notifications and as a push on their phone or computer (no email).
+// Keyed by the activity title, with the part of the app the alert opens. Whoever made the change is not told about
+// it. Alerts that already have their own notice (Expense submitted, Expense rejected, Draw pulled) are not listed here.
+const ADMIN_ALERTS = new Map([
+  ["Draw recorded", { event: "draw.created", area: "draws" }],
+  ["Draw updated", { event: "draw.updated", area: "draws" }],
+  ["Draw removed", { event: "draw.removed", area: "draws" }],
+  ["Draw budget set", { event: "draw.budget", area: "draws" }],
+  ["Draw budget updated", { event: "draw.budget", area: "draws" }],
+  ["Line items updated", { event: "draw.line_items", area: "draws" }],
+  ["Draw workbook uploaded", { event: "draw.workbook_uploaded", area: "draws" }],
+  ["Draw workbook imported", { event: "draw.workbook_imported", area: "draws" }],
+  ["Draw workbook appended", { event: "draw.workbook_imported", area: "draws" }],
+  ["Draw data cleared", { event: "draw.cleared", area: "draws" }],
+  ["Expense approved", { event: "expense.approved", area: "expenses" }],
+  ["Expense request updated", { event: "expense.updated", area: "expenses" }],
+  ["Cost added", { event: "expense.cost_added", area: "expenses" }],
+  ["Property added", { event: "property.created", area: "property" }],
+  ["Property updated", { event: "property.updated", area: "property" }],
+  ["Property deleted", { event: "property.deleted", area: "properties" }],
+  ["Property workbook uploaded", { event: "property.workbook_uploaded", area: "properties" }],
+  ["Workbook imported", { event: "property.workbook_imported", area: "properties" }],
+  ["Weekly photos filed", { event: "property.photos", area: "property" }],
+  ["File removed from the library", { event: "document.removed", area: "documents" }],
+  ["Company added", { event: "company.created", area: "companies" }],
+  ["Company updated", { event: "company.updated", area: "companies" }],
+  ["Company deleted", { event: "company.deleted", area: "companies" }],
+  ["Companies imported", { event: "company.imported", area: "companies" }],
+  ["Property assigned to a company", { event: "company.property_assigned", area: "companies" }],
+  ["Property removed from a company", { event: "company.property_removed", area: "companies" }],
+  ["Payment scheduled", { event: "payment.scheduled", area: "payments" }],
+  ["Payment updated", { event: "payment.updated", area: "payments" }],
+  ["Payment marked paid", { event: "payment.paid", area: "payments" }],
+  ["Payment deleted", { event: "payment.deleted", area: "payments" }],
+  ["Loan recorded", { event: "loan.created", area: "loans" }],
+  ["Loan updated", { event: "loan.updated", area: "loans" }],
+  ["Lender saved", { event: "lender.created", area: "loans" }],
+  ["Member invited", { event: "member.invited", area: "members" }],
+  ["Member access updated", { event: "member.updated", area: "members" }],
+  ["Member password set", { event: "member.password", area: "members" }],
+  ["Member removed", { event: "member.removed", area: "members" }],
+])
+const AREA_PAGES = { draws: "/draws", expenses: "/expenses", property: "/properties", properties: "/properties", documents: "/documents", companies: "/companies", payments: "/payments", loans: "/loans", members: "/members" }
+// The same kind of change by the same person within this time is one alert ("Draw updated (3)"), so a bulk edit or
+// an import does not buzz every admin's phone once per row.
+const ALERT_GATHER_MS = 1500
+const gathering = new Map()
+
+function alertHref(area, propertyId) {
+  if (propertyId && area === "draws") return `/properties/${propertyId}?tab=draws`
+  if (propertyId && area === "property") return `/properties/${propertyId}`
+  if (propertyId && area === "documents") return `/properties/${propertyId}?tab=documents`
+  return AREA_PAGES[area] || "/notifications"
+}
+
+function queueAdminAlert({ user, title, detail, propertyId, href, except }) {
+  const alert = ADMIN_ALERTS.get(title)
+  if (!alert || !user?._id) return
+  const key = `${user._id}|${title}`
+  let batch = gathering.get(key)
+  if (!batch) {
+    batch = { user, title, alert, details: [], hrefs: new Set(), except: new Set() }
+    gathering.set(key, batch)
+    setTimeout(() => sendAdminAlert(key).catch((error) => console.error(`Admin alert for ${title} failed`, error)), ALERT_GATHER_MS)
+  }
+  batch.details.push(String(detail || "").trim())
+  batch.hrefs.add(href || alertHref(alert.area, propertyId))
+  for (const id of except || []) if (id) batch.except.add(String(id))
+}
+
+async function sendAdminAlert(key) {
+  const batch = gathering.get(key)
+  gathering.delete(key)
+  if (!batch) return
+  const count = batch.details.length
+  const details = batch.details.filter(Boolean)
+  const listed = details.slice(0, 3).join(" | ") + (details.length > 3 ? ` and ${details.length - 3} more` : "")
+  const body = `${batch.user.name || "Someone"}${listed ? `: ${listed}` : ""}`
+  await notify({
+    roles: ["admin"],
+    exceptUserIds: [batch.user._id, ...batch.except],
+    title: count > 1 ? `${batch.title} (${count})` : batch.title,
+    body: body.length > 300 ? `${body.slice(0, 299)}…` : body,
+    href: batch.hrefs.size === 1 ? [...batch.hrefs][0] : AREA_PAGES[batch.alert.area],
+    event: batch.alert.event,
+    email: false,
+  })
+}
+
 const recorded = new WeakSet()
 
-export async function recordActivity({ user, title, detail, propertyId }) {
+// Records what happened in the activity log. Important changes also alert every admin (see ADMIN_ALERTS): `href`
+// overrides where the alert opens, `alertExcept` leaves out people who already get their own notice about it.
+export async function recordActivity({ user, title, detail, propertyId, href = "", alertExcept = [] }) {
   if (user && typeof user === "object") recorded.add(user)
   await Activity.create({
     actorId: user._id,
@@ -168,6 +264,11 @@ export async function recordActivity({ user, title, detail, propertyId }) {
     detail,
     propertyId,
   })
+  try {
+    queueAdminAlert({ user, title, detail, propertyId, href, except: alertExcept })
+  } catch (error) {
+    console.error(`Admin alert for ${title} failed`, error)
+  }
 }
 
 export function activityRecorded(user) {

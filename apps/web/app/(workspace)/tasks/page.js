@@ -9,6 +9,14 @@ import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
 import { useApi } from "../../../lib/useApi"
 
+// "Oct 15", or "Oct 15, 2027" when it is not this year.
+function shortDate(value) {
+  const [year, month, day] = String(value).split("-").map(Number)
+  if (!year || !month || !day) return value
+  const date = new Date(year, month - 1, day)
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", ...(year !== new Date().getFullYear() ? { year: "numeric" } : {}) })
+}
+
 export default function TasksPage() {
   const session = useSession()
   const list = useApi("/tasks")
@@ -25,6 +33,23 @@ export default function TasksPage() {
   const canManage = session?.user && can(session.user, PERMISSIONS.tasksManage)
   const items = list.data?.items || []
   const known = items.flatMap((item) => item.labels || [])
+  const loaded = Boolean(list.data)
+
+  // A link to one task (from the "Task assigned" email or notification) scrolls to it and highlights it.
+  useEffect(() => {
+    if (!loaded) return undefined
+    const id = new URLSearchParams(window.location.search).get("task")
+    if (!id) return undefined
+    const row = document.querySelector(`tr[data-row-id="${CSS.escape(id)}"]`)
+    if (!row) {
+      setNotice("That task is no longer on the list. It may have been deleted.")
+      return undefined
+    }
+    row.scrollIntoView({ block: "center", behavior: "smooth" })
+    row.classList.add("is-linked")
+    const timer = setTimeout(() => row.classList.remove("is-linked"), 4000)
+    return () => clearTimeout(timer)
+  }, [loaded])
   const suggestions = [...new Set([...TASK_LABELS, ...known])]
 
   useEffect(() => {
@@ -114,14 +139,22 @@ export default function TasksPage() {
         loading={!list.data && !list.error}
         title="To-do list"
         action={canManage ? { label: "Add task", onClick: startCreate } : null}
+        // On phones a task is a short card: its name and priority, then one line with who, when and its status.
         columns={[
-          { key: "title", label: "Name", avatar: (row) => row.title, render: (row) => <span className="person-copy"><strong>{row.title}</strong><small>{row.notes || "No note"}</small></span> },
-          { key: "assignee", label: "Assignee", render: (row) => row.assigneeName ? <span className="person-copy"><strong>{row.assigneeName}</strong>{row.assigneeEmail ? <small>{row.assigneeEmail}</small> : null}</span> : "Unassigned" },
-          { key: "labels", label: "Labels", render: (row) => row.labels?.length ? <span className="label-row">{row.labels.map((label) => <StatusPill key={label}>{label}</StatusPill>)}</span> : "No label" },
-          { key: "due", label: "Due", render: (row) => row.due || "No date" },
-          { key: "priority", label: "Priority", render: (row) => <StatusPill>{row.priority}</StatusPill> },
-          { key: "done", label: "Status", render: (row) => <StatusPill>{row.done ? "Complete" : "Open"}</StatusPill> },
-          { key: "actions", label: "", pin: "right", render: (row) => (canEdit || canManage) ? <span className="row-actions"><button type="button" onClick={(event) => { event.stopPropagation(); toggle(row) }}>{row.done ? "Reopen" : "Mark done"}</button>{canManage && <button type="button" className="danger" onClick={(event) => { event.stopPropagation(); remove(row) }}>Delete</button>}</span> : null },
+          { key: "title", label: "Name", avatar: (row) => row.title, render: (row) => <span className="person-copy"><strong>{row.title}</strong><small className={row.notes ? "task-note" : "task-note is-empty"}>{row.notes || "No note"}</small></span> },
+          { key: "assignee", label: "Assignee", className: "hide-phone", render: (row) => row.assigneeName ? <span className="person-copy"><strong>{row.assigneeName}</strong>{row.assigneeEmail ? <small>{row.assigneeEmail}</small> : null}</span> : "Unassigned" },
+          { key: "labels", label: "Labels", className: "hide-phone", render: (row) => row.labels?.length ? <span className="label-row">{row.labels.map((label) => <StatusPill key={label}>{label}</StatusPill>)}</span> : "No label" },
+          { key: "due", label: "Due", className: "hide-phone", render: (row) => row.due || "No date" },
+          { key: "priority", label: "Priority", className: "task-priority", render: (row) => <StatusPill>{row.priority}</StatusPill> },
+          { key: "done", label: "Status", className: "hide-phone", render: (row) => <StatusPill>{row.done ? "Complete" : "Open"}</StatusPill> },
+          { key: "summary", label: "", className: "phone-only task-meta", render: (row) => (
+            <>
+              <span>{[row.assigneeName || "Unassigned", row.due ? `Due ${shortDate(row.due)}` : "No due date"].join(" · ")}</span>
+              <StatusPill>{row.done ? "Complete" : "Open"}</StatusPill>
+              {(row.labels || []).map((label) => <StatusPill key={label}>{label}</StatusPill>)}
+            </>
+          ) },
+          { key: "actions", label: "", pin: "right", className: "task-actions", render: (row) => (canEdit || canManage) ? <span className="row-actions"><button type="button" onClick={(event) => { event.stopPropagation(); toggle(row) }}>{row.done ? "Reopen" : "Mark done"}</button>{canManage && <button type="button" className="danger" onClick={(event) => { event.stopPropagation(); remove(row) }}>Delete</button>}</span> : null },
         ]}
         rows={items}
         important={(row) => !row.done && (row.priority === "High" || row.labels?.includes("Verify"))}

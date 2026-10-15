@@ -166,8 +166,14 @@ workspaceRouter.get(
   requirePermission("properties.read"),
   asyncHandler(async (req, res) => {
     await moveOpenReviewsOntoTasks()
-    const properties = await Property.find(propertyFilter(req.user)).select("_id")
-    const items = await Task.find({ $or: [{ propertyId: { $in: properties.map((property) => property._id) } }, { propertyId: null }] }).sort({ done: 1, due: 1 })
+    // Contractors see only the tasks assigned to them, never the team's own to-do list.
+    let filter
+    if (req.user.role === "contractor") filter = { assigneeId: req.user._id }
+    else {
+      const properties = await Property.find(propertyFilter(req.user)).select("_id")
+      filter = { $or: [{ propertyId: { $in: properties.map((property) => property._id) } }, { propertyId: null }] }
+    }
+    const items = await Task.find(filter).sort({ done: 1, due: 1 })
     const people = await assigneeMap(items)
     const includeEmail = req.permissions.includes(PERMISSIONS.tasksAssign)
     res.json({ items: items.map((task) => presentTask(task, people.get(String(task.assigneeId || "")), includeEmail)) })
@@ -219,7 +225,8 @@ workspaceRouter.patch(
   requireAnyPermission(PERMISSIONS.tasksEdit, PERMISSIONS.tasksManage, PERMISSIONS.tasksAssign),
   asyncHandler(async (req, res) => {
     const task = await Task.findById(req.params.id)
-    if (!task) {
+    // A contractor can only change a task assigned to them.
+    if (!task || (req.user.role === "contractor" && String(task.assigneeId || "") !== String(req.user._id))) {
       sendError(res, 404, "That task was not found.")
       return
     }
@@ -845,7 +852,7 @@ workspaceRouter.post(
       href: "/login",
       event: "member.invited",
     })
-    await recordActivity({ user: req.user, title: "Member invited", detail: `${user.name} · ${roleName} · invitation email ${mail.status === "Sent" ? "sent" : "not sent"}` })
+    await recordActivity({ user: req.user, title: "Member invited", detail: `${user.name} · ${roleName} · invitation email ${mail.status === "Sent" ? "sent" : "not sent"}`, alertExcept: [user._id] })
     res.status(201).json({ user: publicUser(user), mail })
   }),
 )
@@ -888,7 +895,7 @@ workspaceRouter.patch(
     }
     if (usesChat(user)) refreshChat([user._id])
     else disconnectChat([user._id])
-    await recordActivity({ user: req.user, title: "Member access updated", detail: user.name })
+    await recordActivity({ user: req.user, title: "Member access updated", detail: user.name, alertExcept: [user._id] })
     res.json({ user: publicUser(user), mail })
   }),
 )
@@ -922,7 +929,7 @@ workspaceRouter.post(
       href: "/login",
       event: "member.password",
     })
-    await recordActivity({ user: req.user, title: "Member password set", detail: user.name })
+    await recordActivity({ user: req.user, title: "Member password set", detail: user.name, alertExcept: [user._id] })
     res.json({ user: publicUser(user), mail })
   }),
 )
@@ -1353,7 +1360,8 @@ async function mailAssignee({ user, task, assignee }) {
       ["Note", task.notes || ""],
       ["Assigned by", user.name],
     ],
-    href: "/tasks",
+    // Opens the to-do list on this task.
+    href: `/tasks?task=${task._id}`,
     event: "task.assigned",
   })
 }

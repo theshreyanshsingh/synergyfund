@@ -539,7 +539,7 @@ documentsRouter.delete(
     }
     await deleteStoredFile(file)
     await file.deleteOne()
-    await recordActivity({ user: req.user, title: "File removed from the library", detail: file.name, propertyId: file.propertyId })
+    await recordActivity({ user: req.user, title: "File removed from the library", detail: file.name, propertyId: file.propertyId, href: !file.propertyId && file.companyId ? `/companies/${file.companyId}?tab=documents` : "" })
     res.json({ ok: true })
   }),
 )

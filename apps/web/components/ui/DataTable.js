@@ -1,10 +1,27 @@
+import { useState } from "react"
 import { initials } from "@synergifund/shared"
+import { Icon } from "./Icon"
 import { Spinner } from "./Spinner"
 import { SortableList, useSortableRow } from "./Sortable"
 
-export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loading, selectable = true, compact = false, onMove }) {
+const PHONE = "(max-width: 760px)"
+
+// `collapsible`: on phones each row shows only its name (and any `peek` columns). The first tap opens up its details
+// with an Open button, the second tap opens it, like a tap on a computer does straight away.
+export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loading, selectable = true, compact = false, onMove, collapsible = false, openLabel = "Open" }) {
+  const [expanded, setExpanded] = useState("")
+  // Only a row that opens something can fold; otherwise its details would be out of reach.
+  const folding = collapsible && Boolean(onRow)
+  function tap(row) {
+    if (folding && expanded !== row.id && window.matchMedia(PHONE).matches) {
+      setExpanded(row.id)
+      return
+    }
+    onRow?.(row)
+  }
+  const fold = (row) => (folding ? (expanded === row.id ? "expanded" : "collapsed") : "")
   const table = (
-    <table className={compact ? "grid is-compact" : "grid"}>
+    <table className={["grid", compact ? "is-compact" : "", folding ? "is-collapsible" : ""].filter(Boolean).join(" ")}>
         <thead>
           <tr>
             {onMove && <th className="drag-col" aria-label="Reorder" />}
@@ -22,8 +39,8 @@ export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loa
           )}
           {rows.map((row) => (
             onMove
-              ? <SortableRow key={row.id} row={row} columns={columns} on={selected.includes(row.id)} onToggle={onToggle} onRow={onRow} selectable={selectable} />
-              : <Row key={row.id} row={row} columns={columns} on={selected.includes(row.id)} onToggle={onToggle} onRow={onRow} selectable={selectable} />
+              ? <SortableRow key={row.id} row={row} columns={columns} on={selected.includes(row.id)} onToggle={onToggle} onRow={onRow ? tap : undefined} onOpen={onRow} selectable={selectable} fold={fold(row)} openLabel={openLabel} />
+              : <Row key={row.id} row={row} columns={columns} on={selected.includes(row.id)} onToggle={onToggle} onRow={onRow ? tap : undefined} onOpen={onRow} selectable={selectable} fold={fold(row)} openLabel={openLabel} />
           ))}
         </tbody>
       </table>
@@ -40,9 +57,9 @@ function SortableRow(props) {
   return <Row {...props} sortable={sortable} />
 }
 
-function Row({ row, columns, on, onToggle, onRow, selectable, sortable }) {
+function Row({ row, columns, on, onToggle, onRow, onOpen, selectable, sortable, fold = "", openLabel }) {
   return (
-              <tr ref={sortable?.ref} style={sortable?.style} className={[on ? "is-selected" : "", sortable?.dragging ? "is-dragging" : ""].filter(Boolean).join(" ") || undefined} onClick={() => onRow?.(row)}>
+              <tr ref={sortable?.ref} style={sortable?.style} className={[on ? "is-selected" : "", sortable?.dragging ? "is-dragging" : "", fold ? `is-${fold}` : ""].filter(Boolean).join(" ") || undefined} onClick={() => onRow?.(row)} data-row-id={row.id}>
                 {sortable && <td className="drag-col" onClick={(event) => event.stopPropagation()}>{sortable.handle}</td>}
                 {selectable && (
                   <td className="check-col">
@@ -72,10 +89,20 @@ function Row({ row, columns, on, onToggle, onRow, selectable, sortable }) {
                     ) : column.render ? column.render(row) : row[column.key]}
                   </td>
                 ))}
+                {fold && onOpen && (
+                  // Phones only: the chevron on a folded row, and Open on an opened one.
+                  <td className="fold-col">
+                    {fold === "expanded" ? (
+                      <button type="button" className="fold-open" onClick={(event) => { event.stopPropagation(); onOpen(row) }}>
+                        {typeof openLabel === "function" ? openLabel(row) : openLabel} <Icon name="chevron" size={14} />
+                      </button>
+                    ) : <span className="fold-chevron" aria-hidden="true"><Icon name="chevron" size={16} /></span>}
+                  </td>
+                )}
               </tr>
   )
 }
 
 function cellClass(column) {
-  return [column.pin === "right" && "pin-right", column.className].filter(Boolean).join(" ") || undefined
+  return [column.pin === "right" && "pin-right", column.peek && "peek-col", column.className].filter(Boolean).join(" ") || undefined
 }
