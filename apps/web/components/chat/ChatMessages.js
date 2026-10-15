@@ -1,6 +1,7 @@
 "use client"
 
 import { Fragment, useEffect, useRef, useState } from "react"
+import Link from "next/link"
 import { Icon } from "../ui/Icon"
 import { Avatar } from "./ChatComposer"
 import { ChatText } from "./ChatMarkdown"
@@ -21,7 +22,7 @@ export function ChatMessages({ messages, people, me, isAdmin, online, unreadAfte
         const unread = !shownUnread && unreadAfter && message.userId !== me && at > new Date(unreadAfter).getTime()
         if (unread) shownUnread = true
         const compact = !newDay && !unread && message.userId === lastAuthor && at - lastAt < GROUP_GAP && previous && !previous.replyCount
-        lastAuthor = message.kind === "call" ? "" : message.userId
+        lastAuthor = message.kind === "call" || message.kind === "notes" ? "" : message.userId
         lastAt = at
         return (
           <Fragment key={message.id}>
@@ -61,6 +62,22 @@ function ChatMessage({ message, people, me, compact, canDelete, online, inThread
         <span className="chat-call-icon"><Icon name={/video/i.test(message.text) ? "video" : "phone"} size={14} /></span>
         <span><b>{author}</b> · {message.text}</span>
         <time title={new Date(message.createdAt).toLocaleString()}>{clock(message.createdAt)}</time>
+      </div>
+    )
+  }
+
+  // AI notes written after a call: the title and summary, and a link to the full notes.
+  if (message.kind === "notes" && !message.deleted) {
+    const [first = "", ...rest] = String(message.text || "").split("\n")
+    return (
+      <div className="chat-notes-card" id={`message-${message.id}`}>
+        <span className="chat-notes-icon" aria-hidden="true"><Icon name="spark" size={15} /></span>
+        <div className="chat-notes-copy">
+          <span className="chat-notes-eyebrow">AI notes from the call · <time title={new Date(message.createdAt).toLocaleString()}>{clock(message.createdAt)}</time></span>
+          <strong>{first.replace(/^AI notes:\s*/, "")}</strong>
+          {rest.join(" ").trim() && <p>{rest.join(" ").trim()}</p>}
+          {message.noteId && <Link href={`/calls/notes/${message.noteId}`} className="chat-notes-open">Open the notes <Icon name="chevron" size={12} /></Link>}
+        </div>
       </div>
     )
   }

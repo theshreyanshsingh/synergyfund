@@ -426,7 +426,7 @@ chatRouter.patch(
     if (!found) return sendError(res, 404, "That message was not found.")
     const { message, channel, property } = found
     if (String(message.userId) !== String(req.user._id) || message.deletedAt) return sendError(res, 403, "You can only edit your own messages.")
-    if (message.kind === "call") return sendError(res, 400, "Call notes cannot be edited.")
+    if (message.kind === "call" || message.kind === "notes") return sendError(res, 400, "Call notes cannot be edited.")
     const text = String(req.body.text || "").replace(/\r\n/g, "\n").trim()
     if (!text && !message.attachments?.length) return sendError(res, 400, "A message cannot be empty. Delete it instead.")
     if (text.length > MAX_MESSAGE) return sendError(res, 400, `Keep messages under ${MAX_MESSAGE.toLocaleString("en-US")} characters.`)

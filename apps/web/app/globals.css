@@ -2745,3 +2745,72 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .grid tr.is-linked { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
   .grid tr.is-linked td { background: transparent; }
 }
+
+/* AI notes in a call: a red marker everyone in the call sees while they are on. */
+.call-notes-pill { display: inline-flex; flex: none; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid rgba(248, 113, 113, .5); border-radius: 999px; background: rgba(239, 68, 68, .16); color: #fecaca; font-size: 12.5px; font-weight: 650; white-space: nowrap; }
+.call-notes-pill i { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; animation: notes-pulse 1.6s ease-in-out infinite; }
+.call-notes-pill.is-compact { height: 22px; padding: 0 8px; font-size: 11.5px; }
+@keyframes notes-pulse { 50% { opacity: .35; } }
+.call-control:disabled { opacity: .6; cursor: progress; }
+
+/* AI notes posted in a conversation after a call. */
+.chat-notes-card { display: flex; gap: 10px; margin: 8px 16px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 14px; background: color-mix(in srgb, var(--accent) 5%, var(--white)); max-width: 640px; }
+.chat-notes-icon { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.chat-notes-copy { display: grid; gap: 4px; min-width: 0; }
+.chat-notes-eyebrow { color: var(--muted); font-size: 12px; font-weight: 600; }
+.chat-notes-copy strong { font-size: 14.5px; }
+.chat-notes-copy p { margin: 0; color: var(--text); font-size: 13.5px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.chat-notes-open { display: inline-flex; align-items: center; gap: 4px; width: fit-content; color: var(--accent); font-size: 13px; font-weight: 650; }
+.chat-notes-open svg { transform: rotate(-90deg); }
+.calls-notes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.calls-notes-link { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 3px 9px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); font-size: 12px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calls-notes-link.is-failed, .calls-notes-link.is-empty { background: var(--hover); color: var(--muted); }
+
+/* AI notes page */
+.notes-state { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--white); }
+.notes-state > div { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.notes-state strong { font-size: 14.5px; }
+.notes-state span { color: var(--muted); font-size: 13px; }
+.notes-state.is-live { border-color: rgba(239, 68, 68, .45); background: color-mix(in srgb, #ef4444 6%, var(--white)); }
+.notes-state.is-failed { border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
+.notes-state.is-failed > svg { color: var(--bad); }
+.notes-state.is-quiet > svg { color: var(--muted); }
+.notes-live-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: #ef4444; animation: notes-pulse 1.6s ease-in-out infinite; }
+.notes-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; margin-bottom: 12px; }
+.notes-grid > .notes-card:first-child { grid-column: 1 / -1; }
+.notes-card { margin-bottom: 0; }
+.notes-card h2 { margin: 0 0 10px; font-size: 15px; }
+.notes-summary { margin: 0; font-size: 14.5px; line-height: 1.6; white-space: pre-line; }
+.notes-list { display: grid; gap: 8px; margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.5; }
+.notes-actions { display: grid; margin: 0; padding: 0; list-style: none; }
+.notes-actions li { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
+.notes-actions li + li { border-top: 1px solid var(--line); }
+.notes-check { flex: none; width: 16px; height: 16px; border: 1.5px solid var(--faint); border-radius: 5px; }
+.notes-action-copy { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.notes-action-copy strong { font-size: 14px; font-weight: 600; }
+.notes-action-copy em { color: var(--muted); font-size: 12.5px; font-style: normal; }
+.notes-add { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 30px; border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; font-weight: 600; }
+.notes-add:disabled { color: var(--good, var(--muted)); cursor: default; }
+.notes-transcript { margin-bottom: 12px; }
+.notes-transcript summary { cursor: pointer; font-size: 15px; font-weight: 700; }
+.notes-transcript summary em { color: var(--muted); font-size: 12.5px; font-style: normal; font-weight: 500; }
+.notes-transcript ol { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; }
+.notes-transcript li { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; font-size: 14px; line-height: 1.5; }
+.notes-transcript time { color: var(--faint); font-size: 12.5px; font-variant-numeric: tabular-nums; padding-top: 1px; }
+.notes-transcript b { margin-right: 4px; }
+.notes-footnote { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.notes-delete { color: var(--bad); }
+@media (max-width: 760px) {
+  .notes-grid { grid-template-columns: minmax(0, 1fr); }
+  .notes-actions li { flex-wrap: wrap; }
+  .notes-add { margin-left: 26px; }
+  .notes-state { flex-wrap: wrap; }
+  .notes-transcript li { grid-template-columns: 44px minmax(0, 1fr); }
+}
+/* Narrow phones: the call buttons share the width evenly; labels may take two short lines. */
+@media (max-width: 480px) {
+  .call-controls { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; padding-left: 8px; padding-right: 8px; }
+  .call-control { min-width: 0; }
+  .call-control .call-round { width: 46px; height: 46px; }
+  .call-control em { max-width: 100%; font-size: 10.5px; line-height: 1.15; text-align: center; overflow-wrap: anywhere; }
+}

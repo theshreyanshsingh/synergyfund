@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { canShareScreen, leaveCall, setMinimized, toggleCamera, toggleMute, toggleScreen } from "../../lib/calls"
 import { Icon } from "../ui/Icon"
 import { openCallPip, pipSupported, usePipOpen } from "./CallPip"
+import { NotesOn } from "./CallParts"
 
 const SPOT = "synergifund-call-bar"
 const EDGE = 8
@@ -106,6 +107,7 @@ export function MiniBar({ current, title, status, myName }) {
         <span className="call-mini-grip" aria-hidden="true"><Icon name="grip" size={14} /></span>
         <span className="call-live-dot" aria-hidden="true" />
         <span className="call-mini-copy"><strong>{title}</strong><em>{status}</em></span>
+        {current.call?.notes && <NotesOn notes={current.call.notes} compact />}
       </div>
       <button type="button" className="call-mini-icon" onClick={() => setMinimized(false)} aria-label="Open the call" title="Open the call"><Icon name="expand" size={15} /></button>
       {pipSupported() && !pip && (

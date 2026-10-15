@@ -542,6 +542,44 @@ export const Call = register(
     .index({ "participants.userId": 1, startedAt: -1 }),
 )
 
+// AI notes for one stretch of a call: from when someone turns AI notes on until it is turned off or the call ends.
+// Each person's app sends only their own microphone, so every line knows who said it. The audio is not kept.
+export const CallNote = register(
+  "CallNote",
+  new Schema(
+    {
+      callId: { type: Schema.Types.ObjectId, ref: "Call", required: true },
+      channelId: { type: Schema.Types.ObjectId, ref: "ChatChannel", required: true },
+      media: { type: String, default: "audio" },
+      startedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+      startedByName: String,
+      stoppedBy: { type: Schema.Types.ObjectId, ref: "User" },
+      stoppedByName: String,
+      onAt: { type: Date, default: Date.now },
+      offAt: Date,
+      // Everyone in the call while notes were on.
+      participants: [{ userId: { type: Schema.Types.ObjectId, ref: "User" }, name: String }],
+      segments: [{ userId: { type: Schema.Types.ObjectId, ref: "User" }, name: String, at: Date, durationMs: Number, text: String }],
+      // recording → writing → ready, or empty (nothing was heard) or failed.
+      status: { type: String, default: "recording" },
+      error: { type: String, default: "" },
+      title: { type: String, default: "" },
+      summary: { type: String, default: "" },
+      keyPoints: [String],
+      decisions: [String],
+      actionItems: [{ task: String, owner: String, due: String }],
+      failedChunks: { type: Number, default: 0 },
+      transcribeModel: String,
+      notesModel: String,
+      messageId: { type: Schema.Types.ObjectId, ref: "ChatMessage" },
+    },
+    { timestamps: true },
+  )
+    .index({ callId: 1, onAt: 1 })
+    .index({ "participants.userId": 1, onAt: -1 })
+    .index({ status: 1 }),
+)
+
 export const ChatChannel = register(
   "ChatChannel",
   new Schema(
@@ -582,6 +620,8 @@ export const ChatMessage = register(
       mentionsChannel: { type: Boolean, default: false },
       reactions: [{ emoji: String, userIds: [{ type: Schema.Types.ObjectId, ref: "User" }] }],
       attachments: [{ fileId: { type: Schema.Types.ObjectId, ref: "Document" }, name: String, mime: String, size: Number }],
+      // kind "notes": the AI notes written after a call.
+      noteId: { type: Schema.Types.ObjectId, ref: "CallNote" },
       editedAt: Date,
       deletedAt: Date,
     },

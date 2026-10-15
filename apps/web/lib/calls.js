@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react"
 import { currentPushEndpoint, emitChat, requestChat } from "./chatSocket"
 import { audioContext, playLoop, soundsReady as soundsUnlocked, stopLoop, unlockSounds } from "./sounds"
+import { notesRecording, startNotesRecording, stopNotesRecording } from "./notesRecorder"
 
 // One call at a time. Every person connects straight to every other person (a mesh),
 // so audio and video never pass through our server. The server only passes setup messages along.
@@ -37,6 +38,31 @@ function set(patch) {
 function setCurrent(patch) {
   if (!state.current) return
   set({ current: { ...state.current, ...patch } })
+  if ("call" in patch) syncNotes()
+}
+
+// AI notes: while they are on in this call, your own speech is sent to be transcribed (see notesRecorder.js).
+function syncNotes() {
+  const noteId = state.current?.call?.notes?.id || ""
+  if (noteId && micTrack && micTrack.readyState === "live") startNotesRecording(noteId, micTrack)
+  else if (notesRecording()) stopNotesRecording()
+}
+
+// Anyone in the call can turn AI notes on or off; everyone in it sees which.
+export async function toggleNotes() {
+  const current = state.current
+  if (!current || current.notesBusy) return
+  const on = !current.call?.notes
+  setCurrent({ notesBusy: true })
+  try {
+    const reply = await requestChat("call:notes", { callId: current.callId, on })
+    if (reply?.error) notice(reply.error, "bad")
+    else if (state.current?.callId === current.callId) setCurrent({ call: { ...state.current.call, notes: reply?.notes || null } })
+  } catch {
+    notice(`AI notes could not be turned ${on ? "on" : "off"}. Try again.`, "bad")
+  } finally {
+    setCurrent({ notesBusy: false })
+  }
 }
 
 function subscribe(listener) {
@@ -459,6 +485,8 @@ function begin(reply, media) {
   for (const info of reply.peers) createPeer(info, true)
   replayEarly(reply.call.id)
   refreshTone()
+  syncNotes()
+  if (reply.call.notes) notice(`AI notes are on in this call (turned on by ${reply.call.notes.byName}). What you say is transcribed until they are turned off.`)
 }
 
 function replayEarly(callId) {
@@ -474,6 +502,8 @@ function closeConnections() {
 }
 
 function teardown(message, tone) {
+  // Send what was said up to the end before the microphone stops.
+  stopNotesRecording()
   closeConnections()
   stopSpeaking()
   stopLocal()
@@ -846,6 +876,16 @@ export const callEvents = {
   "call:signal": (payload = {}) => {
     if (hold("call:signal", payload)) return
     onSignal(payload)
+  },
+  "call:notes": (payload = {}) => {
+    if (hold("call:notes", payload)) return
+    const { callId, on, by, byName, notes } = payload
+    if (!state.current || state.current.callId !== callId) return
+    setCurrent({ call: { ...state.current.call, notes: on ? notes || null : null } })
+    const who = by && by === state.me ? "You" : byName || "Someone"
+    notice(on
+      ? `${who} turned on AI notes. What everyone says is transcribed until they are turned off.`
+      : `${who} turned off AI notes. The notes will be posted in the conversation in a minute.`)
   },
   "call:ended": ({ callId, reason } = {}) => {
     set({ incoming: state.incoming.filter((item) => item.id !== callId) })

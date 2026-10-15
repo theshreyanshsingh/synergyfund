@@ -32,7 +32,7 @@ export function AppShell({ children }) {
 
   useEffect(() => {
     if (session?.user?.role !== "contractor") return
-    const allowed = pathname === "/properties" || pathname.startsWith("/properties/") || pathname === "/expenses" || pathname === "/tasks" || pathname === "/settings" || pathname === "/chat" || pathname === "/calls"
+    const allowed = pathname === "/properties" || pathname.startsWith("/properties/") || pathname === "/expenses" || pathname === "/tasks" || pathname === "/settings" || pathname === "/chat" || pathname === "/calls" || pathname.startsWith("/calls/")
     if (!allowed) router.replace("/properties")
   }, [pathname, session, router])
 

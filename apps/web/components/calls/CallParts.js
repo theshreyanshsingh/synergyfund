@@ -54,3 +54,13 @@ export function Tile({ self = false, name, avatarName, stream, version, video, s
     </div>
   )
 }
+
+// Shown to everyone in the call while AI notes are on, so nobody is transcribed without knowing.
+export function NotesOn({ notes, compact = false }) {
+  return (
+    <span className={compact ? "call-notes-pill is-compact" : "call-notes-pill"} title={`AI notes on, turned on by ${notes.byName}. What everyone says is transcribed.`} role="status">
+      <i aria-hidden="true" />
+      {compact ? "Notes" : "AI notes on"}
+    </span>
+  )
+}

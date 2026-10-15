@@ -162,6 +162,7 @@ export function presentMessage(message) {
     attachments: deleted ? [] : (message.attachments || []).map((file) => ({ id: String(file.fileId), name: file.name, mime: file.mime || "", size: file.size || 0, url: `/api/chat/files/${file.fileId}` })),
     mentionIds: (message.mentionIds || []).map(String),
     mentionsChannel: Boolean(message.mentionsChannel),
+    noteId: message.noteId ? String(message.noteId) : "",
     editedAt: message.editedAt || null,
     deleted,
     createdAt: message.createdAt,

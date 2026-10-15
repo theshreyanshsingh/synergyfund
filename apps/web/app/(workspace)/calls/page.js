@@ -1,6 +1,7 @@
 "use client"
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react"
+import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { initials } from "@synergifund/shared"
 import { channelTitle } from "../../../components/chat/chatFormat"
@@ -202,6 +203,17 @@ function CallsScreen() {
                       {label} {row.media === "video" ? "video" : "voice"} call{row.seconds ? ` · ${formatClock(row.seconds * 1000)}` : ""} · {when(row.startedAt)}
                     </span>
                     {row.participants.length > 2 && <small>{row.participants.join(", ")}</small>}
+                    {(row.notes || []).length > 0 && (
+                      <span className="calls-notes">
+                        {row.notes.map((note, index) => (
+                          <Link key={note.id} href={`/calls/notes/${note.id}`} className={`calls-notes-link is-${note.status}`}>
+                            <Icon name="spark" size={12} />
+                            {note.status === "ready" ? note.title || "AI notes" : note.status === "failed" ? "AI notes · not written" : note.status === "empty" ? "AI notes · nothing heard" : "AI notes · being written"}
+                            {row.notes.length > 1 ? ` (${index + 1})` : ""}
+                          </Link>
+                        ))}
+                      </span>
+                    )}
                   </div>
                   <div className="calls-actions">
                     <button type="button" className="chat-members-button" disabled={!row.channel || Boolean(calls.current)} onClick={() => call(row.channelId, "audio")} aria-label={`Voice call ${title}`} title="Voice call"><Icon name="phone" size={15} /></button>

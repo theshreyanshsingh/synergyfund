@@ -4,6 +4,7 @@ import { Call, ChatChannel, ChatMessage, ChatRead, Notification, User } from "..
 import { audience, isGuest, loadChannel, presentChannel, presentMessage, usesChat, visibleChannels } from "./chat.js"
 import { chatIo, emitToUsers } from "./chatHub.js"
 import { isApplePush, pushToUsers, sendPush, subscriptionsFor } from "./push.js"
+import { addNoteParticipant, notesAvailable, startNotes, stopNotes } from "./callNotes.js"
 
 // Everyone in a call connects to everyone else (a mesh), which stays smooth up to about eight people.
 export const MAX_PEERS = 8
@@ -122,6 +123,9 @@ function summary(state) {
     participants: [...state.peers.values()].map((peer) => ({ userId: peer.userId, name: peer.name })),
     names: state.names,
     max: MAX_PEERS,
+    // AI notes: on (who turned them on, and when) or null; and whether this server can take them at all.
+    notes: state.notes ? { id: state.notes.id, byName: state.notes.byName, since: state.notes.since } : null,
+    notesReady: notesAvailable(),
   }
 }
 
@@ -203,6 +207,12 @@ async function endCall(state, reason) {
   state.ringing.clear()
   stopRepeats(state)
   const outcome = state.answered ? "completed" : reason === "declined" ? "declined" : "missed"
+  // AI notes stop with the call and are written up.
+  if (state.notes) {
+    const noteId = state.notes.id
+    state.notes = null
+    stopNotes(noteId).catch((error) => console.error("Call notes: stopping failed", error))
+  }
   pushCallOver(state).catch(() => {})
   recordMissed(state).catch((error) => console.error("Missed call note failed", error))
   const io = chatIo()
@@ -603,6 +613,8 @@ export function registerCallHandlers(socket) {
         pushed: new Set(),
         shareKey: randomBytes(18).toString("base64url"),
         ringTimer: null,
+        notes: null,
+        notesStarting: false,
       }
       live.set(state.id, state)
       byChannel.set(channelId, state.id)
@@ -651,10 +663,45 @@ export function registerCallHandlers(socket) {
     if (firstAnswer) update.$set = { status: "active", answeredAt: new Date(state.answeredAt) }
     if (!rejoined) update.$push = { participants: { userId: user._id, name: user.name, joinedAt: new Date() } }
     if (firstAnswer || !rejoined) Call.updateOne({ _id: state.id, status: { $ne: "ended" } }, update).catch((error) => console.error("Call join save failed", error))
+    if (state.notes) addNoteParticipant(state.notes.id, user)
     const self = state.peers.get(socket.id)
     toPeers(state, "call:peer-joined", { callId: state.id, peer: { peerId: socket.id, userId: me, name: user.name, audio: self.audio, video: self.video, screen: false } }, socket.id)
     reply({ call: summary(state), peerId: socket.id, peers: others, ...net, share: state.shareKey })
     announce(state)
+  })
+
+  // AI notes on or off, by anyone in the call. Everyone in it sees that they are on, and each person's app sends
+  // their own speech to be transcribed until they are turned off (or the call ends).
+  handle(socket, "call:notes", async (data, reply) => {
+    const state = live.get(cleanId(data.callId))
+    if (!state || !state.peers.has(socket.id)) return reply({ error: "You are not in that call." })
+    const on = data.on === true
+    if (on) {
+      if (state.notes) return reply({ notes: summary(state).notes })
+      if (!notesAvailable()) return reply({ error: "AI notes need an AI model. An admin can add OPENROUTER_API_KEY to the server settings." })
+      if (state.notesStarting) return reply({ error: "AI notes are already turning on." })
+      state.notesStarting = true
+      try {
+        const people = [...state.peers.values()].map((peer) => ({ userId: peer.userId, name: peer.name }))
+        const note = await startNotes({ callId: state.id, channelId: state.channelObjectId, media: state.media, user, participants: people })
+        if (!live.has(state.id)) {
+          await stopNotes(note._id, user)
+          return reply({ error: "That call has ended." })
+        }
+        state.notes = { id: String(note._id), by: me, byName: user.name, since: note.onAt }
+      } finally {
+        state.notesStarting = false
+      }
+    } else {
+      if (!state.notes) return reply({ notes: null })
+      const noteId = state.notes.id
+      state.notes = null
+      await stopNotes(noteId, user)
+    }
+    const notes = summary(state).notes
+    toPeers(state, "call:notes", { callId: state.id, on, by: me, byName: user.name, notes })
+    announce(state)
+    reply({ notes })
   })
 
   // Someone in the call rings more people. A one-to-one call becomes a group call.

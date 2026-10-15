@@ -23,6 +23,7 @@ import { requireAuth } from "./middleware/auth.js"
 import { trackActivity } from "./middleware/activity.js"
 import { seedIfEmpty } from "./services/seed.js"
 import { rememberAppOrigin } from "./services/appUrl.js"
+import { recoverNotes } from "./services/callNotes.js"
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../..")
 dotenv.config({ path: path.join(repoRoot, ".env"), quiet: true })
@@ -68,6 +69,7 @@ const port = Number(process.env.PORT || 4000)
 await mongoose.connect(process.env.MONGODB_URI)
 await seedIfEmpty()
 await closeStaleCalls()
+await recoverNotes().catch((error) => console.error("Call notes recovery failed", error))
 const server = http.createServer(app)
 attachChatSockets(server)
 server.listen(port, () => {

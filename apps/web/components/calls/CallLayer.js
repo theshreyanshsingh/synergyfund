@@ -22,12 +22,13 @@ import {
   soundsReady,
   toggleCamera,
   toggleMute,
+  toggleNotes,
   toggleScreen,
   unlockCallSounds,
   useCalls,
 } from "../../lib/calls"
 import { Icon } from "../ui/Icon"
-import { formatClock, statusText, Tile, useNow } from "./CallParts"
+import { formatClock, NotesOn, statusText, Tile, useNow } from "./CallParts"
 import { MiniBar } from "./MiniBar"
 import { openCallPip, pipSupported, useAutoPip, usePipOpen } from "./CallPip"
 
@@ -154,6 +155,8 @@ function ActiveCall({ current, me, myName, audioBlocked }) {
   const peers = current.peers || []
   const sharing = peers.find((peer) => peer.screen) || (current.screen ? { peerId: "me" } : null)
   const status = statusText(current, now)
+  const notes = current.call?.notes || null
+  const notesReady = current.call?.notesReady !== false
 
   return (
     <>
@@ -175,6 +178,7 @@ function ActiveCall({ current, me, myName, audioBlocked }) {
               <strong>{title}</strong>
               <span>{current.media === "video" ? "Video call" : "Voice call"} · {current.rejoining ? "Reconnecting…" : status}{peers.length ? ` · ${peers.length + 1} people` : ""}</span>
             </div>
+            {notes && <NotesOn notes={notes} />}
             {pipSupported() && !pip && (
               <button type="button" className="call-icon-button" onClick={() => openCallPip({ myName })} title="Pop out: keep the call on top of other tabs and apps" aria-label="Pop out the call"><Icon name="popout" size={18} /></button>
             )}
@@ -203,8 +207,19 @@ function ActiveCall({ current, me, myName, audioBlocked }) {
           <footer className="call-controls">
             <ControlButton on={!current.muted} icon={current.muted ? "micOff" : "mic"} label={current.micLost ? "Mic stopped" : current.muted ? "Unmute" : "Mute"} onClick={toggleMute} />
             <ControlButton on={current.camera} icon={current.camera ? "video" : "videoOff"} label={current.camera ? "Stop video" : "Start video"} onClick={toggleCamera} />
-            <ControlButton on={current.screen} icon="screen" label={current.screen ? "Stop sharing" : "Share screen"} onClick={toggleScreen} active={current.screen} unavailable={!canShareScreen()} />
+            {/* Phones cannot share their screen, so the button is left out there (it also makes room for AI notes). */}
+            {(canShareScreen() || current.screen) && <ControlButton on={current.screen} icon="screen" label={current.screen ? "Stop sharing" : "Share screen"} onClick={toggleScreen} active={current.screen} />}
             <ControlButton on icon="userPlus" label="Add people" onClick={() => setAdding(true)} />
+            <ControlButton
+              on
+              icon="spark"
+              label={notes ? "Notes on" : "AI notes"}
+              onClick={toggleNotes}
+              active={Boolean(notes)}
+              busy={current.notesBusy}
+              unavailable={!notesReady && !notes}
+              hint={!notesReady && !notes ? "AI notes need an AI model. An admin can add OPENROUTER_API_KEY to the server settings." : notes ? "Turn off AI notes. The notes are then written and posted in the conversation." : "Turn on AI notes: what everyone says is transcribed and written up as notes. Everyone in the call sees that they are on."}
+            />
             <button type="button" className="call-control is-leave" onClick={leaveCall}>
               <span className="call-round is-danger"><Icon name="phoneOff" size={20} /></span>
               <em>Leave</em>
@@ -231,9 +246,9 @@ function ActiveCall({ current, me, myName, audioBlocked }) {
   )
 }
 
-function ControlButton({ on, icon, label, onClick, active = false, unavailable = false }) {
+function ControlButton({ on, icon, label, onClick, active = false, unavailable = false, busy = false, hint = "" }) {
   return (
-    <button type="button" className={unavailable ? "call-control is-unavailable" : "call-control"} onClick={onClick} aria-pressed={active || undefined} title={unavailable ? "Screen sharing works from a computer" : undefined}>
+    <button type="button" className={unavailable ? "call-control is-unavailable" : "call-control"} onClick={onClick} disabled={busy} aria-pressed={active || undefined} title={hint || (unavailable ? "Screen sharing works from a computer" : undefined)}>
       <span className={`call-round${on ? "" : " is-off"}${active ? " is-active" : ""}`}><Icon name={icon} size={20} /></span>
       <em>{label}</em>
     </button>

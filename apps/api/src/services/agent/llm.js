@@ -26,10 +26,11 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-export async function chat({ model, messages, tools, toolChoice, temperature = 0.2, maxTokens = 4000, tracker }) {
+// `extra`: more request settings for this call only, such as { reasoning: { effort: "low" } }.
+export async function chat({ model, messages, tools, toolChoice, temperature = 0.2, maxTokens = 4000, tracker, extra = null, timeoutMs = TIMEOUT_MS }) {
   const key = modelKey()
   if (!key) throw new Error("The agent is not connected to a model yet. Add OPENROUTER_API_KEY to the server .env file.")
-  const body = { model, messages, temperature, max_tokens: maxTokens }
+  const body = { model, messages, temperature, max_tokens: maxTokens, ...(extra || {}) }
   if (tools?.length) {
     body.tools = tools
     if (toolChoice) body.tool_choice = toolChoice
@@ -37,7 +38,7 @@ export async function chat({ model, messages, tools, toolChoice, temperature = 0
   let lastError = null
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
       const response = await fetch(`${(process.env.OPENROUTER_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "")}/chat/completions`, {
         method: "POST",

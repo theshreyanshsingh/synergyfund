@@ -1,9 +1,12 @@
 import { Router } from "express"
-import { Call, PushSubscription } from "../models/index.js"
+import mongoose from "mongoose"
+import multer from "multer"
+import { Call, CallNote, ChatMessage, PushSubscription } from "../models/index.js"
 import { asyncHandler, sendError } from "../lib/http.js"
 import { configurePush, isApplePush, sendPush } from "../services/push.js"
 import { presentChannel, usesChat, visibleChannels } from "../services/chat.js"
 import { declineCallFor, liveCall, liveCallsFor, network, relayProvider, silenceCallFor } from "../services/calls.js"
+import { MAX_PIECE_BYTES, acceptPiece, presentNote, retryNotes } from "../services/callNotes.js"
 
 export const callsRouter = Router()
 
@@ -27,6 +30,15 @@ callsRouter.get(
         { "participants.userId": req.user._id },
       ],
     }).sort({ startedAt: -1 }).limit(150)
+    // AI notes taken on these calls, that this person may open.
+    const notes = await CallNote.find({ callId: { $in: calls.map((call) => call._id) } }).select("callId channelId status title participants onAt").sort({ onAt: 1 })
+    const notesByCall = new Map()
+    for (const note of notes) {
+      if (!channels.has(String(note.channelId)) && !note.participants.some((person) => String(person.userId) === me)) continue
+      const list = notesByCall.get(String(note.callId)) || []
+      list.push({ id: String(note._id), status: note.status, title: note.title || "" })
+      notesByCall.set(String(note.callId), list)
+    }
     const items = calls.map((call) => {
       const entry = channels.get(String(call.channelId))
       const joined = (call.participants || []).some((person) => String(person.userId) === me)
@@ -52,9 +64,83 @@ callsRouter.get(
         startedAt: call.startedAt,
         endedAt: call.endedAt || null,
         live: ended ? false : Boolean(liveCall(call._id)),
+        notes: notesByCall.get(String(call._id)) || [],
       }
     })
     res.json({ items, live: await liveCallsFor(req.user) })
+  }),
+)
+
+// AI notes: open to the people who were on the call and to everyone who can see the conversation it was in
+// (they are posted there).
+async function openNote(req, res) {
+  if (!mongoose.isValidObjectId(req.params.id)) {
+    sendError(res, 404, "Those call notes were not found.")
+    return null
+  }
+  const note = await CallNote.findById(req.params.id)
+  if (!note) {
+    sendError(res, 404, "Those call notes were not found.")
+    return null
+  }
+  const me = String(req.user._id)
+  if (note.participants.some((person) => String(person.userId) === me)) return note
+  const visible = await visibleChannels(req.user)
+  if (visible.some((entry) => String(entry.channel._id) === String(note.channelId))) return note
+  sendError(res, 404, "Those call notes were not found.")
+  return null
+}
+
+const notesUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_PIECE_BYTES, files: 1 } })
+
+// A piece of someone's own speech while AI notes are on (a short WAV file), transcribed and then thrown away.
+callsRouter.post(
+  "/notes/:id/audio",
+  (req, res, next) => notesUpload.single("audio")(req, res, (error) => (error ? sendError(res, 413, "That piece of audio is too long.") : next())),
+  asyncHandler(async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id)) return sendError(res, 404, "Those call notes were not found.")
+    const audio = req.file?.buffer
+    if (!audio || audio.length < 44 || audio.toString("ascii", 0, 4) !== "RIFF" || audio.toString("ascii", 8, 12) !== "WAVE") return sendError(res, 400, "Send the audio as a WAV file.")
+    const result = await acceptPiece({ user: req.user, noteId: req.params.id, audio, durationMs: req.body?.durationMs, endedAgoMs: req.body?.endedAgoMs })
+    if (result.error) return sendError(res, result.status, result.error)
+    res.status(202).json({ ok: true })
+  }),
+)
+
+callsRouter.get(
+  "/notes/:id",
+  asyncHandler(async (req, res) => {
+    const note = await openNote(req, res)
+    if (!note) return
+    const me = String(req.user._id)
+    res.json({ note: { ...presentNote(note, { full: true }), canManage: req.user.role === "admin" || String(note.startedBy) === me } })
+  }),
+)
+
+// Write the notes again after the AI model failed.
+callsRouter.post(
+  "/notes/:id/retry",
+  asyncHandler(async (req, res) => {
+    const note = await openNote(req, res)
+    if (!note) return
+    if (note.status !== "failed") return sendError(res, 400, "These notes are not waiting to be written again.")
+    const done = await retryNotes(note._id)
+    const fresh = await CallNote.findById(note._id)
+    res.json({ ok: done, note: presentNote(fresh, { full: true }) })
+  }),
+)
+
+// Whoever turned the notes on, or an admin, can delete them (and their post in the conversation).
+callsRouter.delete(
+  "/notes/:id",
+  asyncHandler(async (req, res) => {
+    const note = await openNote(req, res)
+    if (!note) return
+    if (req.user.role !== "admin" && String(note.startedBy) !== String(req.user._id)) return sendError(res, 403, "Only whoever turned these notes on, or an admin, can delete them.")
+    if (note.status === "recording" || note.status === "writing") return sendError(res, 409, "These notes are still being taken. Turn AI notes off first.")
+    if (note.messageId) await ChatMessage.updateOne({ _id: note.messageId }, { $set: { deletedAt: new Date(), text: "" } })
+    await note.deleteOne()
+    res.json({ ok: true })
   }),
 )
 
