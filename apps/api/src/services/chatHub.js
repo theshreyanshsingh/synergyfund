@@ -3,6 +3,7 @@ import { Server } from "socket.io"
 import { User } from "../models/index.js"
 import { audience, loadChannel, usesChat } from "./chat.js"
 import { leaveCallsFor, recheckCalls, registerCallHandlers } from "./calls.js"
+import { trustedOrigin } from "./appUrl.js"
 
 const SOCKET_PURPOSE = "chat-socket"
 const online = new Map()
@@ -27,12 +28,8 @@ function originAllowed(origin) {
   if (!origin) return true
   const clean = origin.replace(/\/+$/, "")
   if (allowedOrigins().includes(clean)) return true
-  try {
-    const { hostname } = new URL(clean)
-    return process.env.NODE_ENV !== "production" && (hostname === "localhost" || hostname === "127.0.0.1" || /^(10|192\.168|172\.(1[6-9]|2\d|3[01]))\./.test(hostname))
-  } catch {
-    return false
-  }
+  // The company's own addresses (admin.synergifund.com) even when WEB_ORIGIN is mistyped, and local ones in development.
+  return Boolean(trustedOrigin(clean))
 }
 
 export function attachChatSockets(server) {

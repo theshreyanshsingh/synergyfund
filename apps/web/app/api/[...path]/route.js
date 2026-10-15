@@ -11,6 +11,11 @@ async function proxy(request, context) {
   target.search = new URL(request.url).search
   const headers = new Headers(request.headers)
   for (const name of HOP) headers.delete(name)
+  // The address this site was opened at (admin.synergifund.com), so links in emails point back here.
+  const host = (request.headers.get("x-forwarded-host") || request.headers.get("host") || "").split(",")[0].trim()
+  const proto = (request.headers.get("x-forwarded-proto") || new URL(request.url).protocol.replace(":", "")).split(",")[0].trim()
+  if (host) headers.set("x-app-origin", `${proto}://${host}`)
+  else headers.delete("x-app-origin")
   const init = {
     method: request.method,
     headers,

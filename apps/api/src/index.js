@@ -22,6 +22,7 @@ import { callsRouter } from "./routes/calls.js"
 import { requireAuth } from "./middleware/auth.js"
 import { trackActivity } from "./middleware/activity.js"
 import { seedIfEmpty } from "./services/seed.js"
+import { rememberAppOrigin } from "./services/appUrl.js"
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../..")
 dotenv.config({ path: path.join(repoRoot, ".env"), quiet: true })
@@ -31,6 +32,11 @@ app.use(cors({ origin: allowedOrigins(), credentials: true }))
 app.use(cookieParser())
 app.use(express.json({ limit: "2mb" }))
 
+// The web app passes on the address it was opened at, for links in emails (see appUrl.js).
+app.use((req, res, next) => {
+  rememberAppOrigin(req.headers["x-app-origin"])
+  next()
+})
 app.get("/health", (req, res) => res.json({ ok: true }))
 app.use("/auth", authRouter)
 
