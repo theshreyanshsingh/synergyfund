@@ -118,8 +118,9 @@ export async function sendMail({ people, title, body, details, href, event }) {
 // `exceptUserIds`: people left out, usually whoever made the change. `email: false` sends only the in-app notice and push.
 export async function notify({ roles = [], userIds = [], exceptUserIds = [], title, body, details, href, event, push = true, email = true }) {
   try {
-    const roleUsers = roles.length ? await User.find({ role: { $in: roles } }).select("_id email name") : []
-    const direct = userIds.length ? await User.find({ _id: { $in: userIds.filter(Boolean) } }).select("_id email name") : []
+    // The AI teammate's account never gets notifications or emails.
+    const roleUsers = roles.length ? await User.find({ role: { $in: roles }, bot: { $ne: true } }).select("_id email name") : []
+    const direct = userIds.length ? await User.find({ _id: { $in: userIds.filter(Boolean) }, bot: { $ne: true } }).select("_id email name") : []
     const seen = new Set(exceptUserIds.filter(Boolean).map(String))
     const people = [...roleUsers, ...direct].filter((person) => {
       const id = String(person._id)

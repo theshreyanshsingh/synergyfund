@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { PERMISSIONS, ROLE_PERMISSIONS, ROLES, can, initials, permissionsFor } from "@synergifund/shared"
 import { PermissionPicker } from "../../../components/members/PermissionPicker"
+import { MultiSelect } from "../../../components/ui/MultiSelect"
 import { StatusPill } from "../../../components/ui/StatusPill"
 import { WorkspacePage } from "../../../components/ui/WorkspacePage"
 import { useSession } from "../../../components/shell/Providers"
@@ -55,13 +56,6 @@ export default function MembersPage() {
 
   function chooseRole(role) {
     setDraft((current) => ({ ...current, role, permissions: [...(ROLE_PERMISSIONS[role] || [])], propertyIds: role === "admin" ? [] : current.propertyIds || [] }))
-  }
-
-  function toggleProperty(id) {
-    setDraft((current) => {
-      const propertyIds = current.propertyIds || []
-      return { ...current, propertyIds: propertyIds.includes(id) ? propertyIds.filter((item) => item !== id) : [...propertyIds, id] }
-    })
   }
 
   async function save(event) {
@@ -147,7 +141,7 @@ export default function MembersPage() {
               </span>
             ),
           },
-          { key: "role", label: "Role", peek: true, render: (row) => <StatusPill>{roleLabel[row.role] || row.role}</StatusPill> },
+          { key: "role", label: "Role", peek: true, render: (row) => <StatusPill>{row.bot ? "AI teammate" : roleLabel[row.role] || row.role}</StatusPill> },
           {
             key: "access",
             label: "Access",
@@ -160,7 +154,7 @@ export default function MembersPage() {
             key: "actions",
             label: "",
             pin: "right",
-            render: (row) => (
+            render: (row) => row.bot ? <span className="muted">Managed in Settings › Agent</span> : (
               <span className="row-actions">
                 <button type="button" onClick={(event) => { event.stopPropagation(); openMember(row) }}>Modify</button>
                 <button type="button" className="danger" disabled={row.id === session?.user?.id} onClick={(event) => { event.stopPropagation(); setError(""); setRemoving(row) }}>Delete</button>
@@ -170,7 +164,7 @@ export default function MembersPage() {
         ]}
         rows={people}
         important={(row) => (row.extraPermissions || []).length > 0 || (row.deniedPermissions || []).length > 0}
-        onRow={openMember}
+        onRow={(row) => { if (!row.bot) openMember(row) }}
         // Phones: name and role on one line with Modify and Delete; a tap shows access and title.
         collapsible
         openLabel="Edit member"
@@ -226,18 +220,17 @@ export default function MembersPage() {
                   <span>Assigned properties</span>
                   <p className="muted assign-hint">
                     {draft.role === "contractor"
-                      ? "They can only open the properties ticked here, and they join each one's chat room."
-                      : "They join the chat room for each property ticked here. Admins are in every property room."}
+                      ? "They can only open the properties chosen here, and they join each one's chat room."
+                      : "They join the chat room for each property chosen here. Admins are in every property room."}
                   </p>
-                  <div className="assign-list">
-                    {(properties.data?.items || []).map((property) => (
-                      <label key={property.id}>
-                        <input type="checkbox" checked={(draft.propertyIds || []).includes(property.id)} onChange={() => toggleProperty(property.id)} />
-                        {property.address}
-                      </label>
-                    ))}
-                    {(properties.data?.items || []).length === 0 && <p className="muted">No properties yet. You can assign houses after they exist.</p>}
-                  </div>
+                  <MultiSelect
+                    options={(properties.data?.items || []).map((property) => ({ id: property.id, label: property.address, hint: [property.city, property.stage].filter(Boolean).join(" · ") }))}
+                    selected={draft.propertyIds || []}
+                    onChange={(propertyIds) => setDraft((current) => ({ ...current, propertyIds }))}
+                    placeholder="Search properties to add…"
+                    noun={["property", "properties"]}
+                    emptyText={properties.data ? "No properties yet. You can assign houses after they exist." : "Loading properties…"}
+                  />
                 </div>
               )}
               {draft.locked && <p className="banner">Only a super admin can change an admin.</p>}

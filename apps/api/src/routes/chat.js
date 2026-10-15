@@ -22,8 +22,26 @@ import { pushToUsers } from "../services/push.js"
 import { recheckCalls } from "../services/calls.js"
 import { receiveFile, saveUploadedFile, sendStoredFile } from "../services/files.js"
 import { notify, recordActivity } from "../services/notify.js"
+import { bus } from "../services/events.js"
 
 export const chatRouter = Router()
+
+// Posts a message as `author` (used by the AI teammate), exactly as if they had sent it: everyone in the
+// conversation sees it live, and people it mentions are notified.
+export async function postChatMessage({ channel, property, author, text }) {
+  const people = await audience(channel, property)
+  const message = await ChatMessage.create({
+    channelId: channel._id,
+    userId: author._id,
+    userName: author.name,
+    text: String(text || "").trim().slice(0, MAX_MESSAGE),
+    mentionIds: mentionsIn(text, people),
+  })
+  await ChatChannel.updateOne({ _id: channel._id }, { $max: { lastMessageAt: message.createdAt } })
+  emitToUsers(ids(people), "message:new", { message: presentMessage(message), channel: presentChannel(channel, property) })
+  alertPeople({ channel, property, message, author, people, parent: null }).catch((error) => console.error("Chat notification failed", error))
+  return message
+}
 
 chatRouter.use((req, res, next) => {
   if (usesChat(req.user)) return next()
@@ -162,9 +180,9 @@ chatRouter.get(
     const entries = await visibleChannels(req.user)
     const counts = await unreadFor(req.user, entries)
     const guest = isGuest(req.user)
-    const people = await User.find().select("_id name email role extraPermissions deniedPermissions")
+    const people = await User.find().select("_id name email role extraPermissions deniedPermissions bot")
     const sharedIds = guestContacts(entries)
-    const visiblePeople = people.filter((person) => usesChat(person) && (!guest || sharedIds.has(String(person._id)) || String(person._id) === String(req.user._id) || person.role === "admin"))
+    const visiblePeople = people.filter((person) => usesChat(person) && (!guest || sharedIds.has(String(person._id)) || String(person._id) === String(req.user._id) || person.role === "admin" || person.bot))
     res.json({
       me: String(req.user._id),
       canCreateChannels: !guest,
@@ -174,7 +192,8 @@ chatRouter.get(
         lastReadAt: counts[index].lastReadAt,
         canManage: canManage(req.user, channel),
       })),
-      people: visiblePeople.map((person) => ({ id: String(person._id), name: person.name, email: person.email, role: person.role, online: isOnline(person._id) })),
+      // The AI teammate is listed (so it can be @mentioned and named) but marked, so it is not offered for calls or DMs.
+      people: visiblePeople.map((person) => ({ id: String(person._id), name: person.name, email: person.email, role: person.role, online: isOnline(person._id), ...(person.bot ? { bot: true } : {}) })),
       online: onlineIds(),
     })
   }),
@@ -415,6 +434,7 @@ chatRouter.post(
     emitToUsers(ids(people), "message:new", { message: payload, channel: presentChannel(channel, property) })
     if (parent) emitToUsers(ids(people), "message:update", { message: presentMessage(parent) })
     alertPeople({ channel, property, message, author: req.user, people, parent }).catch((error) => console.error("Chat notification failed", error))
+    bus.emit("chat:message", { channel, property, message, author: req.user })
     res.status(201).json({ message: payload })
   }),
 )

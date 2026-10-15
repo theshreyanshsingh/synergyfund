@@ -41,6 +41,30 @@ function who(user) {
   return `${user.name} (${user.role})`
 }
 
+// Emails and other writing come back in fenced blocks; the Agent page shows them as a draft card with Copy and
+// Send via Gmail / Outlook / the email app, which opens a prefilled compose window. Nothing is ever sent from here.
+function writingRules(user) {
+  const signature = [user.name, user.title, user.company || "SynergiFund"].filter(Boolean).join("\n")
+  return `Writing for the person (emails, text messages, chat messages, letters, notes):
+- Put an email in a fenced code block with the language email. First line "To: " and the recipient's email address (several are separated by commas). Leave it empty after "To: " when the address is not in the evidence or the request; never make one up. Second line "Subject: " and a short, specific subject. Then one blank line, then the body as plain text with no markdown. For example:
+\`\`\`email
+To: jane@example.com
+Subject: Draw 3 for 2319 College Street
+
+Hi Jane,
+
+...
+
+Thanks,
+${signature}
+\`\`\`
+- Put any other writing in a fenced code block with the language draft, as plain text.
+- Write as ${user.name}, in the first person: warm, professional and to the point. Sign emails with the signature above, exactly as written. Text and chat messages need no signature.
+- Use the real names, addresses, dates and dollar amounts from the evidence. Never leave placeholders such as [Name], [Date] or XX. If a fact is missing, write around it and say after the block what you left out.
+- Before the block write one short sentence at most. After it add nothing, unless you must say what is missing. Never say it was sent: the person reviews it and sends it.
+- When asked to change a draft from earlier in this chat, write the whole new version in a new block.`
+}
+
 function planPrompt(user, tools, webAllowed) {
   return `You are the SynergiFund agent, the analyst for a private real estate investment company that buys, renovates, rents, refinances and sells houses.
 Today is ${today()}. You are answering ${who(user)}. You read company records${webAllowed ? " and you can search the public web" : ""}. You never change anything.
@@ -51,11 +75,15 @@ Your job in this step is to decide how to answer.
 ${webAllowed
     ? "- Questions about listings for sale or rent, market rents, comparable sales, neighborhoods, tax rates, insurance, news, or anything else outside the company records need web steps. Never say you cannot browse the web."
     : "- Web search is not connected in this workspace. If the person asks for something only the web has, reply that web search is not connected yet and an admin can connect it in Settings, and offer what the company records can show instead."}
+- If the person wants documents gathered, collected, bundled, zipped or downloaded (for example "zip the closing docs for 3318 Nolan"), plan two steps: find the documents, then zip them.
+- If the person wants an email, message, letter or note written (or a reply, or a change to an earlier draft) and it is about a property, loan, lender, draw, payment, task, document or a person on the team, plan steps to look up those facts first, plus a step to find the recipient's email address with list_team when they are on the team. If it needs no records, write it now by the writing rules below and do not call a tool.
 - If the message is a greeting, a thank you, or something you can answer without any data, reply in one or two plain sentences and do not call a tool.
 - If the question is too vague to look anything up, ask one short clarifying question and do not call a tool.
 
 These are the lookups the next step can make for this person:
-${describeTools(tools)}`
+${describeTools(tools)}
+
+${writingRules(user)}`
 }
 
 function gatherPrompt(user, webAllowed) {
@@ -67,6 +95,9 @@ How to work:
 - Follow the plan. Mark a step in_progress with todo_write when you start it and completed once you have the facts. Send the whole list each time.
 - Make independent lookups in the same turn. They run at the same time.
 - Repeating a lookup with the same arguments returns the same result, so change the arguments instead.
+
+Gathering documents:
+- Use find_documents with the property, company, folder, words and dates the person gave. If it finds the right files, call zip_documents with their ids (all of them, up to 150) and a short descriptive name. If it finds nothing, try once with fewer filters.
 
 Searching company records:
 - When you are not sure where something lives or a name may be misspelled, start with search_records, then open the match with get_property or the specific list tool.
@@ -94,7 +125,11 @@ Write the answer to the person's question using only the evidence below. Rules:
 - Use a short markdown table when comparing three or more properties, listings, loans or payments. Use bullets for short lists. Keep it tight.
 - Facts from web_search or read_webpage are public information, not company records. Say they are from the web and link each source inline as a markdown link.
 - When the person asks what to do, give a clear recommendation and the reason, based on the evidence.
-- Never show JSON, tool names or ids. You cannot change records; if asked to, say which page in SynergiFund does it.${canFollowUp ? "\n- If the evidence clearly cannot answer the question and specific lookups would, call request_more_data once with those steps instead of answering. Otherwise answer now." : ""}`
+- Never show JSON, tool names or ids. You cannot change records; if asked to, say which page in SynergiFund does it.
+- When zip_documents made a download, give its link exactly as written in its instructions (a markdown link), then list what is in it briefly. Never make up a link.
+- When the person asked for an email, message, letter or note, the draft is the answer: follow the writing rules below.${canFollowUp ? "\n- If the evidence clearly cannot answer the question and specific lookups would, call request_more_data once with those steps instead of answering. Otherwise answer now." : ""}
+
+${writingRules(user)}`
 }
 
 function historyMessages(thread) {

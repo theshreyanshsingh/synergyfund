@@ -63,7 +63,7 @@ export function attachChatSockets(server) {
     socket.join(guest ? "guests" : "staff")
     const before = online.get(id) || 0
     online.set(id, before + 1)
-    const visibleTo = () => (guest ? onlineIds().filter((other) => other === id || adminIds.has(other)) : onlineIds())
+    const visibleTo = () => (guest ? onlineIds().filter((other) => other === id || adminIds.has(other) || alwaysOnline.has(other)) : onlineIds())
     if (user.role === "admin") adminIds.add(id)
     socket.emit("presence", { online: visibleTo() })
     if (!before) announce(id, user.role === "admin", true)
@@ -145,12 +145,20 @@ export function chatIo() {
   return io
 }
 
+// The AI teammate (while it is turned on) shows as online to everyone, like a colleague who is always around.
+const alwaysOnline = new Set()
+
+export function setAlwaysOnline(ids) {
+  alwaysOnline.clear()
+  for (const id of ids) alwaysOnline.add(String(id))
+}
+
 export function onlineIds() {
-  return [...online.keys()]
+  return [...new Set([...online.keys(), ...alwaysOnline])]
 }
 
 export function isOnline(userId) {
-  return online.has(String(userId))
+  return online.has(String(userId)) || alwaysOnline.has(String(userId))
 }
 
 export function refreshChat(userIds) {

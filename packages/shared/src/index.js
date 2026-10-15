@@ -475,6 +475,15 @@ export const AGENT_DEFAULTS = {
   decisionModel: "anthropic/claude-sonnet-5.5",
 }
 
+// The AI teammate that works in property chats.
+export const TEAMMATE_DEFAULTS = {
+  name: "Sam Rivera",
+  followUpDays: 3,
+  drawEmail: "draws@synergifund.com",
+}
+
+export const LINE_STATUSES = ["Not started", "In progress", "Complete"]
+
 export function chatTitleFromPrompt(prompt = "") {
   const text = String(prompt).replace(/\s+/g, " ").trim()
   if (!text) return "New chat"

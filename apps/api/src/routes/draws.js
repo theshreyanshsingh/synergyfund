@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { drawPulled, isPendingDraw } from "@synergifund/shared"
+import { LINE_STATUSES, drawPulled, isPendingDraw } from "@synergifund/shared"
 import xlsx from "xlsx"
 import { DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, ImportJob, PhotoReport, Property } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
@@ -383,6 +383,53 @@ drawsRouter.put(
       propertyId: property._id,
     })
     res.json({ scopeLines: property.scopeLines.map((line) => ({ id: String(line._id), title: line.title, description: line.description || "", budget: line.budget ?? null, status: line.status || "Not started" })) })
+  }),
+)
+
+// A person sets a line item's status or expected finish date by hand (this also overrules the AI teammate for a week).
+drawsRouter.patch(
+  "/scope/:propertyId/lines/:lineId",
+  requirePermission("draws.write"),
+  asyncHandler(async (req, res) => {
+    const property = /^[a-f0-9]{24}$/.test(String(req.params.propertyId)) ? await Property.findOne({ ...propertyFilter(req.user), _id: req.params.propertyId }) : null
+    const line = property?.scopeLines.id(String(req.params.lineId)) || null
+    if (!line) {
+      sendError(res, 404, "That line item was not found.")
+      return
+    }
+    const changes = []
+    if ("status" in req.body) {
+      if (!LINE_STATUSES.includes(req.body.status)) {
+        sendError(res, 400, `Choose ${LINE_STATUSES.join(", ")}.`)
+        return
+      }
+      if (req.body.status !== (line.status || "Not started")) {
+        line.status = req.body.status
+        line.statusBy = req.user.name
+        line.statusAt = new Date()
+        line.statusNote = "Set by hand"
+        changes.push(req.body.status)
+        if (req.body.status === "Complete") line.forecastDate = ""
+      }
+    }
+    if ("forecastDate" in req.body) {
+      const value = String(req.body.forecastDate || "")
+      if (value && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        sendError(res, 400, "Enter the expected date as a date.")
+        return
+      }
+      if (value !== (line.forecastDate || "")) {
+        line.forecastDate = value
+        line.forecastNote = value ? "Set by hand" : ""
+        line.forecastBy = req.user.name
+        changes.push(value ? `expected ${value}` : "no expected date")
+      }
+    }
+    if (changes.length) {
+      await property.save()
+      await recordActivity({ user: req.user, title: "Line item progress", detail: `${property.address}: ${line.title} → ${changes.join(", ")}`, propertyId: property._id })
+    }
+    res.json({ line: { id: String(line._id), title: line.title, status: line.status || "Not started", statusBy: line.statusBy || "", statusAt: line.statusAt || null, statusNote: line.statusNote || "", forecastDate: line.forecastDate || "", forecastNote: line.forecastNote || "", forecastBy: line.forecastBy || "" } })
   }),
 )
 

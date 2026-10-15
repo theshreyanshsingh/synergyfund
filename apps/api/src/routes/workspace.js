@@ -4,6 +4,7 @@ import {
   Activity,
   AgentThread,
   Bill,
+  CalendarEvent,
   ConstructionProject,
   Draw,
   DrawBudget,
@@ -184,7 +185,7 @@ workspaceRouter.get(
   "/tasks/assignees",
   requirePermission(PERMISSIONS.tasksAssign),
   asyncHandler(async (req, res) => {
-    const users = await User.find().select("name email").sort({ name: 1, email: 1 })
+    const users = await User.find({ bot: { $ne: true } }).select("name email").sort({ name: 1, email: 1 })
     res.json({ items: users.map((user) => ({ id: String(user._id), name: user.name, email: user.email })) })
   }),
 )
@@ -862,6 +863,10 @@ workspaceRouter.patch(
   requirePermission("members.manage"),
   asyncHandler(async (req, res) => {
     const user = await User.findById(req.params.id)
+    if (user?.bot) {
+      sendError(res, 400, "The AI teammate is managed in Settings › Agent.")
+      return
+    }
     if (!user) {
       sendError(res, 404, "That person was not found.")
       return
@@ -906,6 +911,10 @@ workspaceRouter.post(
   asyncHandler(async (req, res) => {
     const bcrypt = await import("bcryptjs")
     const user = await User.findById(req.params.id)
+    if (user?.bot) {
+      sendError(res, 400, "The AI teammate is managed in Settings › Agent.")
+      return
+    }
     const password = String(req.body.password || "")
     if (!user) {
       sendError(res, 404, "That person was not found.")
@@ -939,6 +948,10 @@ workspaceRouter.delete(
   requirePermission("members.manage"),
   asyncHandler(async (req, res) => {
     const user = await User.findById(req.params.id)
+    if (user?.bot) {
+      sendError(res, 400, "The AI teammate is managed in Settings › Agent.")
+      return
+    }
     if (!user) {
       sendError(res, 404, "That person was not found.")
       return
@@ -1041,7 +1054,8 @@ workspaceRouter.get(
     const allTasks = canSeeAllTasks && req.query.tasks === "all"
     const taskFilter = { done: false, $or: [{ propertyId: { $in: propertyIds } }, { propertyId: null }] }
     if (!allTasks) taskFilter.assigneeId = req.user._id
-    const [bills, tasks, expenses, loans, draws] = await Promise.all([
+    const me = String(req.user._id)
+    const [bills, tasks, expenses, loans, draws, meetings] = await Promise.all([
       Bill.find(req.user.role === "contractor" ? { propertyId: { $in: propertyIds } } : { $or: [{ propertyId: { $in: propertyIds } }, { propertyId: null }] }),
       Task.find(taskFilter),
       Expense.find({
@@ -1050,7 +1064,10 @@ workspaceRouter.get(
       }),
       Loan.find({ propertyId: { $in: propertyIds } }),
       (req.permissions.includes("draws.read") && req.user.role !== "contractor") ? Draw.find({ propertyId: { $in: propertyIds } }) : [],
+      // Events this person made or is invited to.
+      CalendarEvent.find({ $or: [{ createdBy: req.user._id }, { guestIds: req.user._id }], date: { $gte: shiftKey(todayKey(), -180) } }).sort({ date: 1, start: 1 }),
     ])
+    const guestNames = new Map((await User.find({ _id: { $in: [...new Set(meetings.flatMap((event) => event.guestIds.map(String)))] } }).select("name")).map((user) => [String(user._id), user.name]))
     const today = todayKey()
     const soon = shiftKey(today, 7)
     const monthOut = shiftKey(today, 30)
@@ -1074,6 +1091,7 @@ workspaceRouter.get(
             urgent: overdue || dueSoon,
             tone: overdue ? "bad" : dueSoon ? "warn" : paid ? "good" : "neutral",
             detail: overdue ? "Overdue" : dueSoon ? "Due this week" : paid ? "Paid" : current ? "Scheduled" : `Repeats ${String(bill.recurrence).toLowerCase()}`,
+            href: "/payments",
           }
         })
       }),
@@ -1093,6 +1111,7 @@ workspaceRouter.get(
           urgent: passed || dueSoon,
           tone: passed ? "bad" : dueSoon ? "warn" : "neutral",
           detail: passed ? "Maturity passed" : dueSoon ? "Matures within 30 days" : "Maturity",
+          href: loan.propertyId ? `/properties/${loan.propertyId}?tab=financing` : "/loans",
         }
       }),
       ...loans.flatMap((loan) => loanPaymentDates(loan, shiftKey(today, -60), shiftKey(today, 365)).map((date) => {
@@ -1108,6 +1127,7 @@ workspaceRouter.get(
           urgent: dueSoon,
           tone: dueSoon ? "warn" : "neutral",
           detail: date < today ? "Monthly payment, past" : dueSoon ? "Monthly payment due this week" : "Monthly payment",
+          href: loan.propertyId ? `/properties/${loan.propertyId}?tab=financing` : "/loans",
         }
       })),
       ...loans.flatMap((loan) => insuranceDates(loan, shiftKey(today, -60), shiftKey(today, 365)).map((date) => {
@@ -1123,6 +1143,7 @@ workspaceRouter.get(
           urgent: dueSoon,
           tone: dueSoon ? "warn" : "neutral",
           detail: date < today ? `Insurance, ${String(loan.insuranceFrequency || "Yearly").toLowerCase()}, past` : dueSoon ? "Insurance due this week" : `Insurance, ${String(loan.insuranceFrequency || "Yearly").toLowerCase()}`,
+          href: loan.propertyId ? `/properties/${loan.propertyId}?tab=financing` : "/loans",
         }
       })),
       ...draws.flatMap((item) => {
@@ -1131,7 +1152,7 @@ workspaceRouter.get(
         const rows = []
         const funded = dateKey(draw.fundedDate)
         if (funded && draw.pulled > 0) {
-          rows.push({ id: `draw-funded-${draw.id}`, kind: "draw", title: `${draw.title} received`, date: funded, amount: draw.pulled, status: draw.status, property, urgent: false, tone: "good", detail: "Lender cash received" })
+          rows.push({ id: `draw-funded-${draw.id}`, kind: "draw", title: `${draw.title} received`, date: funded, amount: draw.pulled, status: draw.status, property, urgent: false, tone: "good", detail: "Lender cash received", href: `/properties/${item.propertyId}?tab=draws` })
         }
         const forecast = dateKey(draw.requestedDate)
         if (forecast && draw.status !== "Funded") {
@@ -1148,6 +1169,7 @@ workspaceRouter.get(
             urgent: late || dueSoon,
             tone: late ? "bad" : dueSoon ? "warn" : "info",
             detail: late ? "Forecast date passed, not received" : dueSoon ? "Expected this week" : "Expected draw",
+            href: `/properties/${item.propertyId}?tab=draws`,
           })
         }
         return rows
@@ -1167,6 +1189,7 @@ workspaceRouter.get(
           urgent: overdue || dueSoon,
           tone: overdue ? "bad" : dueSoon ? "warn" : "neutral",
           detail: overdue ? "Overdue" : dueSoon ? "Due soon" : task.priority || "Task",
+          href: `/tasks?task=${task._id}`,
         }
       }),
       ...expenses.filter((expense) => expense.date).map((expense) => ({
@@ -1180,10 +1203,208 @@ workspaceRouter.get(
         urgent: false,
         tone: "neutral",
         detail: "Posted",
+        href: "/expenses",
       })),
+      ...meetings.map((event) => presentEvent(event, { me, admin: req.user.role === "admin", guestNames, names })),
     ].filter((event) => event.date)
     events.sort((left, right) => left.date.localeCompare(right.date) || Number(right.urgent) - Number(left.urgent))
     res.json({ today, events, canSeeAllTasks, taskScope: allTasks ? "all" : "mine" })
+  }),
+)
+
+/* ---------- calendar events ---------- */
+
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
+
+function clockLabel(value) {
+  const [hours, minutes] = String(value || "").split(":").map(Number)
+  if (!Number.isFinite(hours)) return ""
+  const suffix = hours >= 12 ? "PM" : "AM"
+  const hour = hours % 12 || 12
+  return minutes ? `${hour}:${String(minutes).padStart(2, "0")} ${suffix}` : `${hour} ${suffix}`
+}
+
+// "Thu, Oct 15 · 3:30 PM – 4:30 PM" or "Thu, Oct 15 · All day"
+function eventWhen(event) {
+  const [year, month, day] = event.date.split("-").map(Number)
+  const date = new Date(year, month - 1, day).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
+  return `${date} · ${event.allDay ? "All day" : `${clockLabel(event.start)} – ${clockLabel(event.end)}`}`
+}
+
+function presentEvent(event, { me, admin, guestNames, names }) {
+  const mine = String(event.createdBy) === me
+  return {
+    id: `event-${event._id}`,
+    eventId: String(event._id),
+    kind: "event",
+    title: event.title,
+    date: event.date,
+    allDay: Boolean(event.allDay),
+    start: event.allDay ? "" : event.start || "",
+    end: event.allDay ? "" : event.end || "",
+    location: event.location || "",
+    description: event.description || "",
+    guests: event.guestIds.map((id) => ({ id: String(id), name: guestNames.get(String(id)) || "Someone" })),
+    propertyId: event.propertyId ? String(event.propertyId) : "",
+    property: names.get(String(event.propertyId || "")) || "",
+    createdByName: event.createdByName || "",
+    mine,
+    canEdit: mine || admin,
+    amount: null,
+    status: "",
+    urgent: false,
+    tone: "event",
+    detail: event.allDay ? "All day" : `${clockLabel(event.start)} – ${clockLabel(event.end)}`,
+    href: "",
+  }
+}
+
+// Who can be invited: everyone who uses the calendar (not contractors, not the AI teammate).
+async function calendarPeople() {
+  const users = await User.find({ role: { $ne: "contractor" }, bot: { $ne: true } }).select("name email role extraPermissions deniedPermissions").sort({ name: 1 })
+  return users.filter((user) => permissionsFor(publicUser(user)).includes(PERMISSIONS.expensesRead))
+}
+
+workspaceRouter.get(
+  "/calendar/people",
+  requirePermission("expenses.read"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    res.json({ items: (await calendarPeople()).map((user) => ({ id: String(user._id), name: user.name, email: user.email })) })
+  }),
+)
+
+async function readEvent(req, res, existing = null) {
+  const body = req.body || {}
+  const next = {}
+  const field = (key) => key in body || !existing
+  if (field("title")) {
+    const title = String(body.title || "").trim().replace(/\s+/g, " ")
+    if (!title) return sendError(res, 400, "Give the event a title.")
+    next.title = title.slice(0, 200)
+  }
+  if (field("date")) {
+    const date = String(body.date || "")
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return sendError(res, 400, "Choose the event's date.")
+    next.date = date
+  }
+  if (field("allDay")) next.allDay = body.allDay === true
+  const allDay = "allDay" in next ? next.allDay : existing?.allDay
+  if (!allDay && (field("start") || field("end") || "allDay" in next)) {
+    const start = String(body.start ?? existing?.start ?? "")
+    const end = String(body.end ?? existing?.end ?? "")
+    if (!TIME.test(start)) return sendError(res, 400, "Choose a start time.")
+    if (!TIME.test(end)) return sendError(res, 400, "Choose an end time.")
+    if (end <= start) return sendError(res, 400, "The event has to end after it starts.")
+    next.start = start
+    next.end = end
+  }
+  if (allDay) {
+    next.start = ""
+    next.end = ""
+  }
+  if (field("location")) next.location = String(body.location || "").trim().slice(0, 200)
+  if (field("description")) next.description = String(body.description || "").trim().slice(0, 4000)
+  if (field("propertyId")) {
+    const id = String(body.propertyId || "")
+    if (id) {
+      const property = /^[a-f\d]{24}$/i.test(id) ? await Property.findOne({ _id: id, ...propertyFilter(req.user) }).select("_id") : null
+      if (!property) return sendError(res, 404, "That property is not available.")
+      next.propertyId = property._id
+    } else {
+      next.propertyId = undefined
+    }
+  }
+  if (field("guestIds")) {
+    const wanted = [...new Set((Array.isArray(body.guestIds) ? body.guestIds : []).map(String))].filter((id) => id !== String(req.user._id))
+    const allowed = new Set((await calendarPeople()).map((user) => String(user._id)))
+    const bad = wanted.filter((id) => !allowed.has(id))
+    if (bad.length) return sendError(res, 400, "Only people who use the calendar can be invited.")
+    next.guestIds = wanted.slice(0, 50)
+  }
+  return next
+}
+
+async function eventFor(req, res) {
+  const event = /^[a-f\d]{24}$/i.test(String(req.params.id)) ? await CalendarEvent.findById(req.params.id) : null
+  const mine = event && String(event.createdBy) === String(req.user._id)
+  if (!event || !(mine || req.user.role === "admin")) {
+    sendError(res, 404, "That event was not found.")
+    return null
+  }
+  return event
+}
+
+function inviteGuests(event, guestIds, user, kind) {
+  if (!guestIds.length) return Promise.resolve()
+  const when = eventWhen(event)
+  const titles = { invite: `Invitation: ${event.title}`, update: `Updated: ${event.title}`, cancel: `Canceled: ${event.title}` }
+  const bodies = {
+    invite: `${user.name} invited you to ${event.title}, ${when}.`,
+    update: `${user.name} changed ${event.title}. It is now ${when}.`,
+    cancel: `${user.name} canceled ${event.title} (${when}).`,
+  }
+  return notify({
+    userIds: guestIds,
+    title: titles[kind],
+    body: bodies[kind],
+    details: [["When", when], ["Where", event.location || ""], ["Notes", event.description || ""], ["From", user.name]],
+    href: `/calendar?date=${event.date}`,
+    event: `calendar.${kind}`,
+  })
+}
+
+workspaceRouter.post(
+  "/calendar/events",
+  requirePermission("expenses.read"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const fields = await readEvent(req, res)
+    if (!fields || res.headersSent) return
+    const event = await CalendarEvent.create({ ...fields, createdBy: req.user._id, createdByName: req.user.name })
+    await recordActivity({ user: req.user, title: "Event added", detail: `${event.title} · ${eventWhen(event)}`, propertyId: event.propertyId })
+    await inviteGuests(event, event.guestIds.map(String), req.user, "invite")
+    const guestNames = new Map((await User.find({ _id: { $in: event.guestIds } }).select("name")).map((user) => [String(user._id), user.name]))
+    res.status(201).json({ event: presentEvent(event, { me: String(req.user._id), admin: req.user.role === "admin", guestNames, names: new Map() }) })
+  }),
+)
+
+workspaceRouter.patch(
+  "/calendar/events/:id",
+  requirePermission("expenses.read"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const event = await eventFor(req, res)
+    if (!event) return
+    const fields = await readEvent(req, res, event)
+    if (!fields || res.headersSent) return
+    const before = { date: event.date, start: event.start, end: event.end, allDay: event.allDay, guests: event.guestIds.map(String) }
+    Object.assign(event, fields)
+    await event.save()
+    const guests = event.guestIds.map(String)
+    const added = guests.filter((id) => !before.guests.includes(id))
+    const removed = before.guests.filter((id) => !guests.includes(id))
+    const moved = before.date !== event.date || before.start !== event.start || before.end !== event.end || before.allDay !== event.allDay
+    await inviteGuests(event, added, req.user, "invite")
+    if (moved) await inviteGuests(event, guests.filter((id) => !added.includes(id)), req.user, "update")
+    if (removed.length) await inviteGuests(event, removed, req.user, "cancel")
+    await recordActivity({ user: req.user, title: "Event updated", detail: `${event.title} · ${eventWhen(event)}`, propertyId: event.propertyId })
+    const guestNames = new Map((await User.find({ _id: { $in: event.guestIds } }).select("name")).map((user) => [String(user._id), user.name]))
+    res.json({ event: presentEvent(event, { me: String(req.user._id), admin: req.user.role === "admin", guestNames, names: new Map() }) })
+  }),
+)
+
+workspaceRouter.delete(
+  "/calendar/events/:id",
+  requirePermission("expenses.read"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const event = await eventFor(req, res)
+    if (!event) return
+    await event.deleteOne()
+    await inviteGuests(event, event.guestIds.map(String), req.user, "cancel")
+    await recordActivity({ user: req.user, title: "Event deleted", detail: `${event.title} · ${eventWhen(event)}`, propertyId: event.propertyId })
+    res.json({ ok: true })
   }),
 )
 

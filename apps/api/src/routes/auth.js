@@ -56,7 +56,8 @@ authRouter.post(
       return
     }
     const user = await User.findOne({ email: parsed.data.email.toLowerCase() })
-    if (!user || !(await bcrypt.compare(parsed.data.password, user.passwordHash))) {
+    // The AI teammate's account never signs in.
+    if (!user || user.bot || !(await bcrypt.compare(parsed.data.password, user.passwordHash))) {
       sendError(res, 401, "That email or password is not right.")
       return
     }

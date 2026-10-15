@@ -1,5 +1,5 @@
-import { PERMISSIONS, drawFigures, drawHealth, resolveBudget } from "@synergifund/shared"
-import { Bill, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, Property, Task, User } from "../../models/index.js"
+import { COMPANY_FOLDERS, PERMISSIONS, PROPERTY_FOLDERS, documentType, drawFigures, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
+import { Bill, Company, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, Property, Task, User } from "../../models/index.js"
 import { presentProperty } from "../../lib/serialize.js"
 import { propertyFilter } from "../access.js"
 import { presentContractorDraw, presentDraw } from "../../routes/draws.js"
@@ -40,6 +40,13 @@ function clampLimit(value, fallback, max) {
   const number = Number(value)
   if (!Number.isFinite(number) || number <= 0) return fallback
   return Math.min(Math.floor(number), max)
+}
+
+function sizeText(bytes) {
+  if (!bytes) return "0 KB"
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
 function plural(count, word, many = `${word}s`) {
@@ -642,28 +649,167 @@ export const TOOLS = [
     summarize: (result) => ({ title: `${result.total} open ${result.total === 1 ? "task" : "tasks"}` }),
   },
   {
-    name: "search_documents",
-    label: "Searching documents",
-    permission: PERMISSIONS.documentsRead,
-    description: "Find files in the document library by name, such as receipts, contracts, workbooks or photos.",
+    name: "list_team",
+    label: "Reading the team",
+    permission: PERMISSIONS.propertiesRead,
+    staffOnly: true,
+    description: "The people on the team, including contractors, with role, job title, email address and the properties each contractor works on. Use it to address an email or message to someone.",
     parameters: {
       type: "object",
-      properties: { query: { type: "string", description: "Words in the file name. Leave empty to list the most recent files." } },
+      properties: {
+        name: { type: "string", description: "Only people whose name or email contains this." },
+      },
     },
     run: async (args, context) => {
-      const filter = { kind: { $ne: "chat" } }
       const properties = await scopedProperties(context)
-      if (context.user.role === "contractor") filter.propertyId = { $in: properties.map((property) => property._id) }
-      if (args.query) filter.name = new RegExp(escapeRegex(String(args.query).trim()), "i")
-      const files = await DocumentFile.find(filter).sort({ createdAt: -1 }).limit(25)
       const names = new Map(properties.map((property) => [String(property._id), property.address]))
+      let people = await User.find({ bot: { $ne: true } }).select("name email role title propertyIds").sort({ name: 1 })
+      const needle = String(args.name || "").trim().toLowerCase()
+      if (needle) people = people.filter((person) => `${person.name} ${person.email}`.toLowerCase().includes(needle))
+      // Email addresses follow the same rule as the to-do list: only for people who may assign tasks.
+      const showEmail = context.permissions.includes(PERMISSIONS.tasksAssign)
       return {
         success: true,
-        total: files.length,
-        documents: files.map((file) => ({ name: file.name, kind: file.kind, property: names.get(String(file.propertyId || "")) || "", added: dateKey(file.createdAt?.toISOString?.()) })),
+        total: people.length,
+        people: people.map((person) => ({
+          name: person.name,
+          role: person.role,
+          title: person.title || "",
+          ...(showEmail ? { email: person.email } : {}),
+          ...(person.role === "contractor" ? { properties: (person.propertyIds || []).map((id) => names.get(String(id))).filter(Boolean) } : {}),
+        })),
+        ...(showEmail ? {} : { note: "Email addresses are hidden for this person." }),
+      }
+    },
+    summarize: (result) => ({ title: `${result.total} ${result.total === 1 ? "person" : "people"}` }),
+  },
+  {
+    name: "find_documents",
+    label: "Finding documents",
+    permission: PERMISSIONS.documentsRead,
+    description: `Find files in the document library, to list them or to gather them into a zip with zip_documents. Filter by property (address), company (name), folder, words in the name or label, file type and date added. Property folders: ${PROPERTY_FOLDERS.map((folder) => folder.name).join(", ")}. Company folders: ${COMPANY_FOLDERS.map((folder) => folder.name).join(", ")}. Receipts and weekly site photos are included. Each file comes with an id for zip_documents.`,
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Words in the file name or its label, such as \"ALTA\", \"insurance\" or \"scope of work\". Leave empty to list everything that fits the other filters." },
+        property: { type: "string", description: "Address or part of it, e.g. \"3318 Nolan\". Leave empty for all." },
+        company: { type: "string", description: "Company name, e.g. \"Revive Jax LLC\". Its own files and its properties' files. Leave empty for all." },
+        folder: { type: "string", description: "Folder name, e.g. \"Contracts\" or \"Title & Closing\". Leave empty for all folders." },
+        type: { type: "string", enum: ["any", "pdf", "word", "excel", "image", "video", "receipt"], description: "Kind of file. Default any." },
+        addedAfter: { type: "string", description: "Only files added on or after this date, YYYY-MM-DD." },
+        addedBefore: { type: "string", description: "Only files added on or before this date, YYYY-MM-DD." },
+        limit: { type: "number", description: "Most files to return, default 60, at most 150." },
+      },
+    },
+    run: async (args, context) => {
+      const filter = { kind: { $nin: ["chat", "comp"] } }
+      const properties = await scopedProperties(context)
+      const contractor = context.user.role === "contractor"
+      const and = []
+      if (contractor) and.push({ propertyId: { $in: properties.map((property) => property._id) } })
+      if (args.property) {
+        const found = await findProperty(context, args.property)
+        if (!found.property) return notFound(args.property, found.matches || [])
+        and.push({ propertyId: found.property._id })
+      }
+      if (args.company) {
+        if (contractor) return { success: false, error: "Company files are not available to you." }
+        const companies = await Company.find().select("name")
+        const needle = String(args.company).trim().toLowerCase()
+        const company = companies.find((item) => item.name.toLowerCase() === needle) || rank(companies, args.company, (item) => item.name, PROPERTY_MATCH)[0]?.item || companies.find((item) => item.name.toLowerCase().includes(needle))
+        if (!company) return { success: false, error: `No company matches "${args.company}".`, candidates: companies.slice(0, 15).map((item) => item.name) }
+        const owned = await Property.find({ companyId: company._id }).select("_id")
+        and.push({ $or: [{ companyId: company._id }, { propertyId: { $in: owned.map((property) => property._id) } }] })
+      }
+      const after = dateKey(args.addedAfter)
+      const before = dateKey(args.addedBefore)
+      if (after || before) and.push({ createdAt: { ...(after ? { $gte: new Date(`${after}T00:00:00`) } : {}), ...(before ? { $lte: new Date(`${before}T23:59:59`) } : {}) } })
+      if (args.query) {
+        const words = new RegExp(escapeRegex(String(args.query).trim()), "i")
+        and.push({ $or: [{ name: words }, { labels: words }] })
+      }
+      if (args.type === "receipt") and.push({ kind: "receipt" })
+      if (and.length) filter.$and = and
+      let files = await DocumentFile.find(filter).sort({ createdAt: -1 }).limit(1000)
+      if (args.type && !["any", "receipt"].includes(args.type)) files = files.filter((file) => documentType(file.name) === args.type)
+      const wantedFolder = String(args.folder || "").trim().toLowerCase()
+      if (wantedFolder) {
+        const matchesFolder = (file) => {
+          const place = file.propertyId ? "property" : file.companyId ? "company" : ""
+          const id = folderOf(file)
+          const name = folderName(place, id).toLowerCase()
+          return id === wantedFolder || name === wantedFolder || name.includes(wantedFolder) || wantedFolder.includes(name.split(" ")[0] || "~")
+        }
+        files = files.filter(matchesFolder)
+      }
+      const total = files.length
+      const limit = clampLimit(args.limit, 60, 150)
+      files = files.slice(0, limit)
+      const names = new Map(properties.map((property) => [String(property._id), property.address]))
+      const companyIds = [...new Set(files.map((file) => String(file.companyId || "")).filter(Boolean))]
+      const companyNames = new Map((await Company.find({ _id: { $in: companyIds } }).select("name")).map((company) => [String(company._id), company.name]))
+      return {
+        success: true,
+        total,
+        shown: files.length,
+        totalSize: sizeText(files.reduce((sum, file) => sum + (file.size || 0), 0)),
+        // Every id first, so a long list cut short for length still has them all for zip_documents.
+        ids: files.map((file) => String(file._id)),
+        documents: files.map((file) => ({
+          id: String(file._id),
+          name: file.name,
+          place: names.get(String(file.propertyId || "")) || companyNames.get(String(file.companyId || "")) || "Not filed",
+          folder: folderName(file.propertyId ? "property" : file.companyId ? "company" : "", folderOf(file)) || "",
+          type: file.kind === "receipt" ? "receipt" : documentType(file.name) || file.kind,
+          labels: file.labels || [],
+          size: sizeText(file.size || 0),
+          added: dateKey(file.createdAt?.toISOString?.()),
+        })),
       }
     },
     summarize: (result) => ({ title: `${result.total} ${result.total === 1 ? "document" : "documents"}` }),
+  },
+  {
+    name: "zip_documents",
+    label: "Zipping documents",
+    permission: PERMISSIONS.documentsRead,
+    description: "Gather documents found with find_documents into one zip download. Pass their ids (up to 150) and a short name for the zip, such as \"3318 Nolan St closing docs\". Returns a download link to give the person.",
+    parameters: {
+      type: "object",
+      properties: {
+        ids: { type: "array", items: { type: "string" }, description: "Document ids from find_documents." },
+        name: { type: "string", description: "Name for the zip file, without .zip." },
+      },
+      required: ["ids"],
+    },
+    run: async (args, context) => {
+      const wanted = [...new Set((Array.isArray(args.ids) ? args.ids : []).map(String).filter((id) => /^[a-f0-9]{24}$/i.test(id)))]
+      if (!wanted.length) return { success: false, error: "Pass the ids of the documents to zip, from find_documents." }
+      if (wanted.length > 150) return { success: false, error: "A zip can hold up to 150 files. Narrow the search or make more than one zip." }
+      const filter = { _id: { $in: wanted }, kind: { $nin: ["chat", "comp"] } }
+      if (context.user.role === "contractor") {
+        const properties = await scopedProperties(context)
+        filter.propertyId = { $in: properties.map((property) => property._id) }
+      }
+      const files = await DocumentFile.find(filter).select("name size")
+      if (!files.length) return { success: false, error: "None of those documents could be found. Search again with find_documents." }
+      const bytes = files.reduce((sum, file) => sum + (file.size || 0), 0)
+      if (bytes > 1500 * 1024 * 1024) return { success: false, error: "Those files are too big for one zip (over 1.5 GB). Split them into smaller zips." }
+      const name = String(args.name || "Documents").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Documents"
+      const link = files.length === 1
+        ? `/api/documents/${files[0]._id}/download`
+        : `/api/documents/zip?ids=${files.map((file) => String(file._id)).join(",")}&name=${encodeURIComponent(name)}`
+      return {
+        success: true,
+        files: files.length,
+        size: sizeText(bytes),
+        name: files.length === 1 ? files[0].name : `${name}.zip`,
+        link,
+        missing: wanted.length - files.length,
+        instructions: `Give the person this download as a markdown link: [Download ${files.length === 1 ? files[0].name : `${name}.zip`} (${files.length === 1 ? "1 file" : `${files.length} files`}, ${sizeText(bytes)})](${link})`,
+      }
+    },
+    summarize: (result) => ({ title: `Zip ready · ${result.files} ${result.files === 1 ? "file" : "files"}` }),
   },
   {
     name: "web_search",

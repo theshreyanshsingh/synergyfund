@@ -26,6 +26,8 @@ export function ChatMessages({ messages, people, me, isAdmin, online, unreadAfte
         lastAt = at
         return (
           <Fragment key={message.id}>
+            {/* The line stays with the messages; only the date pill sticks to the top while scrolling. */}
+            {newDay && <div className="chat-day-rule" aria-hidden="true" />}
             {newDay && <div className="chat-day"><span>{dayLabel(message.createdAt)}</span></div>}
             {unread && <div className="chat-unread-line"><span>New</span></div>}
             <ChatMessage

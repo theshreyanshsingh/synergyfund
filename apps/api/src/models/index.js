@@ -27,6 +27,8 @@ export const User = register(
       overviewOrder: [String],
       // The call ringtone and message chime this person picked in Settings.
       sounds: { ringtone: String, chime: String },
+      // The AI teammate's account: it posts in property chats, never signs in, and gets no notifications.
+      bot: { type: Boolean, default: false },
     },
     { timestamps: true },
   ),
@@ -92,6 +94,14 @@ export const Property = register(
           description: String,
           budget: Number,
           status: { type: String, default: "Not started" },
+          // Who set the status last ("Sam Rivera (AI)" or a person), when, and why.
+          statusBy: String,
+          statusAt: Date,
+          statusNote: String,
+          // When it is expected to be done (YYYY-MM-DD), and what that is based on.
+          forecastDate: String,
+          forecastNote: String,
+          forecastBy: String,
         },
       ],
       assignedUserIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
@@ -387,6 +397,49 @@ export const PhotoSet = register(
   ),
 )
 
+// Something on the team calendar: a meeting, a site visit, a closing. Times are the team's local clock (HH:MM).
+export const CalendarEvent = register(
+  "CalendarEvent",
+  new Schema(
+    {
+      title: { type: String, required: true },
+      date: { type: String, required: true },
+      allDay: { type: Boolean, default: false },
+      start: String,
+      end: String,
+      location: { type: String, default: "" },
+      description: { type: String, default: "" },
+      propertyId: { type: Schema.Types.ObjectId, ref: "Property" },
+      guestIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+      createdByName: String,
+    },
+    { timestamps: true },
+  )
+    .index({ createdBy: 1, date: 1 })
+    .index({ guestIds: 1, date: 1 }),
+)
+
+// What the AI teammate knows about one property: what it has read, its running notes, and when it last followed up
+// or raised a draw, so it never repeats itself.
+export const SiteWatch = register(
+  "SiteWatch",
+  new Schema(
+    {
+      propertyId: { type: Schema.Types.ObjectId, ref: "Property", required: true, unique: true },
+      lastReviewedAt: Date,
+      memory: { type: String, default: "" },
+      lastFollowUpAt: Date,
+      followUpsUnanswered: { type: Number, default: 0 },
+      escalatedAt: Date,
+      lastDrawAlertAt: Date,
+      drawTaskId: { type: Schema.Types.ObjectId, ref: "Task" },
+      lastReplyAt: Date,
+    },
+    { timestamps: true },
+  ),
+)
+
 export const PhotoReport = register(
   "PhotoReport",
   new Schema(
@@ -512,6 +565,12 @@ export const AgentSetting = register(
       key: { type: String, required: true, unique: true, default: "org" },
       taskModel: String,
       decisionModel: String,
+      // The AI teammate in property chats.
+      teammateOn: { type: Boolean, default: false },
+      teammateName: String,
+      teammateUserId: { type: Schema.Types.ObjectId, ref: "User" },
+      followUpDays: Number,
+      drawEmail: String,
       updatedBy: String,
     },
     { timestamps: true },

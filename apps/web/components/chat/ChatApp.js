@@ -594,15 +594,15 @@ function ChatNav({ channels, people, peopleList, me, online, activeId, status, f
         {filter && <button type="submit" className="chat-nav-search-go">Search</button>}
       </form>
       <div className="chat-nav-list">
+        {section("channels", "Channels", rooms, (channel) => row(channel, <Icon name={channel.private ? "lock" : "hash"} size={15} />), canCreate && (
+          <button type="button" className="chat-nav-add" aria-label="Create a channel" title="Create a channel" onClick={onCreate}><Icon name="plus" size={14} /></button>
+        ))}
         {section("direct", "Direct messages", directs, (channel) => {
           const others = channel.memberIds.filter((id) => id !== me)
           const first = others[0] || me
           return row(channel, others.length > 1 ? <span className="chat-avatar xs is-group">{others.length}</span> : <Avatar name={nameOf(people, first)} online={online.has(first)} size="xs" />)
         }, (
           <button type="button" className="chat-nav-add" aria-label="New message" title="New message" onClick={onDirect}><Icon name="plus" size={14} /></button>
-        ))}
-        {section("channels", "Channels", rooms, (channel) => row(channel, <Icon name={channel.private ? "lock" : "hash"} size={15} />), canCreate && (
-          <button type="button" className="chat-nav-add" aria-label="Create a channel" title="Create a channel" onClick={onCreate}><Icon name="plus" size={14} /></button>
         ))}
         {section("properties", "Properties", properties, (channel) => row(channel, <Icon name="building" size={15} />))}
         {suggestions.length > 0 && (
@@ -999,7 +999,8 @@ function DetailsPanel({ channel, people, peopleList, me, isAdmin, online, member
 function PeoplePicker({ people, online, picked, onChange }) {
   const [query, setQuery] = useState("")
   const words = query.toLowerCase().split(/\s+/).filter(Boolean)
-  const shown = people.filter((person) => words.every((word) => `${person.name} ${person.email}`.toLowerCase().includes(word))).slice(0, 50)
+  // The AI teammate works in property chats only; it is not someone to message directly or add to a channel.
+  const shown = people.filter((person) => !person.bot && words.every((word) => `${person.name} ${person.email}`.toLowerCase().includes(word))).slice(0, 50)
   return (
     <div className="chat-picker">
       <input value={query} placeholder="Search people" aria-label="Search people" onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault() }} />

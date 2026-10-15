@@ -240,7 +240,7 @@ function NewCall({ boot, me, people, onClose, onStart }) {
   const [error, setError] = useState("")
   const [pending, setPending] = useState(false)
   const needle = query.trim().toLowerCase()
-  const everyone = (boot?.people || []).filter((person) => person.id !== me && (!needle || person.name.toLowerCase().includes(needle) || (person.email || "").toLowerCase().includes(needle)))
+  const everyone = (boot?.people || []).filter((person) => person.id !== me && !person.bot && (!needle || person.name.toLowerCase().includes(needle) || (person.email || "").toLowerCase().includes(needle)))
   const rooms = (boot?.channels || []).filter((channel) => channel.kind !== "direct" && (!needle || channelTitle(channel, people, me).toLowerCase().includes(needle)))
 
   async function callPeople(media) {

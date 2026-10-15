@@ -24,7 +24,8 @@ export function assignedTo(user, property) {
 
 function inPropertyRoom(user, property) {
   if (!property || !readsProperties(user)) return false
-  return user.role === "admin" || assignedTo(user, property)
+  // The AI teammate works in every property's chat.
+  return user.role === "admin" || Boolean(user.bot) || assignedTo(user, property)
 }
 
 function isMember(channel, user) {
@@ -113,10 +114,10 @@ export async function visibleChannels(user) {
 
 export async function audience(channel, property) {
   if (channel.kind === "direct" || channel.private) {
-    const members = await User.find({ _id: { $in: channel.memberIds || [] } }).select("_id name email role extraPermissions deniedPermissions createdAt")
+    const members = await User.find({ _id: { $in: channel.memberIds || [] } }).select("_id name email role extraPermissions deniedPermissions createdAt bot")
     return members.filter(usesChat)
   }
-  const people = await User.find().select("_id name email role extraPermissions deniedPermissions createdAt")
+  const people = await User.find().select("_id name email role extraPermissions deniedPermissions createdAt bot")
   const resolved = property === undefined ? await propertyFor(channel) : property
   return people.filter((person) => canSee(person, channel, resolved))
 }

@@ -13,6 +13,7 @@ export function publicUser(user) {
     permissions: permissionsFor(user),
     propertyIds: (user.propertyIds || []).map(String),
     sounds: cleanSounds(user.sounds),
+    bot: Boolean(user.bot),
   }
 }
 
@@ -37,6 +38,8 @@ export function presentProperty(property, user) {
         title: line.title,
         description: line.description || "",
         status: line.status || "Not started",
+        statusBy: line.statusBy || "",
+        forecastDate: line.forecastDate || "",
       })),
     }
   }

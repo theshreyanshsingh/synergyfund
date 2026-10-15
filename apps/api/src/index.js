@@ -24,6 +24,8 @@ import { trackActivity } from "./middleware/activity.js"
 import { seedIfEmpty } from "./services/seed.js"
 import { rememberAppOrigin } from "./services/appUrl.js"
 import { recoverNotes } from "./services/callNotes.js"
+import { startTeammate } from "./services/siteAgent.js"
+import { teammateRouter } from "./routes/teammate.js"
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../..")
 dotenv.config({ path: path.join(repoRoot, ".env"), quiet: true })
@@ -53,6 +55,7 @@ api.use("/push", pushRouter)
 api.use("/agent", agentRouter)
 api.use("/chat", chatRouter)
 api.use("/calls", callsRouter)
+api.use("/teammate", teammateRouter)
 api.use(workspaceRouter)
 app.use(api)
 
@@ -70,6 +73,7 @@ await mongoose.connect(process.env.MONGODB_URI)
 await seedIfEmpty()
 await closeStaleCalls()
 await recoverNotes().catch((error) => console.error("Call notes recovery failed", error))
+await startTeammate().catch((error) => console.error("AI teammate failed to start", error))
 const server = http.createServer(app)
 attachChatSockets(server)
 server.listen(port, () => {

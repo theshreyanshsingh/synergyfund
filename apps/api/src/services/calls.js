@@ -567,7 +567,8 @@ export function registerCallHandlers(socket) {
     let state = null
     try {
       const people = await audience(found.channel, found.property)
-      const others = people.filter((person) => String(person._id) !== me)
+      // The AI teammate is in property chats but never in calls.
+      const others = people.filter((person) => String(person._id) !== me && !person.bot)
       if (!others.length) return reply({ error: "There is no one else in this conversation to call." })
       const ringing = found.channel.kind === "direct" || found.channel.private || others.length <= RING_LIMIT
       const invitedIds = ringing ? others.map((person) => String(person._id)) : []

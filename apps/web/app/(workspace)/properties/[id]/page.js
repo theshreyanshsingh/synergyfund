@@ -3,7 +3,7 @@
 import { use, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { PROPERTY_LABELS, STAGES, STRATEGIES, can } from "@synergifund/shared"
+import { LINE_STATUSES, PROPERTY_LABELS, STAGES, STRATEGIES, can } from "@synergifund/shared"
 import { FormSheet } from "../../../../components/ui/FormSheet"
 import { DrawEditor } from "../../../../components/draws/DrawEditor"
 import { FinancingSection } from "../../../../components/properties/FinancingSection"
@@ -18,6 +18,7 @@ import { StatusPill } from "../../../../components/ui/StatusPill"
 import { PageSpinner } from "../../../../components/ui/Spinner"
 import { DetailFrame } from "../../../../components/ui/DetailFrame"
 import { CameraCapture } from "../../../../components/photos/CameraCapture"
+import { Icon } from "../../../../components/ui/Icon"
 
 export default function PropertyDetailPage({ params }) {
   const { id } = use(params)
@@ -419,6 +420,7 @@ export default function PropertyDetailPage({ params }) {
               {canDraws && <button type="button" className="primary" onClick={() => setAddingDraw(true)}>Add draw</button>}
             </div>
           </div>
+          {session?.user?.role === "admin" && <TeammateActions propertyId={id} onDone={() => detail.reload()} />}
           <ScopeOfWork
             scopeLines={property.scopeLines || []}
             draws={draws?.items || []}
@@ -427,6 +429,7 @@ export default function PropertyDetailPage({ params }) {
             showBudget
             canPost={canPost}
             canRequest={canRequest}
+            canProgress={Boolean(canDraws)}
             propertyId={id}
             onSaved={() => detail.reload()}
           />
@@ -678,7 +681,7 @@ function scopeRows(scopeLines, draws, costs, requests) {
   const row = (line) => {
     const key = lineKey(line.title)
     if (byKey.has(key)) return byKey.get(key)
-    const item = { key, id: String(line._id || line.id || ""), title: line.title, description: line.description || "", status: line.status || "", budget: line.budget ?? null, released: 0, requested: 0, draws: [], costs: [], requests: [] }
+    const item = { key, id: String(line._id || line.id || ""), title: line.title, description: line.description || "", status: line.status || "", statusBy: line.statusBy || "", statusAt: line.statusAt || null, statusNote: line.statusNote || "", forecastDate: line.forecastDate || "", forecastNote: line.forecastNote || "", budget: line.budget ?? null, released: 0, requested: 0, draws: [], costs: [], requests: [] }
     byKey.set(key, item)
     rows.push(item)
     return item
@@ -716,7 +719,7 @@ function scopeRows(scopeLines, draws, costs, requests) {
   return rows
 }
 
-function ScopeOfWork({ scopeLines, draws, costs, requests, showBudget, showMoney = true, canPost, canRequest, propertyId, onSaved }) {
+function ScopeOfWork({ scopeLines, draws, costs, requests, showBudget, showMoney = true, canPost, canRequest, canProgress = false, propertyId, onSaved }) {
   const rows = scopeRows(scopeLines, draws, costs, requests)
   const released = rows.reduce((sum, item) => sum + item.released, 0)
   const requested = rows.reduce((sum, item) => sum + item.requested, 0)
@@ -729,13 +732,110 @@ function ScopeOfWork({ scopeLines, draws, costs, requests, showBudget, showMoney
       </div>
       {!rows.length && <p className="property-missing">No line items on this house yet.</p>}
       {rows.map((item) => (
-        <ScopeLine key={item.key} item={item} showBudget={showBudget} showMoney={showMoney} canPost={canPost} canRequest={canRequest} propertyId={propertyId} onSaved={onSaved} />
+        <ScopeLine key={item.key} item={item} showBudget={showBudget} showMoney={showMoney} canPost={canPost} canRequest={canRequest} canProgress={canProgress} propertyId={propertyId} onSaved={onSaved} />
       ))}
     </div>
   )
 }
 
-function ScopeLine({ item, showBudget, showMoney, canPost, canRequest, propertyId, onSaved }) {
+// Admins: have the AI teammate read this house's chat now, or check in with its contractor now.
+function TeammateActions({ propertyId, onDone }) {
+  const teammate = useApi("/teammate")
+  const [busy, setBusy] = useState("")
+  const [note, setNote] = useState("")
+  if (!teammate.data?.teammate?.on) return null
+  const name = teammate.data.teammate.name.split(" ")[0]
+  async function run(kind) {
+    setBusy(kind)
+    setNote("")
+    try {
+      if (kind === "review") {
+        const data = await api(`/teammate/review/${propertyId}`, { method: "POST", body: {} })
+        const result = data.result || {}
+        setNote(result.skipped ? `${name} found nothing new to read.` : [result.changes?.length ? `Updated: ${result.changes.join("; ")}` : "No line items needed changing.", result.draw ? "A draw request was raised." : ""].filter(Boolean).join(" "))
+        onDone()
+      } else {
+        const data = await api(`/teammate/check-in/${propertyId}`, { method: "POST", body: {} })
+        setNote(`${name} checked in: “${data.sent?.[0]?.text || ""}”`)
+      }
+    } catch (err) {
+      setNote(err.message)
+    } finally {
+      setBusy("")
+    }
+  }
+  return (
+    <div className="teammate-actions">
+      <span><Icon name="spark" size={14} /> {teammate.data.teammate.name} (AI teammate)</span>
+      <button type="button" className="tool" disabled={Boolean(busy)} onClick={() => run("review")}>{busy === "review" ? "Reading the chat…" : "Read the chat now"}</button>
+      <button type="button" className="tool" disabled={Boolean(busy)} onClick={() => run("check-in")}>{busy === "check-in" ? "Checking in…" : "Check in with the crew"}</button>
+      {note && <p>{note}</p>}
+    </div>
+  )
+}
+
+// "Oct 30" (with the year when it is not this year).
+function shortDay(value) {
+  const [year, month, day] = String(value || "").split("-").map(Number)
+  if (!year || !month || !day) return ""
+  return new Date(year, month - 1, day).toLocaleDateString("en-US", { month: "short", day: "numeric", ...(year !== new Date().getFullYear() ? { year: "numeric" } : {}) })
+}
+
+// Where a line item stands and when it should be done. The AI teammate keeps these up to date from the property
+// chat; someone with draw access can set them by hand, which the AI then leaves alone for a week.
+function LineProgress({ item, canProgress, propertyId, onSaved }) {
+  const [status, setStatus] = useState(item.status || "Not started")
+  const [expected, setExpected] = useState(item.forecastDate || "")
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState("")
+  const changed = status !== (item.status || "Not started") || expected !== (item.forecastDate || "")
+  async function save() {
+    setPending(true)
+    setError("")
+    try {
+      await api(`/draws/scope/${propertyId}/lines/${item.id}`, { method: "PATCH", body: { status, forecastDate: status === "Complete" ? "" : expected } })
+      onSaved()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setPending(false)
+    }
+  }
+  const byAi = /\(AI\)$/.test(item.statusBy || "")
+  return (
+    <div className="line-progress">
+      {item.statusBy && (
+        <p className="line-progress-why">
+          {byAi && <span className="line-ai" aria-hidden="true"><Icon name="spark" size={12} /></span>}
+          {item.status} · set by {item.statusBy}{item.statusAt ? ` on ${new Date(item.statusAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}{item.statusNote && item.statusNote !== "Set by hand" ? `: ${item.statusNote}` : ""}
+        </p>
+      )}
+      {item.forecastDate && item.forecastNote && item.forecastNote !== "Set by hand" && item.forecastNote !== item.statusNote && <p className="line-progress-why">Expected {shortDay(item.forecastDate)}: {item.forecastNote}</p>}
+      {canProgress && (
+        <div className="line-progress-edit">
+          <label><span>Status</span>
+            <select value={status} onChange={(event) => setStatus(event.target.value)}>
+              {LINE_STATUSES.map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </label>
+          {status !== "Complete" && (
+            <label><span>Expected done</span><input type="date" value={expected} onChange={(event) => setExpected(event.target.value)} /></label>
+          )}
+          <button type="button" className="tool" disabled={!changed || pending} onClick={save}>{pending ? "Saving…" : "Save"}</button>
+        </div>
+      )}
+      {error && <p className="banner">{error}</p>}
+    </div>
+  )
+}
+
+function LineStatus({ status }) {
+  const value = status || "Not started"
+  const tone = value === "Complete" ? "is-done" : value === "In progress" ? "is-active" : "is-idle"
+  return <span className={`line-status ${tone}`}>{value}</span>
+}
+
+function ScopeLine({ item, showBudget, showMoney, canPost, canRequest, canProgress = false, propertyId, onSaved }) {
   const [open, setOpen] = useState(false)
   const [adding, setAdding] = useState(false)
   const [proofs, setProofs] = useState([])
@@ -776,8 +876,8 @@ function ScopeLine({ item, showBudget, showMoney, canPost, canRequest, propertyI
     <article className={`scope-line${open ? " is-open" : ""}${item.other ? " is-other" : ""}`}>
       <button type="button" className={showMoney ? "scope-line-head" : "scope-line-head no-money"} aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <span className="scope-line-name">
-          <b>{item.title}</b>
-          <small>{[item.status && !item.other ? item.status : "", item.description].filter(Boolean).join(" · ") || "Tap to see costs"}</small>
+          <span className="scope-line-title"><b>{item.title}</b>{!item.other && <LineStatus status={item.status} />}</span>
+          <small>{[item.forecastDate && item.status !== "Complete" ? `Expected ${shortDay(item.forecastDate)}` : "", item.description].filter(Boolean).join(" · ") || "Tap to see costs"}</small>
         </span>
         {showMoney && (
           <span className="scope-line-money">
@@ -789,6 +889,7 @@ function ScopeLine({ item, showBudget, showMoney, canPost, canRequest, propertyI
       </button>
       {open && (
         <div className="scope-line-body">
+          {!item.other && item.id && (item.statusBy || canProgress) && <LineProgress item={item} canProgress={canProgress} propertyId={propertyId} onSaved={onSaved} />}
           <dl className="scope-line-facts">
             {showBudget && item.budget != null && <div><dt>Budget</dt><dd>{money(item.budget)}</dd></div>}
             {showMoney && <div><dt>Released</dt><dd>{money(item.released)}</dd></div>}

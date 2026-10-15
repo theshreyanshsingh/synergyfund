@@ -7,6 +7,7 @@ import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
 import { AppOptions } from "../../../components/pwa/AppOptions"
 import { AgentSettings } from "../../../components/agent/AgentSettings"
+import { TeammateSettings } from "../../../components/agent/TeammateSettings"
 import { PasswordInput } from "../../../components/ui/PasswordInput"
 
 const roleLabel = Object.fromEntries(ROLES.map((role) => [role.id, role.label]))
@@ -100,6 +101,7 @@ export default function SettingsPage() {
         )}
         {tab === "app" && <AppOptions />}
         {tab === "agent" && admin && <AgentSettings />}
+        {tab === "agent" && admin && <TeammateSettings />}
       </div>
     </div>
   )
