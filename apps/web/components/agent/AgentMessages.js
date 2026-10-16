@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { Icon } from "../ui/Icon"
@@ -72,6 +72,25 @@ const markdown = {
   hr: tag("hr", "agent-md-hr"),
 }
 
+const DOWNLOAD_LINK = /\[([^\]\n]+)\]\((\/api\/documents\/[^)\s]+)\)/g
+
+// Downloads the agent made (a zip or a file) are shown as buttons at the end of its answer, wherever it wrote them.
+// A line that is only the link goes; in a sentence the link's words stay.
+export function splitDownloads(content) {
+  const downloads = []
+  const kept = []
+  for (const line of String(content || "").split("\n")) {
+    const found = [...line.matchAll(DOWNLOAD_LINK)]
+    if (!found.length) {
+      kept.push(line)
+      continue
+    }
+    for (const match of found) if (!downloads.some((item) => item.href === match[2])) downloads.push({ text: match[1], href: match[2] })
+    if (line.replace(DOWNLOAD_LINK, "").replace(/[\s*_`>•:.\-]/g, "")) kept.push(line.replace(DOWNLOAD_LINK, (_, text) => text.replace(/^download\s+/i, "")))
+  }
+  return { text: kept.join("\n").replace(/\n{3,}/g, "\n\n").trim(), downloads }
+}
+
 function hastText(node) {
   if (!node) return ""
   if (node.type === "text") return node.value || ""
@@ -130,19 +149,93 @@ function GrowingText({ value, onChange, label }) {
   return <textarea ref={ref} className="agent-draft-text" value={value} onChange={(event) => onChange(event.target.value)} aria-label={label} rows={4} spellCheck />
 }
 
-function composeLinks({ to, cc, subject, body }) {
-  const enc = encodeURIComponent
-  const list = (value) => value.split(/[,;]/).map((item) => item.trim()).filter(Boolean)
-  const mailto = new URLSearchParams()
-  if (cc) mailto.set("cc", list(cc).join(","))
-  if (subject) mailto.set("subject", subject)
-  if (body) mailto.set("body", body)
-  return {
-    gmail: `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(list(to).join(","))}${cc ? `&cc=${enc(list(cc).join(","))}` : ""}&su=${enc(subject)}&body=${enc(body)}`,
-    outlook: `https://outlook.office.com/mail/deeplink/compose?to=${enc(list(to).join(","))}${cc ? `&cc=${enc(list(cc).join(","))}` : ""}&subject=${enc(subject)}&body=${enc(body)}`,
-    // URLSearchParams writes spaces as "+", which mail apps show literally; mailto wants %20.
-    app: `mailto:${list(to).map(enc).join(",")}?${mailto.toString().replace(/\+/g, "%20")}`,
+// "a@x.com; b@y.com" → "a@x.com,b@y.com", the form every mail service takes.
+function addresses(value) {
+  return String(value || "").split(/[,;]/).map((item) => item.trim()).filter(Boolean).join(",")
+}
+
+function mailtoLink({ to, cc, subject, body }) {
+  const query = new URLSearchParams()
+  if (cc) query.set("cc", cc)
+  if (subject) query.set("subject", subject)
+  if (body) query.set("body", body)
+  // URLSearchParams writes spaces as "+", which mail apps show literally; mailto wants %20.
+  return `mailto:${to.split(",").filter(Boolean).map(encodeURIComponent).join(",")}?${query.toString().replace(/\+/g, "%20")}`
+}
+
+const MAIL_KEY = "synergifund-mail-app"
+
+// Where a draft can be opened, filled in. Nothing is sent from here: the person presses Send in their mail.
+// Zoho Mail (the company's own mail) and Yahoo Mail may leave the message empty, so the message is copied too.
+const MAIL_APPS = [
+  {
+    id: "zoho",
+    label: "Zoho Mail",
+    copies: true,
+    href: (draft) => `https://mail.zoho.com/mail/compose.do?extsrc=mailto&mode=compose&tp=zb&ct=${encodeURIComponent(mailtoLink(draft))}`,
+  },
+  {
+    id: "gmail",
+    label: "Gmail",
+    href: ({ to, cc, subject, body }) => `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}${cc ? `&cc=${encodeURIComponent(cc)}` : ""}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+  },
+  {
+    id: "outlook",
+    label: "Outlook",
+    href: ({ to, cc, subject, body }) => `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(to)}${cc ? `&cc=${encodeURIComponent(cc)}` : ""}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+  },
+  {
+    id: "yahoo",
+    label: "Yahoo Mail",
+    copies: true,
+    href: ({ to, cc, subject, body }) => `https://compose.mail.yahoo.com/?to=${encodeURIComponent(to)}${cc ? `&cc=${encodeURIComponent(cc)}` : ""}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+  },
+  { id: "app", label: "Email App", sameTab: true, href: mailtoLink },
+]
+
+function sendLabel(app) {
+  return app.id === "app" ? "Open In Email App" : `Send Via ${app.label}`
+}
+
+function MailMark({ id }) {
+  if (id === "gmail") {
+    return (
+      <svg className="mail-mark" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 7.2V18a1.5 1.5 0 0 0 1.5 1.5H7V10.4z" fill="#4285F4" />
+        <path d="M17 19.5h2.5A1.5 1.5 0 0 0 21 18V7.2l-4 3.2z" fill="#34A853" />
+        <path d="M17 6.2v4.2l4-3.2V6.4c0-1.5-1.7-2.3-2.9-1.4z" fill="#FBBC04" />
+        <path d="M7 10.4V6.2l5 3.8 5-3.8v4.2l-5 3.8z" fill="#EA4335" />
+        <path d="M3 6.4v.8l4 3.2V6.2L5.9 5C4.7 4.1 3 4.9 3 6.4z" fill="#C5221F" />
+      </svg>
+    )
   }
+  if (id === "outlook") {
+    return (
+      <svg className="mail-mark" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2" y="3" width="20" height="18" rx="3" fill="#0A64C8" />
+        <ellipse cx="12" cy="12" rx="4.6" ry="5.4" fill="none" stroke="#fff" strokeWidth="2.4" />
+      </svg>
+    )
+  }
+  if (id === "zoho") {
+    return (
+      <svg className="mail-mark" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="1" y="7" width="5.2" height="10" rx="1.2" fill="#E42527" />
+        <rect x="6.6" y="7" width="5.2" height="10" rx="1.2" fill="#089949" />
+        <rect x="12.2" y="7" width="5.2" height="10" rx="1.2" fill="#226DB4" />
+        <rect x="17.8" y="7" width="5.2" height="10" rx="1.2" fill="#F9B21D" />
+      </svg>
+    )
+  }
+  if (id === "yahoo") {
+    return (
+      <svg className="mail-mark" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2" y="3" width="20" height="18" rx="3" fill="#6001D2" />
+        <path d="M7 8l3.4 5.2V17h2.2v-3.8L16 8h-2.4l-2.1 3.4L9.4 8z" fill="#fff" />
+      </svg>
+    )
+  }
+  return <Icon name="mail" size={16} />
 }
 
 function withHeaders({ to, cc, subject, body }) {
@@ -157,8 +250,17 @@ function EmailDraft({ text }) {
   const [subject, setSubject] = useState(parsed.subject)
   const [body, setBody] = useState(parsed.body)
   const [menu, setMenu] = useState(false)
+  const [choice, setChoice] = useState("zoho")
+  const [notice, setNotice] = useState("")
   const [copied, copy] = useCopy()
   const box = useRef(null)
+  // The main button is the mail this person used last; Zoho Mail (the company's mail) to start with.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(MAIL_KEY)
+      if (MAIL_APPS.some((app) => app.id === saved)) setChoice(saved)
+    } catch {}
+  }, [])
   useEffect(() => {
     if (!menu) return undefined
     function away(event) {
@@ -174,11 +276,28 @@ function EmailDraft({ text }) {
       document.removeEventListener("keydown", onKey)
     }
   }, [menu])
-  const links = composeLinks({ to, cc, subject, body })
+  const draft = { to: addresses(to), cc: addresses(cc), subject, body }
+  const main = MAIL_APPS.find((app) => app.id === choice) || MAIL_APPS[0]
+  function opened(app) {
+    setMenu(false)
+    setChoice(app.id)
+    try {
+      localStorage.setItem(MAIL_KEY, app.id)
+    } catch {}
+    if (app.copies) {
+      copy(body)
+      setNotice(`The message is copied too. If ${app.label} opens without it, paste it in.`)
+    } else setNotice("")
+  }
+  const link = (app, props) => (
+    <a {...props} href={app.href(draft)} {...(app.sameTab ? {} : { target: "_blank", rel: "noreferrer" })} onClick={() => opened(app)}>
+      <MailMark id={app.id} /> {sendLabel(app)}
+    </a>
+  )
   return (
-    <section className="agent-draft agent-email" aria-label="Email draft">
+    <section className="agent-draft agent-email" aria-label="Email Draft">
       <header className="agent-draft-head">
-        <span><Icon name="mail" size={15} /> Email draft</span>
+        <span><Icon name="mail" size={15} /> Email Draft</span>
         <small>Edit anything before you send it.</small>
       </header>
       <label className="agent-email-field">
@@ -196,22 +315,22 @@ function EmailDraft({ text }) {
         <input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Subject" />
       </label>
       <GrowingText value={body} onChange={setBody} label="Email body" />
+      {notice && <p className="agent-draft-notice">{notice}</p>}
       <footer className="agent-draft-foot">
         <button type="button" className="agent-draft-copy" onClick={() => copy(body)}>
           <Icon name={copied ? "tick" : "copy"} size={14} /> {copied ? "Copied" : "Copy"}
         </button>
         <div className="agent-send" ref={box}>
-          <a className="agent-send-main" href={links.gmail} target="_blank" rel="noreferrer" title="Opens a Gmail draft with this filled in. Nothing is sent until you press Send there.">
-            <Icon name="mail" size={14} /> Send via Gmail
-          </a>
+          {link(main, { className: "agent-send-main", title: `Opens a new message in ${main.label} with this filled in. Nothing is sent until you press Send there.` })}
           <button type="button" className="agent-send-more" aria-label="Other ways to send" aria-expanded={menu} onClick={() => setMenu((open) => !open)}>
             <Icon name="chevron" size={12} />
           </button>
           {menu && (
             <div className="agent-send-menu" role="menu">
-              <a role="menuitem" href={links.outlook} target="_blank" rel="noreferrer" onClick={() => setMenu(false)}>Send via Outlook</a>
-              <a role="menuitem" href={links.app} onClick={() => setMenu(false)}>Open in my email app</a>
-              <button type="button" role="menuitem" onClick={() => { copy(withHeaders({ to, cc, subject, body })); setMenu(false) }}>Copy with To and Subject</button>
+              {MAIL_APPS.filter((app) => app.id !== main.id).map((app) => <span key={app.id} role="none">{link(app, { role: "menuitem" })}</span>)}
+              <button type="button" role="menuitem" onClick={() => { copy(withHeaders(draft)); setMenu(false); setNotice("") }}>
+                <Icon name="copy" size={16} /> Copy With To And Subject
+              </button>
             </div>
           )}
         </div>
@@ -236,6 +355,22 @@ function TextDraft({ text }) {
         </button>
       </footer>
     </section>
+  )
+}
+
+function AgentAnswer({ content }) {
+  const { text, downloads } = useMemo(() => splitDownloads(content), [content])
+  return (
+    <div className="agent-md">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdown}>{text}</ReactMarkdown>
+      {downloads.length > 0 && (
+        <div className="agent-downloads">
+          {downloads.map((item) => (
+            <a key={item.href} className="agent-md-a agent-download" href={item.href}><Icon name="download" size={15} />{item.text}</a>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -448,9 +583,7 @@ export function AgentMessages({ rows, streaming, emptyHint }) {
                   {row.error ? (
                     <p className="agent-error">{row.content}</p>
                   ) : (
-                    <div className="agent-md">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdown}>{row.content}</ReactMarkdown>
-                    </div>
+                    <AgentAnswer content={row.content} />
                   )}
                 </div>
               ))}

@@ -30,9 +30,15 @@ export function AppShell({ children }) {
     setMenuOpen(false)
   }, [pathname])
 
+  // On a phone the contractor's links scroll sideways; keep the current page's link in view.
   useEffect(() => {
     if (session?.user?.role !== "contractor") return
-    const allowed = pathname === "/properties" || pathname.startsWith("/properties/") || pathname === "/expenses" || pathname === "/tasks" || pathname === "/settings" || pathname === "/chat" || pathname === "/calls" || pathname.startsWith("/calls/")
+    document.querySelector(".contractor-link.is-on")?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }, [pathname, session?.user?.role])
+
+  useEffect(() => {
+    if (session?.user?.role !== "contractor") return
+    const allowed = pathname === "/properties" || pathname.startsWith("/properties/") || pathname === "/expenses" || pathname === "/tasks" || pathname === "/settings" || pathname === "/chat" || pathname === "/messages" || pathname === "/calls" || pathname.startsWith("/calls/")
     if (!allowed) router.replace("/properties")
   }, [pathname, session, router])
 
@@ -69,7 +75,8 @@ export function AppShell({ children }) {
             <Link href="/expenses" className={pathname === "/expenses" ? "contractor-link is-on" : "contractor-link"}>Expenses</Link>
             {/* Tasks assigned to them, which their "Task assigned" emails open. */}
             {can(session.user, PERMISSIONS.tasksEdit) && <Link href="/tasks" className={pathname === "/tasks" ? "contractor-link is-on" : "contractor-link"}>To-do</Link>}
-            {can(session.user, PERMISSIONS.chatUse) && <Link href="/chat" className={pathname === "/chat" ? "contractor-link is-on" : "contractor-link"}>Chat</Link>}
+            {can(session.user, PERMISSIONS.chatUse) && <Link href="/chat" className={pathname === "/chat" ? "contractor-link is-on" : "contractor-link"}>Channels</Link>}
+            {can(session.user, PERMISSIONS.chatUse) && <Link href="/messages" className={pathname === "/messages" ? "contractor-link is-on" : "contractor-link"}>Messages</Link>}
             {can(session.user, PERMISSIONS.chatUse) && <Link href="/calls" className={pathname === "/calls" ? "contractor-link is-on" : "contractor-link"}>Calls</Link>}
             <Link href="/settings" className={pathname === "/settings" ? "contractor-link is-on" : "contractor-link"}>Settings</Link>
           </nav>

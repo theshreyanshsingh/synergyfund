@@ -90,7 +90,7 @@ function ThemeButton() {
 
 function SidebarNav({ primary, sections, onNavigate, chat, me }) {
   const pathname = usePathname()
-  const [counts, setCounts] = useState({ notifications: 0, chat: 0 })
+  const [counts, setCounts] = useState({ notifications: 0, channels: 0, direct: 0 })
   const timer = useRef(null)
   useEffect(() => {
     api("/counts").then(setCounts).catch(() => {})
@@ -103,7 +103,7 @@ function SidebarNav({ primary, sections, onNavigate, chat, me }) {
   function refreshChat() {
     clearTimeout(timer.current)
     timer.current = setTimeout(() => {
-      api("/chat/unread").then((data) => setCounts((current) => ({ ...current, chat: data.mentions }))).catch(() => {})
+      api("/chat/unread").then((data) => setCounts((current) => ({ ...current, channels: data.channels, direct: data.direct }))).catch(() => {})
     }, 1200)
   }
   function onMessage({ message, channel }) {

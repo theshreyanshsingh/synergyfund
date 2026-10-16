@@ -194,10 +194,15 @@ export async function unreadFor(user, entries) {
   return counts
 }
 
-export async function unreadTotal(user) {
+// What the menu badges show: mentions in channels and property rooms, and unread direct messages.
+export async function unreadSplit(user) {
   const entries = await visibleChannels(user)
   const counts = await unreadFor(user, entries)
-  return counts.reduce((total, count) => total + count.mentions, 0)
+  const split = { channels: 0, direct: 0 }
+  counts.forEach((count, index) => {
+    split[entries[index].channel.kind === "direct" ? "direct" : "channels"] += count.mentions
+  })
+  return split
 }
 
 export async function removePropertyRoom(property) {

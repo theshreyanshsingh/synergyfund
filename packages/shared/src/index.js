@@ -1,10 +1,10 @@
 export const ROLES = [
   { id: "admin", label: "Admin" },
   { id: "contractor", label: "Contractor" },
-  { id: "finance", label: "Finance reporter" },
+  { id: "finance", label: "Finance Reporter" },
   { id: "member", label: "Member" },
   { id: "developer", label: "Developer" },
-  { id: "investor", label: "Investor / auditor" },
+  { id: "investor", label: "Investor / Auditor" },
   { id: "lender", label: "Lender" },
 ]
 
@@ -439,26 +439,27 @@ export function initials(name = "") {
 
 export const NAV = [
   { href: "/knowledge", label: "Agent", icon: "spark", permission: PERMISSIONS.agentAsk, badge: "NEW", zone: "primary" },
-  { href: "/chat", label: "Chat", icon: "chat", permission: PERMISSIONS.chatUse, zone: "primary", countKey: "chat" },
+  { href: "/chat", label: "Channels", icon: "hash", permission: PERMISSIONS.chatUse, zone: "primary", countKey: "channels" },
+  { href: "/messages", label: "Direct Messages", icon: "chat", permission: PERMISSIONS.chatUse, zone: "primary", countKey: "direct" },
   { href: "/calls", label: "Calls", icon: "phone", permission: PERMISSIONS.chatUse, zone: "primary" },
   { href: "/notifications", label: "Notifications", icon: "bell", permission: PERMISSIONS.activityRead, zone: "primary", countKey: "notifications" },
   { href: "/draws", label: "Draws", icon: "layers", permission: PERMISSIONS.drawsRead, zone: "primary" },
-  { href: "/overview", label: "Overview", icon: "grid", permission: PERMISSIONS.propertiesRead, section: "Plan your day" },
-  { href: "/tasks", label: "To-do list", icon: "check", permission: PERMISSIONS.propertiesRead, section: "Plan your day" },
-  { href: "/payments", label: "Upcoming payments", icon: "card", permission: PERMISSIONS.expensesRead, section: "Plan your day" },
-  { href: "/calendar", label: "Calendar", icon: "calendar", permission: PERMISSIONS.expensesRead, section: "Plan your day" },
+  { href: "/overview", label: "Overview", icon: "grid", permission: PERMISSIONS.propertiesRead, section: "Plan Your Day" },
+  { href: "/tasks", label: "To-Do List", icon: "check", permission: PERMISSIONS.propertiesRead, section: "Plan Your Day" },
+  { href: "/payments", label: "Upcoming Payments", icon: "card", permission: PERMISSIONS.expensesRead, section: "Plan Your Day" },
+  { href: "/calendar", label: "Calendar", icon: "calendar", permission: PERMISSIONS.expensesRead, section: "Plan Your Day" },
   { href: "/properties", label: "Properties", icon: "building", permission: PERMISSIONS.propertiesRead, section: "Projects" },
   { href: "/companies", label: "Companies", icon: "briefcase", permission: PERMISSIONS.propertiesRead, section: "Projects" },
-  { href: "/construction", label: "Construction intelligence", icon: "chart", permission: PERMISSIONS.drawsRead, section: "Projects", badge: "Soon" },
-  { href: "/loans", label: "Loans & lenders", icon: "bank", permission: PERMISSIONS.propertiesRead, section: "Projects" },
+  { href: "/construction", label: "Construction Intelligence", icon: "chart", permission: PERMISSIONS.drawsRead, section: "Projects", badge: "Soon" },
+  { href: "/loans", label: "Loans & Lenders", icon: "bank", permission: PERMISSIONS.propertiesRead, section: "Projects" },
   { href: "/expenses", label: "Expenses", icon: "receipt", permission: PERMISSIONS.expensesRead, section: "Records" },
   { href: "/documents", label: "Documents", icon: "file", permission: PERMISSIONS.documentsRead, section: "Records" },
-  { href: "/activity", label: "Team activity", icon: "pulse", permission: PERMISSIONS.activityRead, section: "Records" },
+  { href: "/activity", label: "Team Activity", icon: "pulse", permission: PERMISSIONS.activityRead, section: "Records" },
   { href: "/members", label: "Members", icon: "users", permission: PERMISSIONS.membersManage, section: "Team" },
   { href: "/settings", label: "Settings", icon: "settings", section: "Team" },
 ]
 
-const CONTRACTOR_NAV = new Set(["/properties", "/expenses", "/tasks", "/chat", "/calls"])
+const CONTRACTOR_NAV = new Set(["/properties", "/expenses", "/tasks", "/chat", "/messages", "/calls"])
 
 export function navFor(user) {
   const items = NAV.filter((item) => !item.permission || can(user, item.permission))

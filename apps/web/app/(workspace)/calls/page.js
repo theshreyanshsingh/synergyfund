@@ -218,7 +218,7 @@ function CallsScreen() {
                   <div className="calls-actions">
                     <button type="button" className="chat-members-button" disabled={!row.channel || Boolean(calls.current)} onClick={() => call(row.channelId, "audio")} aria-label={`Voice call ${title}`} title="Voice call"><Icon name="phone" size={15} /></button>
                     <button type="button" className="chat-members-button" disabled={!row.channel || Boolean(calls.current)} onClick={() => call(row.channelId, "video")} aria-label={`Video call ${title}`} title="Video call"><Icon name="video" size={15} /></button>
-                    {row.channel && <button type="button" className="chat-members-button" onClick={() => router.push(`/chat?c=${row.channelId}`)} aria-label={`Open chat with ${title}`} title="Open chat"><Icon name="chat" size={15} /></button>}
+                    {row.channel && <button type="button" className="chat-members-button" onClick={() => router.push(`${row.channel.kind === "direct" ? "/messages" : "/chat"}?c=${row.channelId}`)} aria-label={`Open chat with ${title}`} title="Open chat"><Icon name="chat" size={15} /></button>}
                   </div>
                 </li>
               )

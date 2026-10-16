@@ -28,7 +28,7 @@ import { saveUploadedFile, upload } from "../services/files.js"
 import { ensureLenders, lenderForName, presentLender } from "../services/lenders.js"
 import { loanFields } from "../services/loans.js"
 import { changeSummary, notify, notifyPropertyAccess, recordActivity } from "../services/notify.js"
-import { unreadTotal, usesChat } from "../services/chat.js"
+import { unreadSplit, usesChat } from "../services/chat.js"
 import { disconnectChat, refreshChat } from "../services/chatHub.js"
 
 export const workspaceRouter = Router()
@@ -1414,9 +1414,9 @@ workspaceRouter.get(
     const [unread, conversations, chat] = await Promise.all([
       Notification.countDocuments({ userId: req.user._id, read: false }),
       AgentThread.countDocuments({ userId: req.user._id }),
-      unreadTotal(req.user).catch(() => 0),
+      unreadSplit(req.user).catch(() => ({ channels: 0, direct: 0 })),
     ])
-    res.json({ notifications: unread, conversations, chat })
+    res.json({ notifications: unread, conversations, chat: chat.channels + chat.direct, channels: chat.channels, direct: chat.direct })
   }),
 )
 

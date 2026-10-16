@@ -798,7 +798,7 @@ export const TOOLS = [
       const name = String(args.name || "Documents").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Documents"
       const link = files.length === 1
         ? `/api/documents/${files[0]._id}/download`
-        : `/api/documents/zip?ids=${files.map((file) => String(file._id)).join(",")}&name=${encodeURIComponent(name)}`
+        : `/api/documents/zip?ids=${files.map((file) => String(file._id)).join(",")}&name=${encodeURIComponent(name)}&flat=1`
       return {
         success: true,
         files: files.length,

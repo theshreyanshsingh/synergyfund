@@ -110,7 +110,7 @@ function CompaniesScreen() {
           <section className="panel company-owners">
             <button type="button" className="company-owners-head" aria-expanded={ownersOpen} onClick={() => setOwnersOpen((open) => !open)}>
               <span>
-                <strong>{owners.length === 1 ? "1 owner on your properties is not a company yet" : `${owners.length} owners on your properties are not companies yet`}</strong>
+                <strong className="keep-case">{owners.length === 1 ? "1 owner on your properties is not a company yet" : `${owners.length} owners on your properties are not companies yet`}</strong>
                 <em>Found in the Owner field of each property. Turn one into a company and its properties are assigned in the same step.</em>
               </span>
               <span className="tool">{ownersOpen ? "Hide" : "Review"}</span>

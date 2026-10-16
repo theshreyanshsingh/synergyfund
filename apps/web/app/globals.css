@@ -98,6 +98,12 @@ body {
 }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
+/* Labels have every word capitalized: menus, buttons, titles, tabs, headings, table headers, field names and status
+   pills. What people typed stays exactly as written (fields, messages, notes, file names, emails), and so do sentences.
+   All :where(), so a component's own text-transform (an uppercase eyebrow) still wins. */
+:where(h1, h2, h3, h4, h5, h6, th, legend, summary, button, label, select, a[role="button"], [role="tab"], [role="menuitem"]) { text-transform: capitalize; }
+:where(input, textarea, [contenteditable], td, p, small, em, blockquote, li, pre, code, .keep-case, .chat-nav-row, .palette-row, .paycal-pill, .paycal-attn, .cal-event, .cal-day-item, .cal-detail-title, .agent-download, .sr-only) { text-transform: none; }
+:where(.nav-link, .nav-label, .page-title, .stat-label, .pill, .role-pill, .label-chip, .doc-badge, .chat-nav-heading, .chat-nav-sub, .palette-label, .agent-label, .agent-draft-head span, .agent-email-field > span, .agent-send-main, .agent-send-menu a, .agent-send-menu button, .contractor-link, a.tool, a.primary, a.ghost, .field > span, .role-block > span, .property-figure > span, .overview-card-copy > span, .install-card strong, .crumbs-text, .agent-empty p, .chat-empty-main p, .paycal-group h2, .overview-projection > div > span, .draw-health) { text-transform: capitalize; }
 a { color: inherit; text-decoration: none; }
 
 .app { display: flex; height: 100vh; overflow: hidden; }
@@ -1798,6 +1804,7 @@ button.paycal-more { border: 0; background: transparent; text-align: left; curso
 .chat-empty-main { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 40px 20px; color: var(--faint); text-align: center; }
 .chat-empty-main p { margin: 8px 0 0; color: var(--text); font-size: 15px; font-weight: 650; }
 .chat-empty-main span { font-size: 13px; }
+.chat-empty-main .chat-empty-start { margin: 12px 0 0; }
 .chat-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line); background: var(--white); }
 .chat-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 60px; padding: 10px 14px 10px 18px; border-bottom: 1px solid var(--line); }
 .chat-panel-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
@@ -2950,6 +2957,11 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 /* A zip or file the Agent gathered: a download button in its answer. */
 .agent-md-a.agent-download { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0; padding: 7px 12px; border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); border-radius: 9px; background: color-mix(in srgb, var(--accent) 7%, var(--white)); color: var(--accent); font-weight: 650; text-decoration: none; }
 .agent-md-a.agent-download:hover { background: color-mix(in srgb, var(--accent) 12%, var(--white)); }
+.agent-downloads { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; padding-top: 12px; border-top: 1px solid var(--line); }
+.agent-downloads .agent-download { margin: 0; }
+.agent-draft-notice { margin: 0; padding: 8px 14px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 7%, var(--white)); color: var(--text); font-size: 12.5px; }
+.mail-mark { flex: none; display: block; }
+.agent-send-main .mail-mark { background: #fff; border-radius: 4px; padding: 1px; }
 .settings-actions { gap: 8px; }
 .teammate-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; padding: 8px 12px; border: 1px dashed color-mix(in srgb, var(--accent) 40%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--accent) 4%, var(--white)); }
 .teammate-actions > span { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; color: var(--accent); font-size: 13px; font-weight: 650; }
@@ -3003,7 +3015,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .agent-send-more { padding: 7px 9px; border-left: 1px solid color-mix(in srgb, var(--on-ink) 25%, transparent); border-radius: 0 9px 9px 0; }
 .agent-send-main:hover, .agent-send-more:hover { opacity: 0.9; }
 .agent-send-menu { position: absolute; z-index: 20; right: 0; bottom: calc(100% + 6px); min-width: 220px; padding: 6px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--white); box-shadow: var(--shadow); }
-.agent-send-menu a, .agent-send-menu button { display: block; width: 100%; padding: 9px 14px; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; text-decoration: none; }
+.agent-send-menu a, .agent-send-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 14px; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; text-decoration: none; }
 .agent-send-menu a:hover, .agent-send-menu button:hover { background: var(--active); }
 @media (max-width: 640px) {
   .agent-draft-head small { display: none; }

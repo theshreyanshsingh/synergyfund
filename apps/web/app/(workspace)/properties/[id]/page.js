@@ -433,7 +433,7 @@ export default function PropertyDetailPage({ params }) {
             propertyId={id}
             onSaved={() => detail.reload()}
           />
-          <h3 className="scope-draws-title">Draws <span>· each one split across the line items above</span></h3>
+          <h3 className="scope-draws-title">Draws <span className="keep-case">· each one split across the line items above</span></h3>
           {draws?.undrawn != null && <p className="property-missing">{money(draws.undrawn)} still undrawn · {money(draws.received)} received</p>}
           {(draws?.items || []).length === 0 && <p className="property-missing">No draws recorded.</p>}
           {(draws?.items || []).map((draw) => (

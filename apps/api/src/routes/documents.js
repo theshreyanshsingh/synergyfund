@@ -338,7 +338,9 @@ function dosTime(value) {
 }
 
 // Writes a zip (files stored as they are; PDFs, Office files, photos and videos are already compressed).
-async function writeZip(res, files, placeNames = new Map()) {
+// flat: every file sits directly in the zip (the Agent's bundles); otherwise files from several places or folders
+// are grouped into folders named after them.
+async function writeZip(res, files, placeNames = new Map(), { flat = false } = {}) {
   let closed = false
   res.on("close", () => { closed = true })
   const write = (buffer) => new Promise((resolve) => {
@@ -350,8 +352,8 @@ async function writeZip(res, files, placeNames = new Map()) {
     }
   })
   const used = new Set()
-  const withPlace = new Set(files.map(placeIdOf)).size > 1
-  const withFolder = withPlace || new Set(files.map((file) => `${placeOf(file)}:${folderOf(file)}`)).size > 1
+  const withPlace = !flat && new Set(files.map(placeIdOf)).size > 1
+  const withFolder = !flat && (withPlace || new Set(files.map((file) => `${placeOf(file)}:${folderOf(file)}`)).size > 1)
   const entries = []
   let offset = 0
   for (const file of files) {
@@ -442,7 +444,7 @@ documentsRouter.get(
       ...properties.map((property) => [`p${property._id}`, property.address]),
       ...companies.map((company) => [`c${company._id}`, company.name]),
     ])
-    await writeZip(res, files, placeNames)
+    await writeZip(res, files, placeNames, { flat: req.query.flat === "1" })
   }),
 )
 

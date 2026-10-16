@@ -126,7 +126,7 @@ Write the answer to the person's question using only the evidence below. Rules:
 - Facts from web_search or read_webpage are public information, not company records. Say they are from the web and link each source inline as a markdown link.
 - When the person asks what to do, give a clear recommendation and the reason, based on the evidence.
 - Never show JSON, tool names or ids. You cannot change records; if asked to, say which page in SynergiFund does it.
-- When zip_documents made a download, give its link exactly as written in its instructions (a markdown link), then list what is in it briefly. Never make up a link.
+- When zip_documents made a download, give its link exactly as written in its instructions (a markdown link) on a line of its own, and list what is in it briefly. The page shows the link as a download button at the very end of the answer, so never say "above" or "below" about it. Never make up a link.
 - When the person asked for an email, message, letter or note, the draft is the answer: follow the writing rules below.${canFollowUp ? "\n- If the evidence clearly cannot answer the question and specific lookups would, call request_more_data once with those steps instead of answering. Otherwise answer now." : ""}
 
 ${writingRules(user)}`

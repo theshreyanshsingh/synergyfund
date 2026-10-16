@@ -88,8 +88,9 @@ function guestContacts(entries) {
   return ids
 }
 
+// Direct messages have their own page; channels and property rooms are on Channels.
 function chatHref(channel, parentId) {
-  return `/chat?c=${channel._id}${parentId ? `&t=${parentId}` : ""}`
+  return `${channel.kind === "direct" ? "/messages" : "/chat"}?c=${channel._id}${parentId ? `&t=${parentId}` : ""}`
 }
 
 async function broadcastChannel(channel, property, event = "channel:update", extra = {}) {
@@ -204,7 +205,13 @@ chatRouter.get(
   asyncHandler(async (req, res) => {
     const entries = await visibleChannels(req.user)
     const counts = await unreadFor(req.user, entries)
-    res.json({ mentions: counts.reduce((total, count) => total + count.mentions, 0), unread: counts.reduce((total, count) => total + count.unread, 0) })
+    const mentions = (kind) => counts.reduce((total, count, index) => total + ((entries[index].channel.kind === "direct") === (kind === "direct") ? count.mentions : 0), 0)
+    res.json({
+      mentions: counts.reduce((total, count) => total + count.mentions, 0),
+      unread: counts.reduce((total, count) => total + count.unread, 0),
+      channels: mentions("channels"),
+      direct: mentions("direct"),
+    })
   }),
 )
 

@@ -65,7 +65,10 @@ function sortChannels(list) {
   })
 }
 
-export function ChatApp() {
+// mode "channels" (/chat) shows channels and property rooms; mode "direct" (/messages) shows direct messages.
+// A link to a conversation of the other kind moves to its page.
+export function ChatApp({ mode = "channels" }) {
+  const direct = mode === "direct"
   const session = useSession()
   const router = useRouter()
   const params = useSearchParams()
@@ -95,6 +98,8 @@ export function ChatApp() {
   const activeRef = useRef(activeId)
   const visibleRef = useRef(visible)
   const threadRef = useRef(threadId)
+  const channelsRef = useRef(channels)
+  channelsRef.current = channels
   const me = boot?.me || session?.user?.id || ""
   const isAdmin = session?.user?.role === "admin"
   activeRef.current = activeId
@@ -108,7 +113,9 @@ export function ChatApp() {
   threadRef.current = threadId
 
   const people = useMemo(() => new Map(peopleList.map((person) => [person.id, person])), [peopleList])
-  const active = channels.find((channel) => channel.id === activeId) || null
+  const inMode = useCallback((channel) => (channel.kind === "direct") === direct, [direct])
+  const found = channels.find((channel) => channel.id === activeId) || null
+  const active = found && inMode(found) ? found : null
 
   const loadBoot = useCallback(async () => {
     try {
@@ -158,12 +165,14 @@ export function ChatApp() {
     }, 400))
   }, [])
 
-  const open = useCallback((id, { thread: nextThread = "", replace = false } = {}) => {
-    const url = id ? `/chat?c=${id}${nextThread ? `&t=${nextThread}` : ""}` : "/chat"
+  const open = useCallback((id, { thread: nextThread = "", replace = false, toDirect } = {}) => {
+    const target = id ? channelsRef.current.find((item) => item.id === id) : null
+    const base = (toDirect ?? (target ? target.kind === "direct" : direct)) ? "/messages" : "/chat"
+    const url = id ? `${base}?c=${id}${nextThread ? `&t=${nextThread}` : ""}` : base
     setSearch(null)
     if (replace) router.replace(url, { scroll: false })
     else router.push(url, { scroll: false })
-  }, [router])
+  }, [router, direct])
 
   useEffect(() => {
     loadBoot()
@@ -173,16 +182,24 @@ export function ChatApp() {
     if (status === "live") emitChat("presence:get")
   }, [status])
 
+  // On a wide screen, open #general on Channels and the latest conversation on Direct messages.
   useEffect(() => {
     if (!boot || activeId || narrow) return
-    const general = channels.find((channel) => channel.kind === "general") || channels[0]
-    if (general) open(general.id, { replace: true })
-  }, [boot, activeId, channels, narrow, open])
+    const first = direct
+      ? channels.filter((channel) => channel.kind === "direct").sort((a, b) => new Date(b.lastMessageAt || b.createdAt || 0) - new Date(a.lastMessageAt || a.createdAt || 0))[0]
+      : channels.find((channel) => channel.kind === "general") || channels.find((channel) => channel.kind !== "direct")
+    if (first) open(first.id, { replace: true })
+  }, [boot, activeId, channels, narrow, open, direct])
+
+  // A link to a conversation that lives on the other page (an old /chat link to a direct message) moves there.
+  useEffect(() => {
+    if (boot && found && !inMode(found)) open(found.id, { thread: threadId, replace: true })
+  }, [boot, found, inMode, open, threadId])
 
   useEffect(() => {
     if (!activeId || !boot) return
     const channel = channels.find((item) => item.id === activeId)
-    if (!channel) return
+    if (!channel || !inMode(channel)) return
     if (markedFor.current !== activeId) {
       markedFor.current = activeId
       setMarks((current) => ({ ...current, [activeId]: channel.unread ? channel.lastReadAt : null }))
@@ -213,14 +230,17 @@ export function ChatApp() {
   }, [threadId, threadVersion])
 
   useEffect(() => {
-    const unread = channels.reduce((total, channel) => total + (channel.mentions || 0), 0)
-    const title = unread ? `(${unread}) Chat · SynergiFund` : "Chat · SynergiFund"
+    const unread = channels.filter(inMode).reduce((total, channel) => total + (channel.mentions || 0), 0)
+    const name = direct ? "Direct Messages" : "Channels"
+    const title = unread ? `(${unread}) ${name} · SynergiFund` : `${name} · SynergiFund`
     document.title = title
-    const timer = setTimeout(() => {
-      document.title = title
-    }, 120)
-    return () => clearTimeout(timer)
-  }, [channels, activeId, threadId])
+    // Next puts the app's own title back after moving between conversations; keep ours.
+    const observer = new MutationObserver(() => {
+      if (document.title !== title) document.title = title
+    })
+    observer.observe(document.head, { subtree: true, childList: true, characterData: true })
+    return () => observer.disconnect()
+  }, [channels, activeId, threadId, inMode, direct])
 
   useEffect(() => () => {
     document.title = "SynergiFund"
@@ -408,7 +428,7 @@ export function ChatApp() {
     const data = await api("/chat/direct", { method: "POST", body: { userIds } })
     upsertChannel(data.channel)
     setDialog("")
-    open(data.channel.id)
+    open(data.channel.id, { toDirect: true })
   }
 
   const draftFor = useCallback((key) => drafts.current.get(key), [])
@@ -429,6 +449,7 @@ export function ChatApp() {
   return (
     <div className={`chat-page${activeId ? " has-active" : ""}${panel ? " has-panel" : ""}`}>
       <ChatNav
+        mode={mode}
         channels={channels}
         people={people}
         peopleList={peopleList}
@@ -476,9 +497,10 @@ export function ChatApp() {
           />
         ) : (
           <div className="chat-empty-main">
-            <Icon name="chat" size={28} />
-            <p>{channels.length ? "Pick a conversation" : "No conversations yet"}</p>
-            <span>Channels, property rooms and direct messages appear on the left.</span>
+            <Icon name={direct ? "chat" : "hash"} size={28} />
+            <p>{channels.some(inMode) ? "Pick a conversation" : direct ? "No direct messages yet" : "No channels yet"}</p>
+            <span>{direct ? "Private conversations with one person or a small group appear on the left." : "Channels and property rooms appear on the left."}</span>
+            {direct && <button type="button" className="primary chat-empty-start" onClick={() => setDialog("direct")}><Icon name="plus" size={14} /> New message</button>}
           </div>
         )}
       </section>
@@ -533,7 +555,8 @@ export function ChatApp() {
   )
 }
 
-function ChatNav({ channels, people, peopleList, me, online, activeId, status, filter, canCreate, onFilter, onSearch, onOpen, onCreate, onDirect, onPerson }) {
+function ChatNav({ mode, channels, people, peopleList, me, online, activeId, status, filter, canCreate, onFilter, onSearch, onOpen, onCreate, onDirect, onPerson }) {
+  const direct = mode === "direct"
   const [collapsed, setCollapsed] = useState({})
   const [permission, setPermission] = useState("granted")
   const query = filter.trim().toLowerCase()
@@ -547,7 +570,8 @@ function ChatNav({ channels, people, peopleList, me, online, activeId, status, f
   const properties = channels.filter((channel) => channel.kind === "property").filter(matches).sort((a, b) => (b.mentions || 0) - (a.mentions || 0) || (b.unread ? 1 : 0) - (a.unread ? 1 : 0) || a.name.localeCompare(b.name, undefined, { numeric: true }))
   const directs = channels.filter((channel) => channel.kind === "direct").filter(matches).sort((a, b) => new Date(b.lastMessageAt || b.createdAt || 0) - new Date(a.lastMessageAt || a.createdAt || 0))
   const talkedTo = new Set(directs.flatMap((channel) => channel.memberIds))
-  const suggestions = query ? peopleList.filter((person) => person.id !== me && !talkedTo.has(person.id) && person.name.toLowerCase().includes(query)).slice(0, 5) : []
+  // On Direct messages everyone you have not talked to yet is listed, to start a conversation in one click.
+  const suggestions = query || direct ? peopleList.filter((person) => person.id !== me && !person.bot && !talkedTo.has(person.id) && (!query || person.name.toLowerCase().includes(query))).slice(0, direct && !query ? 50 : 5) : []
 
   function section(key, label, items, render, action) {
     const closed = collapsed[key] && !query
@@ -582,7 +606,7 @@ function ChatNav({ channels, people, peopleList, me, online, activeId, status, f
   return (
     <aside className="chat-nav">
       <div className="chat-nav-top">
-        <h1>Chat</h1>
+        <h1>{direct ? "Direct messages" : "Channels"}</h1>
         <span className={`chat-status is-${status}`} title={status === "live" ? "Connected live" : status === "connecting" ? "Reconnecting" : "Offline"}>
           <i />
           {status === "live" ? "Live" : status === "connecting" ? "Connecting" : "Offline"}
@@ -594,20 +618,20 @@ function ChatNav({ channels, people, peopleList, me, online, activeId, status, f
         {filter && <button type="submit" className="chat-nav-search-go">Search</button>}
       </form>
       <div className="chat-nav-list">
-        {section("channels", "Channels", rooms, (channel) => row(channel, <Icon name={channel.private ? "lock" : "hash"} size={15} />), canCreate && (
+        {!direct && section("channels", "Channels", rooms, (channel) => row(channel, <Icon name={channel.private ? "lock" : "hash"} size={15} />), canCreate && (
           <button type="button" className="chat-nav-add" aria-label="Create a channel" title="Create a channel" onClick={onCreate}><Icon name="plus" size={14} /></button>
         ))}
-        {section("direct", "Direct messages", directs, (channel) => {
+        {direct && section("direct", "Direct messages", directs, (channel) => {
           const others = channel.memberIds.filter((id) => id !== me)
           const first = others[0] || me
           return row(channel, others.length > 1 ? <span className="chat-avatar xs is-group">{others.length}</span> : <Avatar name={nameOf(people, first)} online={online.has(first)} size="xs" />)
         }, (
           <button type="button" className="chat-nav-add" aria-label="New message" title="New message" onClick={onDirect}><Icon name="plus" size={14} /></button>
         ))}
-        {section("properties", "Properties", properties, (channel) => row(channel, <Icon name="building" size={15} />))}
+        {!direct && section("properties", "Properties", properties, (channel) => row(channel, <Icon name="building" size={15} />))}
         {suggestions.length > 0 && (
           <div className="chat-nav-section">
-            <div className="chat-nav-heading"><span className="chat-nav-sub">People</span></div>
+            <div className="chat-nav-heading"><span className="chat-nav-sub">{direct && !query ? "Start a conversation" : "People"}</span></div>
             {suggestions.map((person) => (
               <button key={person.id} type="button" className="chat-nav-row" onClick={() => onPerson(person.id)}>
                 <Avatar name={person.name} online={online.has(person.id)} size="xs" />
@@ -1044,7 +1068,7 @@ function CreateChannel({ peopleList, onClose, onCreated }) {
   }
 
   return (
-    <FormSheet eyebrow="Chat" title="Create a channel" hint="Channels are where the team talks about a topic." onClose={onClose} onSubmit={submit} submitLabel="Create channel" pending={pending} error={error}>
+    <FormSheet eyebrow="Channels" title="Create a channel" hint="Channels are where the team talks about a topic." onClose={onClose} onSubmit={submit} submitLabel="Create channel" pending={pending} error={error}>
       <div className="form-grid">
         <label className="field wide"><span>Name</span><input autoFocus required value={name} placeholder="e.g. acquisitions" onChange={(event) => setName(event.target.value)} /></label>
         {slug && slug !== name && <p className="chat-form-hint wide">It will be called #{slug}.</p>}
@@ -1087,7 +1111,7 @@ function StartDirect({ peopleList, online, onClose, onStart }) {
   }
 
   return (
-    <FormSheet eyebrow="Chat" title="New message" hint="Pick one person, or up to eight for a group conversation." onClose={onClose} onSubmit={submit} submitLabel={picked.length > 1 ? "Start group" : "Open conversation"} pending={pending} error={error}>
+    <FormSheet eyebrow="Direct messages" title="New message" hint="Pick one person, or up to eight for a group conversation." onClose={onClose} onSubmit={submit} submitLabel={picked.length > 1 ? "Start group" : "Open conversation"} pending={pending} error={error}>
       <PeoplePicker people={peopleList} online={online} picked={picked} onChange={setPicked} />
     </FormSheet>
   )
