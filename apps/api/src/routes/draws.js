@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { LINE_STATUSES, drawPulled, isPendingDraw } from "@synergifund/shared"
+import { LINE_STATUSES, drawPulled, isPendingDraw, lineTracking } from "@synergifund/shared"
 import xlsx from "xlsx"
 import { DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, ImportJob, PhotoReport, Property } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
@@ -355,6 +355,7 @@ drawsRouter.put(
         description: String(line.description || "").trim().slice(0, 500),
         budget: budget ?? undefined,
         status: kept?.status || "Not started",
+        ...lineTracking(kept),
       })
     }
     const keptIds = new Set(next.filter((line) => line._id).map((line) => String(line._id)))
@@ -422,6 +423,7 @@ drawsRouter.patch(
         line.forecastDate = value
         line.forecastNote = value ? "Set by hand" : ""
         line.forecastBy = req.user.name
+        line.forecastAt = new Date()
         changes.push(value ? `expected ${value}` : "no expected date")
       }
     }

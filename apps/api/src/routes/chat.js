@@ -221,7 +221,7 @@ chatRouter.get(
     const found = await loadChannel(req.user, req.params.id)
     if (!found) return sendError(res, 404, "That conversation was not found.")
     const people = await audience(found.channel, found.property)
-    res.json({ items: people.map((person) => ({ id: String(person._id), name: person.name, email: person.email, role: person.role, online: isOnline(person._id) })) })
+    res.json({ items: people.map((person) => ({ id: String(person._id), name: person.name, email: person.bot ? "" : person.email, role: person.role, bot: Boolean(person.bot), online: isOnline(person._id) })) })
   }),
 )
 
@@ -336,7 +336,8 @@ chatRouter.post(
   "/direct",
   asyncHandler(async (req, res) => {
     const wanted = (Array.isArray(req.body.userIds) ? req.body.userIds : []).filter((id) => mongoose.isValidObjectId(id))
-    const people = await User.find({ _id: { $in: [...wanted, req.user._id] } }).select("_id name role extraPermissions deniedPermissions")
+    const people = await User.find({ _id: { $in: [...wanted, req.user._id] } }).select("_id name role bot extraPermissions deniedPermissions")
+    if (people.some((person) => person.bot)) return sendError(res, 400, "The AI teammate answers in property chats, not direct messages.")
     if (people.length < 1 || people.length > 9) return sendError(res, 400, "Pick between one and eight people.")
     const off = people.filter((person) => !usesChat(person))
     if (off.length) return sendError(res, 400, `${off.map((person) => person.name).join(", ")} ${off.length === 1 ? "has" : "have"} chat turned off.`)

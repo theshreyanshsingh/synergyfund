@@ -1,6 +1,6 @@
 "use client"
 
-import { memo, useEffect, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { can, initials, navFor, PERMISSIONS } from "@synergifund/shared"
@@ -9,6 +9,32 @@ import { useChatEvents } from "../../lib/chatSocket"
 import { Icon } from "../ui/Icon"
 import { InstallCard } from "../pwa/InstallCard"
 import { useSession } from "./Providers"
+
+// Unread @mentions in channels and unread direct messages, kept live (for the contractor's top bar).
+export function useChatBadges(me, enabled) {
+  const [counts, setCounts] = useState({ channels: 0, direct: 0 })
+  const timer = useRef(null)
+  const refresh = useCallback((delay = 1200) => {
+    clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      api("/chat/unread").then((data) => setCounts({ channels: data.channels || 0, direct: data.direct || 0 })).catch(() => {})
+    }, delay)
+  }, [])
+  useEffect(() => {
+    if (enabled) refresh(0)
+    return () => clearTimeout(timer.current)
+  }, [enabled, refresh])
+  useChatEvents({
+    "message:new": ({ message, channel }) => {
+      if (message && message.userId !== me && (channel?.kind === "direct" || message.mentionsChannel || (message.mentionIds || []).includes(me))) refresh()
+    },
+    read: () => refresh(),
+    "channel:remove": () => refresh(),
+    "chat:refresh": () => refresh(),
+    reconnect: () => refresh(),
+  }, enabled)
+  return counts
+}
 
 export const Sidebar = memo(function Sidebar({ user, onSearch, onToggle, onNavigate }) {
   const [open, setOpen] = useState(false)

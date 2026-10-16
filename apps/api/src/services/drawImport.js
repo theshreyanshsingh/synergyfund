@@ -1,4 +1,4 @@
-import { drawFigures } from "@synergifund/shared"
+import { drawFigures, lineTracking } from "@synergifund/shared"
 import xlsx from "xlsx"
 
 export const DRAW_FIELD_ALIASES = [
@@ -173,6 +173,7 @@ export async function importPortfolioRecords({ records, properties, draws, Draw,
           description: line.description || "",
           budget: line.budget ?? undefined,
           status: kept?.status || "Not started",
+          ...lineTracking(kept),
         }
       })
       property.markModified?.("scopeLines")

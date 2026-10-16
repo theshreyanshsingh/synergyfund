@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { can, drawFigures, drawPulled, ensureTaskPermissions, resolveBudget, INSURANCE_FREQUENCIES, isRole, LOAN_STATUSES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
+import { can, drawFigures, TASK_LABELS, drawPulled, ensureTaskPermissions, resolveBudget, INSURANCE_FREQUENCIES, isRole, LOAN_STATUSES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
 import {
   Activity,
   AgentThread,
@@ -167,7 +167,7 @@ workspaceRouter.get(
   requirePermission("properties.read"),
   asyncHandler(async (req, res) => {
     await moveOpenReviewsOntoTasks()
-    // Contractors see only the tasks assigned to them, never the team's own to-do list.
+    // Contractors see only the tasks assigned to them, never the team's own task list.
     let filter
     if (req.user.role === "contractor") filter = { assigneeId: req.user._id }
     else {
@@ -972,6 +972,7 @@ workspaceRouter.delete(
       }
     }
     await Property.updateMany({ assignedUserIds: user._id }, { $pull: { assignedUserIds: user._id } })
+    await CalendarEvent.updateMany({ guestIds: user._id }, { $pull: { guestIds: user._id } })
     await user.deleteOne()
     disconnectChat([user._id])
     await recordActivity({ user: req.user, title: "Member removed", detail: user.name })
@@ -1244,10 +1245,11 @@ function presentEvent(event, { me, admin, guestNames, names }) {
     end: event.allDay ? "" : event.end || "",
     location: event.location || "",
     description: event.description || "",
-    guests: event.guestIds.map((id) => ({ id: String(id), name: guestNames.get(String(id)) || "Someone" })),
+    guests: event.guestIds.filter((id) => guestNames.has(String(id))).map((id) => ({ id: String(id), name: guestNames.get(String(id)) })),
     propertyId: event.propertyId ? String(event.propertyId) : "",
     property: names.get(String(event.propertyId || "")) || "",
     createdByName: event.createdByName || "",
+    organizerId: String(event.createdBy),
     mine,
     canEdit: mine || admin,
     amount: null,
@@ -1307,20 +1309,27 @@ async function readEvent(req, res, existing = null) {
   if (field("description")) next.description = String(body.description || "").trim().slice(0, 4000)
   if (field("propertyId")) {
     const id = String(body.propertyId || "")
-    if (id) {
+    if (id && existing && id === String(existing.propertyId || "")) {
+      next.propertyId = (await Property.exists({ _id: id })) ? existing.propertyId : undefined
+    } else if (id) {
       const property = /^[a-f\d]{24}$/i.test(id) ? await Property.findOne({ _id: id, ...propertyFilter(req.user) }).select("_id") : null
-      if (!property) return sendError(res, 404, "That property is not available.")
-      next.propertyId = property._id
+      // A property deleted since the page loaded is simply dropped; one this person cannot see is refused.
+      if (!property && /^[a-f\d]{24}$/i.test(id) && !(await Property.exists({ _id: id }))) next.propertyId = undefined
+      else if (!property) return sendError(res, 404, "That property is not available.")
+      else next.propertyId = property._id
     } else {
       next.propertyId = undefined
     }
   }
   if (field("guestIds")) {
-    const wanted = [...new Set((Array.isArray(body.guestIds) ? body.guestIds : []).map(String))].filter((id) => id !== String(req.user._id))
+    const organizer = String(existing ? existing.createdBy : req.user._id)
+    const wanted = [...new Set((Array.isArray(body.guestIds) ? body.guestIds : []).map(String))].filter((id) => id !== organizer)
     const allowed = new Set((await calendarPeople()).map((user) => String(user._id)))
-    const bad = wanted.filter((id) => !allowed.has(id))
-    if (bad.length) return sendError(res, 400, "Only people who use the calendar can be invited.")
-    next.guestIds = wanted.slice(0, 50)
+    const already = new Set((existing?.guestIds || []).map(String))
+    // People who left the team since the page loaded are dropped; inviting someone who does not use the calendar is refused.
+    const outside = wanted.filter((id) => !allowed.has(id) && !already.has(id) && /^[a-f\d]{24}$/i.test(id))
+    if (outside.length && (await User.exists({ _id: { $in: outside } }))) return sendError(res, 400, "Only people who use the calendar can be invited.")
+    next.guestIds = wanted.filter((id) => allowed.has(id)).slice(0, 50)
   }
   return next
 }
@@ -1336,6 +1345,7 @@ async function eventFor(req, res) {
 }
 
 function inviteGuests(event, guestIds, user, kind) {
+  guestIds = guestIds.filter((id) => id !== String(user._id))
   if (!guestIds.length) return Promise.resolve()
   const when = eventWhen(event)
   const titles = { invite: `Invitation: ${event.title}`, update: `Updated: ${event.title}`, cancel: `Canceled: ${event.title}` }
@@ -1362,7 +1372,7 @@ workspaceRouter.post(
     const fields = await readEvent(req, res)
     if (!fields || res.headersSent) return
     const event = await CalendarEvent.create({ ...fields, createdBy: req.user._id, createdByName: req.user.name })
-    await recordActivity({ user: req.user, title: "Event added", detail: `${event.title} · ${eventWhen(event)}`, propertyId: event.propertyId })
+    await recordActivity({ user: req.user, title: "Event added", detail: `Calendar event · ${eventWhen(event)}`, propertyId: event.propertyId })
     await inviteGuests(event, event.guestIds.map(String), req.user, "invite")
     const guestNames = new Map((await User.find({ _id: { $in: event.guestIds } }).select("name")).map((user) => [String(user._id), user.name]))
     res.status(201).json({ event: presentEvent(event, { me: String(req.user._id), admin: req.user.role === "admin", guestNames, names: new Map() }) })
@@ -1378,17 +1388,19 @@ workspaceRouter.patch(
     if (!event) return
     const fields = await readEvent(req, res, event)
     if (!fields || res.headersSent) return
-    const before = { date: event.date, start: event.start, end: event.end, allDay: event.allDay, guests: event.guestIds.map(String) }
+    const before = { date: event.date, start: event.start, end: event.end, allDay: event.allDay, title: event.title, location: event.location, description: event.description, guests: event.guestIds.map(String) }
     Object.assign(event, fields)
     await event.save()
     const guests = event.guestIds.map(String)
     const added = guests.filter((id) => !before.guests.includes(id))
     const removed = before.guests.filter((id) => !guests.includes(id))
-    const moved = before.date !== event.date || before.start !== event.start || before.end !== event.end || before.allDay !== event.allDay
+    const changed = ["date", "start", "end", "allDay", "title", "location", "description"].some((key) => (before[key] ?? "") !== (event[key] ?? ""))
     await inviteGuests(event, added, req.user, "invite")
-    if (moved) await inviteGuests(event, guests.filter((id) => !added.includes(id)), req.user, "update")
+    if (changed) await inviteGuests(event, guests.filter((id) => !added.includes(id)), req.user, "update")
     if (removed.length) await inviteGuests(event, removed, req.user, "cancel")
-    await recordActivity({ user: req.user, title: "Event updated", detail: `${event.title} · ${eventWhen(event)}`, propertyId: event.propertyId })
+    // An admin changing someone else's event tells its organizer too.
+    if (changed || added.length || removed.length) await inviteGuests(event, [String(event.createdBy)], req.user, "update")
+    await recordActivity({ user: req.user, title: "Event updated", detail: `Calendar event · ${eventWhen(event)}`, propertyId: event.propertyId })
     const guestNames = new Map((await User.find({ _id: { $in: event.guestIds } }).select("name")).map((user) => [String(user._id), user.name]))
     res.json({ event: presentEvent(event, { me: String(req.user._id), admin: req.user.role === "admin", guestNames, names: new Map() }) })
   }),
@@ -1402,8 +1414,8 @@ workspaceRouter.delete(
     const event = await eventFor(req, res)
     if (!event) return
     await event.deleteOne()
-    await inviteGuests(event, event.guestIds.map(String), req.user, "cancel")
-    await recordActivity({ user: req.user, title: "Event deleted", detail: `${event.title} · ${eventWhen(event)}`, propertyId: event.propertyId })
+    await inviteGuests(event, [...event.guestIds.map(String), String(event.createdBy)], req.user, "cancel")
+    await recordActivity({ user: req.user, title: "Event deleted", detail: `Calendar event · ${eventWhen(event)}`, propertyId: event.propertyId })
     res.json({ ok: true })
   }),
 )
@@ -1413,16 +1425,17 @@ workspaceRouter.get(
   asyncHandler(async (req, res) => {
     const [unread, conversations, chat] = await Promise.all([
       Notification.countDocuments({ userId: req.user._id, read: false }),
-      AgentThread.countDocuments({ userId: req.user._id }),
+      AgentThread.countDocuments({ userId: req.user._id, temporary: { $ne: true } }),
       unreadSplit(req.user).catch(() => ({ channels: 0, direct: 0 })),
     ])
     res.json({ notifications: unread, conversations, chat: chat.channels + chat.direct, channels: chat.channels, direct: chat.direct })
   }),
 )
 
+// Today's date where the team works (the server may run on UTC).
+const TEAM_TIMEZONE = process.env.TEAM_TIMEZONE || "America/New_York"
 function todayKey() {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
+  return new Intl.DateTimeFormat("en-CA", { timeZone: TEAM_TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())
 }
 
 function dateKey(value) {
@@ -1581,7 +1594,7 @@ async function mailAssignee({ user, task, assignee }) {
       ["Note", task.notes || ""],
       ["Assigned by", user.name],
     ],
-    // Opens the to-do list on this task.
+    // Opens Tasks on this task.
     href: `/tasks?task=${task._id}`,
     event: "task.assigned",
   })
@@ -1591,7 +1604,8 @@ function cleanLabels(value) {
   const list = Array.isArray(value) ? value : String(value || "").split(",")
   const labels = []
   for (const item of list) {
-    const label = String(item || "").trim().replace(/\s+/g, " ").slice(0, 32)
+    const typed = String(item || "").trim().replace(/\s+/g, " ").slice(0, 32)
+    const label = TASK_LABELS.find((known) => known.toLowerCase() === typed.toLowerCase()) || typed
     if (!label || labels.some((existing) => existing.toLowerCase() === label.toLowerCase())) continue
     labels.push(label)
     if (labels.length === 8) break

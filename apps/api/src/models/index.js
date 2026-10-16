@@ -102,6 +102,7 @@ export const Property = register(
           forecastDate: String,
           forecastNote: String,
           forecastBy: String,
+          forecastAt: Date,
         },
       ],
       assignedUserIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
@@ -553,9 +554,12 @@ export const AgentThread = register(
           at: { type: Date, default: Date.now },
         },
       ],
+      // A temporary chat is never listed in History. MongoDB removes it once `expiresAt` passes.
+      temporary: { type: Boolean, default: false },
+      expiresAt: { type: Date, default: undefined },
     },
     { timestamps: true },
-  ),
+  ).index({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
 )
 
 export const AgentSetting = register(
@@ -567,6 +571,8 @@ export const AgentSetting = register(
       decisionModel: String,
       // The AI teammate in property chats.
       teammateOn: { type: Boolean, default: false },
+      // When it was last turned on: contractors get a full quiet period from then before any check-in.
+      teammateOnAt: Date,
       teammateName: String,
       teammateUserId: { type: Schema.Types.ObjectId, ref: "User" },
       followUpDays: Number,

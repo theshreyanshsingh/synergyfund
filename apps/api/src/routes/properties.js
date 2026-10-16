@@ -1,7 +1,7 @@
 import { Router } from "express"
 import { z } from "zod"
-import { loanSummary, STAGES } from "@synergifund/shared"
-import { Activity, Bill, Company, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
+import { lineTracking, loanSummary, STAGES } from "@synergifund/shared"
+import { Activity, Bill, CalendarEvent, Company, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
 import { propertyFilter, ownsProperty } from "../services/access.js"
@@ -490,9 +490,10 @@ propertiesRouter.patch(
     }
     if ("labels" in req.body) property.labels = cleanLabelList(parseList(req.body.labels))
     if ("scopeLines" in req.body) {
+      const kept = new Map((property.scopeLines || []).map((line) => [String(line._id), line]))
       property.scopeLines = parseList(req.body.scopeLines).flatMap((line) => {
         const next = scopeLineFrom(line, true)
-        return next ? [next] : []
+        return next ? [{ ...lineTracking(next._id && kept.get(String(next._id))), ...next }] : []
       })
     }
     await property.save()
@@ -536,6 +537,7 @@ propertiesRouter.delete(
       DocumentFile.deleteMany({ propertyId: property._id }),
       Activity.deleteMany({ propertyId: property._id }),
       ConstructionProject.deleteMany({ propertyId: property._id }),
+      CalendarEvent.updateMany({ propertyId: property._id }, { $unset: { propertyId: 1 } }),
     ])
     await property.deleteOne()
     await recordActivity({ user: req.user, title: "Property deleted", detail: property.address })

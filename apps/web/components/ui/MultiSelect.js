@@ -68,7 +68,11 @@ export function MultiSelect({ options, selected, onChange, placeholder = "Search
   function onKeyDown(event) {
     if (event.key === "ArrowDown") {
       event.preventDefault()
-      setOpen(true)
+      if (!open) {
+        setOpen(true)
+        setActive(0)
+        return
+      }
       setActive((index) => Math.min(index + 1, Math.max(shown.length - 1, 0)))
     } else if (event.key === "ArrowUp") {
       event.preventDefault()
@@ -82,15 +86,16 @@ export function MultiSelect({ options, selected, onChange, placeholder = "Search
       event.preventDefault()
       event.stopPropagation()
       setOpen(false)
-    } else if (event.key === "Backspace" && !query && latest.current.length) {
-      change(latest.current.slice(0, -1))
+    } else if (event.key === "Backspace" && !query) {
+      const last = [...latest.current].reverse().find((id) => byId.has(id))
+      if (last) change(latest.current.filter((id) => id !== last))
     }
   }
 
   if (!options.length) return <p className="muted">{emptyText}</p>
   const visibleChips = showAll ? picked : picked.slice(0, CHIPS_SHOWN)
   return (
-    <div className={open ? "multi is-open" : "multi"} ref={box}>
+    <div className={open ? "multi is-open" : "multi"} ref={box} onBlur={(event) => { if (!box.current?.contains(event.relatedTarget)) setOpen(false) }}>
       <div className="multi-box" onMouseDown={(event) => { if (event.target === event.currentTarget) { event.preventDefault(); input.current?.focus(); setOpen(true) } }}>
         {visibleChips.map((option) => (
           <span key={option.id} className="multi-chip">
@@ -115,7 +120,7 @@ export function MultiSelect({ options, selected, onChange, placeholder = "Search
           onChange={(event) => { setQuery(event.target.value); setOpen(true) }}
           onKeyDown={onKeyDown}
         />
-        <button type="button" className="multi-toggle" aria-label={open ? "Close the list" : "Open the list"} onClick={() => { setOpen((value) => !value); input.current?.focus() }}>
+        <button type="button" className="multi-toggle" aria-label={open ? "Close the list" : "Open the list"} onMouseDown={(event) => event.preventDefault()} onClick={() => { setOpen((value) => !value); input.current?.focus() }}>
           <Icon name="chevron" size={14} />
         </button>
       </div>

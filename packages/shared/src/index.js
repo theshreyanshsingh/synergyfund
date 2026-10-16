@@ -146,9 +146,9 @@ export const PERMISSION_CATALOG = [
   { group: "Money", id: PERMISSIONS.expensesApprove, label: "Approve expenses", detail: "Approve, reject, and mark bills paid." },
   { group: "Money", id: PERMISSIONS.drawsRead, label: "View draws", detail: "See rehab funding and draw history." },
   { group: "Money", id: PERMISSIONS.drawsWrite, label: "Manage draws", detail: "Record funding and pull a draw." },
-  { group: "To-do list", id: PERMISSIONS.tasksEdit, label: "Edit tasks", detail: "Change a task and mark it done." },
-  { group: "To-do list", id: PERMISSIONS.tasksAssign, label: "Assign tasks", detail: "Choose an assignee and see every member email." },
-  { group: "To-do list", id: PERMISSIONS.tasksManage, label: "Create and delete tasks", detail: "Add and remove tasks. Assignment is included." },
+  { group: "Tasks", id: PERMISSIONS.tasksEdit, label: "Edit tasks", detail: "Change a task and mark it done." },
+  { group: "Tasks", id: PERMISSIONS.tasksAssign, label: "Assign tasks", detail: "Choose an assignee and see every member email." },
+  { group: "Tasks", id: PERMISSIONS.tasksManage, label: "Create and delete tasks", detail: "Add and remove tasks. Assignment is included." },
   { group: "Documents", id: PERMISSIONS.documentsRead, label: "View documents", detail: "Open files in the knowledge base." },
   { group: "Documents", id: PERMISSIONS.documentsWrite, label: "Upload documents", detail: "Add files and weekly photos." },
   { group: "Documents", id: PERMISSIONS.documentsDelete, label: "Remove documents", detail: "Delete a file from the library." },
@@ -445,11 +445,11 @@ export const NAV = [
   { href: "/notifications", label: "Notifications", icon: "bell", permission: PERMISSIONS.activityRead, zone: "primary", countKey: "notifications" },
   { href: "/draws", label: "Draws", icon: "layers", permission: PERMISSIONS.drawsRead, zone: "primary" },
   { href: "/overview", label: "Overview", icon: "grid", permission: PERMISSIONS.propertiesRead, section: "Plan Your Day" },
-  { href: "/tasks", label: "To-Do List", icon: "check", permission: PERMISSIONS.propertiesRead, section: "Plan Your Day" },
+  { href: "/tasks", label: "Tasks", icon: "check", permission: PERMISSIONS.propertiesRead, section: "Plan Your Day" },
   { href: "/payments", label: "Upcoming Payments", icon: "card", permission: PERMISSIONS.expensesRead, section: "Plan Your Day" },
   { href: "/calendar", label: "Calendar", icon: "calendar", permission: PERMISSIONS.expensesRead, section: "Plan Your Day" },
   { href: "/properties", label: "Properties", icon: "building", permission: PERMISSIONS.propertiesRead, section: "Projects" },
-  { href: "/companies", label: "Companies", icon: "briefcase", permission: PERMISSIONS.propertiesRead, section: "Projects" },
+  { href: "/companies", label: "Companies", icon: "buildings", permission: PERMISSIONS.propertiesRead, section: "Projects" },
   { href: "/construction", label: "Construction Intelligence", icon: "chart", permission: PERMISSIONS.drawsRead, section: "Projects", badge: "Soon" },
   { href: "/loans", label: "Loans & Lenders", icon: "bank", permission: PERMISSIONS.propertiesRead, section: "Projects" },
   { href: "/expenses", label: "Expenses", icon: "receipt", permission: PERMISSIONS.expensesRead, section: "Records" },
@@ -481,6 +481,14 @@ export const TEAMMATE_DEFAULTS = {
   name: "Sam Rivera",
   followUpDays: 3,
   drawEmail: "draws@synergifund.com",
+}
+
+// What the AI teammate and people record on a scope line besides its title and budget; kept when the scope is edited.
+export const LINE_TRACKING_FIELDS = ["statusBy", "statusAt", "statusNote", "forecastDate", "forecastNote", "forecastBy", "forecastAt"]
+
+export function lineTracking(line) {
+  if (!line) return {}
+  return Object.fromEntries(LINE_TRACKING_FIELDS.filter((key) => line[key] != null && line[key] !== "").map((key) => [key, line[key]]))
 }
 
 export const LINE_STATUSES = ["Not started", "In progress", "Complete"]

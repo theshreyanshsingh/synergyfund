@@ -50,7 +50,8 @@ export default function TasksPage() {
     const timer = setTimeout(() => row.classList.remove("is-linked"), 4000)
     return () => clearTimeout(timer)
   }, [loaded])
-  const suggestions = [...new Set([...TASK_LABELS, ...known])]
+  // One button per label whatever its case ("verify" and "Verify" are the same label).
+  const suggestions = [...TASK_LABELS, ...known].filter((label, index, all) => all.findIndex((other) => other.toLowerCase() === label.toLowerCase()) === index)
 
   useEffect(() => {
     if (!canAssign) return undefined
@@ -78,7 +79,8 @@ export default function TasksPage() {
   }
 
   function addLabel(value) {
-    const label = value.trim().replace(/\s+/g, " ")
+    const typed = value.trim().replace(/\s+/g, " ")
+    const label = TASK_LABELS.find((known) => known.toLowerCase() === typed.toLowerCase()) || typed
     if (!label) return
     setLabels((current) => current.some((item) => item.toLowerCase() === label.toLowerCase()) ? current : [...current, label].slice(0, 8))
     setDraft("")
@@ -115,8 +117,14 @@ export default function TasksPage() {
   }
 
   async function toggle(row) {
-    await api(`/tasks/${row.id}`, { method: "PATCH", body: { done: !row.done } })
-    list.reload()
+    setError("")
+    try {
+      await api(`/tasks/${row.id}`, { method: "PATCH", body: { done: !row.done } })
+      if (editing?.id === row.id) setEditing(null)
+      list.reload()
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   async function remove(row) {
@@ -137,32 +145,33 @@ export default function TasksPage() {
       <WorkspacePage
         views={false}
         loading={!list.data && !list.error}
-        title="To-do list"
+        title="Tasks"
         action={canManage ? { label: "Add task", onClick: startCreate } : null}
-        // On phones a task is a short card: its name and priority, then one line with who, when and its status.
+        // The list stays short: each task is its name, due date and priority (or Complete). Notes, assignee,
+        // labels and the Mark done / Delete buttons are in the task itself, opened by tapping the row.
         columns={[
-          { key: "title", label: "Name", avatar: (row) => row.title, render: (row) => <span className="person-copy"><strong>{row.title}</strong><small className={row.notes ? "task-note" : "task-note is-empty"}>{row.notes || "No note"}</small></span> },
-          { key: "assignee", label: "Assignee", className: "hide-phone", render: (row) => row.assigneeName ? <span className="person-copy"><strong>{row.assigneeName}</strong>{row.assigneeEmail ? <small>{row.assigneeEmail}</small> : null}</span> : "Unassigned" },
-          { key: "labels", label: "Labels", className: "hide-phone", render: (row) => row.labels?.length ? <span className="label-row">{row.labels.map((label) => <StatusPill key={label}>{label}</StatusPill>)}</span> : "No label" },
-          { key: "due", label: "Due", className: "hide-phone", render: (row) => row.due || "No date" },
-          { key: "priority", label: "Priority", className: "task-priority", render: (row) => <StatusPill>{row.priority}</StatusPill> },
-          { key: "done", label: "Status", className: "hide-phone", render: (row) => <StatusPill>{row.done ? "Complete" : "Open"}</StatusPill> },
-          { key: "summary", label: "", className: "phone-only task-meta", render: (row) => (
-            <>
-              <span>{[row.assigneeName || "Unassigned", row.due ? `Due ${shortDate(row.due)}` : "No due date"].join(" · ")}</span>
-              <StatusPill>{row.done ? "Complete" : "Open"}</StatusPill>
-              {(row.labels || []).map((label) => <StatusPill key={label}>{label}</StatusPill>)}
-            </>
-          ) },
-          { key: "actions", label: "", pin: "right", className: "task-actions", render: (row) => (canEdit || canManage) ? <span className="row-actions"><button type="button" onClick={(event) => { event.stopPropagation(); toggle(row) }}>{row.done ? "Reopen" : "Mark done"}</button>{canManage && <button type="button" className="danger" onClick={(event) => { event.stopPropagation(); remove(row) }}>Delete</button>}</span> : null },
+          { key: "title", label: "Task", className: "task-title-col", render: (row) => <strong className={row.done ? "task-title is-done" : "task-title"}>{row.title}</strong> },
+          { key: "due", label: "Due", className: "task-due", render: (row) => row.due ? shortDate(row.due) : "—" },
+          { key: "priority", label: "Priority", className: "task-priority", render: (row) => <StatusPill>{row.done ? "Complete" : row.priority}</StatusPill> },
         ]}
         rows={items}
+        selectable={false}
         important={(row) => !row.done && (row.priority === "High" || row.labels?.includes("Verify"))}
-        onRow={(canEdit || canManage || canAssign) ? startEdit : undefined}
+        onRow={startEdit}
         empty="No tasks yet. Add one and label it, such as EMD, Mortgage payment, or Draw."
       />
       {editing && (
-        <FormSheet eyebrow="To-do list" title={editing.id ? "Edit task" : "Add a task"} hint="Labels group the work. Presets cover EMD, mortgage payments, and draws." error={error} pending={pending} onClose={() => setEditing(null)} onSubmit={save} submitLabel={editing.id ? "Save task" : "Add task"}>
+        <FormSheet
+          eyebrow="Tasks"
+          title={editing.id ? (canEdit || canManage ? "Edit task" : "Task") : "Add a task"}
+          hint={editing.id ? `${editing.done ? "Complete" : "Open"} · ${editing.assigneeName ? `Assigned to ${editing.assigneeName}` : "Unassigned"}` : "Labels group the work. Presets cover EMD, mortgage payments, and draws."}
+          error={error}
+          pending={pending}
+          onClose={() => setEditing(null)}
+          // People who can only view a task get it without Save.
+          onSubmit={!editing.id || canEdit || canManage || canAssign ? save : undefined}
+          submitLabel={editing.id ? "Save task" : "Add task"}
+        >
           <div className="form-grid">
             <label className="field wide"><span>What needs to happen?</span><input name="title" required defaultValue={editing.title || ""} disabled={Boolean(editing.id) && !(canEdit || canManage)} /></label>
             <label className="field"><span>Due</span><input name="due" type="date" defaultValue={editing.due || ""} disabled={Boolean(editing.id) && !(canEdit || canManage)} /></label>
@@ -215,7 +224,12 @@ export default function TasksPage() {
               <p className="field wide muted">{editing.assigneeName ? `Assigned to ${editing.assigneeName}` : "Unassigned"}</p>
             )}
             <label className="field wide"><span>Note</span><input name="notes" defaultValue={editing.notes || ""} disabled={Boolean(editing.id) && !(canEdit || canManage)} /></label>
-            {editing.id && canManage && <button type="button" className="danger" onClick={() => remove(editing)}>Delete task</button>}
+            {editing.id && (canEdit || canManage) && (
+              <div className="task-sheet-actions wide">
+                <button type="button" className="tool" onClick={() => toggle(editing)}>{editing.done ? "Reopen task" : "Mark done"}</button>
+                {canManage && <button type="button" className="danger" onClick={() => remove(editing)}>Delete task</button>}
+              </div>
+            )}
           </div>
         </FormSheet>
       )}

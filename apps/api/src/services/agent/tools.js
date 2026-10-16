@@ -606,10 +606,10 @@ export const TOOLS = [
   },
   {
     name: "list_tasks",
-    label: "Reading the to-do list",
+    label: "Reading the task list",
     permission: PERMISSIONS.propertiesRead,
     staffOnly: true,
-    description: "Open tasks on the to-do list with due date, priority, labels, property and assignee.",
+    description: "Open tasks on the task list with due date, priority, labels, property and assignee.",
     parameters: {
       type: "object",
       properties: {
@@ -664,10 +664,10 @@ export const TOOLS = [
       const properties = await scopedProperties(context)
       const names = new Map(properties.map((property) => [String(property._id), property.address]))
       let people = await User.find({ bot: { $ne: true } }).select("name email role title propertyIds").sort({ name: 1 })
-      const needle = String(args.name || "").trim().toLowerCase()
-      if (needle) people = people.filter((person) => `${person.name} ${person.email}`.toLowerCase().includes(needle))
-      // Email addresses follow the same rule as the to-do list: only for people who may assign tasks.
+      // Email addresses follow the same rule as the task list: only for people who may assign tasks.
       const showEmail = context.permissions.includes(PERMISSIONS.tasksAssign)
+      const needle = String(args.name || "").trim().toLowerCase()
+      if (needle) people = people.filter((person) => `${person.name} ${showEmail ? person.email : ""}`.toLowerCase().includes(needle))
       return {
         success: true,
         total: people.length,
@@ -730,7 +730,7 @@ export const TOOLS = [
       }
       if (args.type === "receipt") and.push({ kind: "receipt" })
       if (and.length) filter.$and = and
-      let files = await DocumentFile.find(filter).sort({ createdAt: -1 }).limit(1000)
+      let files = await DocumentFile.find(filter).sort({ createdAt: -1 }).limit(args.folder || (args.type && args.type !== "any") ? 20000 : 1000)
       if (args.type && !["any", "receipt"].includes(args.type)) files = files.filter((file) => documentType(file.name) === args.type)
       const wantedFolder = String(args.folder || "").trim().toLowerCase()
       if (wantedFolder) {
@@ -752,6 +752,7 @@ export const TOOLS = [
         success: true,
         total,
         shown: files.length,
+        ...(total > files.length ? { note: `Showing ${files.length} of ${total}. To include them all, call find_documents again with limit ${Math.min(total, 150)}${total > 150 ? " (150 is the most; narrow the search or make more than one zip)" : ""}.` } : {}),
         totalSize: sizeText(files.reduce((sum, file) => sum + (file.size || 0), 0)),
         // Every id first, so a long list cut short for length still has them all for zip_documents.
         ids: files.map((file) => String(file._id)),
@@ -798,7 +799,7 @@ export const TOOLS = [
       const name = String(args.name || "Documents").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Documents"
       const link = files.length === 1
         ? `/api/documents/${files[0]._id}/download`
-        : `/api/documents/zip?ids=${files.map((file) => String(file._id)).join(",")}&name=${encodeURIComponent(name)}&flat=1`
+        : `/api/documents/zip?ids=${files.map((file) => String(file._id)).join(",")}&name=${encodeURIComponent(name).replace(/[()]/g, (mark) => (mark === "(" ? "%28" : "%29"))}&flat=1`
       return {
         success: true,
         files: files.length,
@@ -806,7 +807,7 @@ export const TOOLS = [
         name: files.length === 1 ? files[0].name : `${name}.zip`,
         link,
         missing: wanted.length - files.length,
-        instructions: `Give the person this download as a markdown link: [Download ${files.length === 1 ? files[0].name : `${name}.zip`} (${files.length === 1 ? "1 file" : `${files.length} files`}, ${sizeText(bytes)})](${link})`,
+        instructions: `Give the person this download as a markdown link on a line of its own: [Download ${(files.length === 1 ? files[0].name : `${name}.zip`).replace(/[[\]]/g, "")} (${files.length === 1 ? "1 file" : `${files.length} files`}, ${sizeText(bytes)})](${link})`,
       }
     },
     summarize: (result) => ({ title: `Zip ready · ${result.files} ${result.files === 1 ? "file" : "files"}` }),

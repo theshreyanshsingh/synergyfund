@@ -46,7 +46,7 @@ export function TeammateSettings() {
           <h2>AI teammate</h2>
           <p>
             A team member who works in every property chat. It reads what the crew says and the photos they post, marks line items
-            in progress or complete with an expected finish date, emails the draws inbox and adds a high-priority to-do when a draw
+            in progress or complete with an expected finish date, emails the draws inbox and adds a high-priority task when a draw
             should be requested, answers when someone talks to it, and checks in with contractors when a house goes quiet
             (weekdays, 9 to 5). It is an AI and says so if anyone asks.
           </p>

@@ -16,6 +16,8 @@ import { CallButtons } from "../calls/CallButtons"
 
 const NARROW = "(max-width: 900px)"
 const TYPING_TTL = 5000
+// Unsent messages per conversation (and per thread), kept while the app is open, across Channels and Direct Messages.
+const DRAFTS = new Map()
 
 function addUnique(list, message) {
   if (list.some((item) => item.id === message.id)) return list.map((item) => (item.id === message.id ? message : item))
@@ -93,7 +95,7 @@ export function ChatApp({ mode = "channels" }) {
   const [marks, setMarks] = useState({})
   const [threadVersion, setThreadVersion] = useState(0)
   const markedFor = useRef("")
-  const drafts = useRef(new Map())
+  const drafts = useRef(DRAFTS)
   const readTimers = useRef(new Map())
   const activeRef = useRef(activeId)
   const visibleRef = useRef(visible)
@@ -104,11 +106,6 @@ export function ChatApp({ mode = "channels" }) {
   const isAdmin = session?.user?.role === "admin"
   activeRef.current = activeId
 
-  // Lets the server skip the notification only on this device, and only for the chat open here.
-  useEffect(() => {
-    setActiveChat(activeId)
-    return () => setActiveChat("")
-  }, [activeId])
   visibleRef.current = visible
   threadRef.current = threadId
 
@@ -116,6 +113,13 @@ export function ChatApp({ mode = "channels" }) {
   const inMode = useCallback((channel) => (channel.kind === "direct") === direct, [direct])
   const found = channels.find((channel) => channel.id === activeId) || null
   const active = found && inMode(found) ? found : null
+  const shownId = active ? activeId : ""
+
+  // Lets the server skip the notification only on this device, and only for the chat open here.
+  useEffect(() => {
+    setActiveChat(shownId)
+    return () => setActiveChat("")
+  }, [shownId])
 
   const loadBoot = useCallback(async () => {
     try {
@@ -170,6 +174,7 @@ export function ChatApp({ mode = "channels" }) {
     const base = (toDirect ?? (target ? target.kind === "direct" : direct)) ? "/messages" : "/chat"
     const url = id ? `${base}?c=${id}${nextThread ? `&t=${nextThread}` : ""}` : base
     setSearch(null)
+    setError("")
     if (replace) router.replace(url, { scroll: false })
     else router.push(url, { scroll: false })
   }, [router, direct])
@@ -230,7 +235,7 @@ export function ChatApp({ mode = "channels" }) {
   }, [threadId, threadVersion])
 
   useEffect(() => {
-    const unread = channels.filter(inMode).reduce((total, channel) => total + (channel.mentions || 0), 0)
+    const unread = channels.reduce((total, channel) => total + (channel.mentions || 0), 0)
     const name = direct ? "Direct Messages" : "Channels"
     const title = unread ? `(${unread}) ${name} · SynergiFund` : `${name} · SynergiFund`
     document.title = title
@@ -444,12 +449,14 @@ export function ChatApp({ mode = "channels" }) {
   const feed = feeds[activeId]
   const typingHere = Object.entries(typing[activeId] || {}).filter(([id]) => id !== me).map(([, value]) => value.name)
   const typingThread = Object.entries(typing[threadId] || {}).filter(([id]) => id !== me).map(([, value]) => value.name)
-  const panel = threadId ? "thread" : details && active ? "details" : ""
+  const panel = threadId && active ? "thread" : details && active ? "details" : ""
 
   return (
     <div className={`chat-page${activeId ? " has-active" : ""}${panel ? " has-panel" : ""}`}>
       <ChatNav
         mode={mode}
+        error={active ? "" : error}
+        onDismissError={() => setError("")}
         channels={channels}
         people={people}
         peopleList={peopleList}
@@ -555,7 +562,7 @@ export function ChatApp({ mode = "channels" }) {
   )
 }
 
-function ChatNav({ mode, channels, people, peopleList, me, online, activeId, status, filter, canCreate, onFilter, onSearch, onOpen, onCreate, onDirect, onPerson }) {
+function ChatNav({ mode, error, onDismissError, channels, people, peopleList, me, online, activeId, status, filter, canCreate, onFilter, onSearch, onOpen, onCreate, onDirect, onPerson }) {
   const direct = mode === "direct"
   const [collapsed, setCollapsed] = useState({})
   const [permission, setPermission] = useState("granted")
@@ -617,6 +624,12 @@ function ChatNav({ mode, channels, people, peopleList, me, online, activeId, sta
         <input value={filter} placeholder="Find or search messages" aria-label="Find conversations or search messages" onChange={(event) => onFilter(event.target.value)} />
         {filter && <button type="submit" className="chat-nav-search-go">Search</button>}
       </form>
+      {error && (
+        <div className="banner chat-nav-error" role="alert">
+          <span>{error}</span>
+          <button type="button" aria-label="Dismiss" onClick={onDismissError}><Icon name="close" size={12} /></button>
+        </div>
+      )}
       <div className="chat-nav-list">
         {!direct && section("channels", "Channels", rooms, (channel) => row(channel, <Icon name={channel.private ? "lock" : "hash"} size={15} />), canCreate && (
           <button type="button" className="chat-nav-add" aria-label="Create a channel" title="Create a channel" onClick={onCreate}><Icon name="plus" size={14} /></button>
@@ -1002,7 +1015,7 @@ function DetailsPanel({ channel, people, peopleList, me, isAdmin, online, member
             <div key={person.id} className="chat-member">
               <Avatar name={person.name} online={online.has(person.id)} size="sm" />
               <span><b>{person.name}{person.id === me ? " (you)" : ""}</b><small>{person.email}</small></span>
-              {person.id !== me && <button type="button" className="chat-member-action" onClick={() => onMessage(person.id)}>Message</button>}
+              {person.id !== me && !person.bot && <button type="button" className="chat-member-action" onClick={() => onMessage(person.id)}>Message</button>}
               {manage && channel.private && person.id !== me && (
                 <button type="button" className="chat-member-action is-danger" onClick={() => patch({ removeMemberIds: [person.id] })}>Remove</button>
               )}

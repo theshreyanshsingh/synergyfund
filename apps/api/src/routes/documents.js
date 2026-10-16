@@ -309,8 +309,9 @@ function placeIdOf(file) {
 }
 
 // The path inside the zip: the property or company first when the zip mixes several, then the folder.
-function zipEntryName(file, used, { withPlace, withFolder, placeNames }) {
-  const base = zipSafe(file.name) || "file"
+function zipEntryName(file, used, { withPlace, withFolder, placeNames, placeInName }) {
+  // A flat zip with files from several houses or companies starts each name with where it is from.
+  const base = `${placeInName ? `${zipSafe(placeNames.get(placeIdOf(file)) || "Not filed")} - ` : ""}${zipSafe(file.name) || "file"}`
   const folder = [
     withPlace ? zipSafe(placeNames.get(placeIdOf(file)) || "Not filed") : "",
     withFolder ? zipSafe(folderName(placeOf(file), folderOf(file))) : "",
@@ -352,7 +353,9 @@ async function writeZip(res, files, placeNames = new Map(), { flat = false } = {
     }
   })
   const used = new Set()
-  const withPlace = !flat && new Set(files.map(placeIdOf)).size > 1
+  const manyPlaces = new Set(files.map(placeIdOf)).size > 1
+  const withPlace = !flat && manyPlaces
+  const placeInName = flat && manyPlaces
   const withFolder = !flat && (withPlace || new Set(files.map((file) => `${placeOf(file)}:${folderOf(file)}`)).size > 1)
   const entries = []
   let offset = 0
@@ -364,7 +367,7 @@ async function writeZip(res, files, placeNames = new Map(), { flat = false } = {
     } catch {
       continue
     }
-    const name = Buffer.from(zipEntryName(file, used, { withPlace, withFolder, placeNames }), "utf8")
+    const name = Buffer.from(zipEntryName(file, used, { withPlace, withFolder, placeNames, placeInName }), "utf8")
     const crc = zlib.crc32(data) >>> 0
     const { time, day } = dosTime(file.createdAt)
     const header = Buffer.alloc(30)

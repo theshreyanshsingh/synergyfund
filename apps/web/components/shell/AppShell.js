@@ -5,7 +5,7 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { can, PERMISSIONS } from "@synergifund/shared"
 import { useSession } from "./Providers"
-import { Sidebar } from "./Sidebar"
+import { Sidebar, useChatBadges } from "./Sidebar"
 import { CommandPalette } from "./CommandPalette"
 import { Loader } from "../ui/Loader"
 import { Icon } from "../ui/Icon"
@@ -25,6 +25,8 @@ export function AppShell({ children }) {
   const [collapsed, setCollapsed] = useState(false)
   const openSearch = useCallback(() => setSearchOpen(true), [])
   const closeSearch = useCallback(() => setSearchOpen(false), [])
+  // Contractors have no sidebar, so their top bar shows what is waiting on Channels and Messages.
+  const badges = useChatBadges(session?.user?.id, Boolean(session?.user?.role === "contractor" && can(session.user, PERMISSIONS.chatUse)))
 
   useEffect(() => {
     setMenuOpen(false)
@@ -74,9 +76,9 @@ export function AppShell({ children }) {
           <nav className="contractor-nav" aria-label="Main">
             <Link href="/expenses" className={pathname === "/expenses" ? "contractor-link is-on" : "contractor-link"}>Expenses</Link>
             {/* Tasks assigned to them, which their "Task assigned" emails open. */}
-            {can(session.user, PERMISSIONS.tasksEdit) && <Link href="/tasks" className={pathname === "/tasks" ? "contractor-link is-on" : "contractor-link"}>To-do</Link>}
-            {can(session.user, PERMISSIONS.chatUse) && <Link href="/chat" className={pathname === "/chat" ? "contractor-link is-on" : "contractor-link"}>Channels</Link>}
-            {can(session.user, PERMISSIONS.chatUse) && <Link href="/messages" className={pathname === "/messages" ? "contractor-link is-on" : "contractor-link"}>Messages</Link>}
+            {can(session.user, PERMISSIONS.tasksEdit) && <Link href="/tasks" className={pathname === "/tasks" ? "contractor-link is-on" : "contractor-link"}>Tasks</Link>}
+            {can(session.user, PERMISSIONS.chatUse) && <Link href="/chat" className={pathname === "/chat" ? "contractor-link is-on" : "contractor-link"}>Channels{badges.channels > 0 && <em className="contractor-count">{badges.channels}</em>}</Link>}
+            {can(session.user, PERMISSIONS.chatUse) && <Link href="/messages" className={pathname === "/messages" ? "contractor-link is-on" : "contractor-link"}>Messages{badges.direct > 0 && <em className="contractor-count">{badges.direct}</em>}</Link>}
             {can(session.user, PERMISSIONS.chatUse) && <Link href="/calls" className={pathname === "/calls" ? "contractor-link is-on" : "contractor-link"}>Calls</Link>}
             <Link href="/settings" className={pathname === "/settings" ? "contractor-link is-on" : "contractor-link"}>Settings</Link>
           </nav>

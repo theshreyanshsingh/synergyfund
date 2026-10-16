@@ -65,6 +65,11 @@ teammateRouter.patch(
       update.drawEmail = email
     }
     if (update.teammateOn && !modelKey()) return sendError(res, 400, "The AI teammate needs an AI model. Add OPENROUTER_API_KEY to the server settings first.")
+    // Turned back on: start everyone's quiet period over, and forget check-ins from before it was off.
+    if (update.teammateOn && !(await AgentSetting.exists({ key: "org", teammateOn: true }))) {
+      update.teammateOnAt = new Date()
+      await SiteWatch.updateMany({}, { $set: { followUpsUnanswered: 0 } })
+    }
     await AgentSetting.updateOne({ key: "org" }, { $set: { ...update, updatedBy: req.user.name } }, { upsert: true })
     forgetTeammateSettings()
     const settings = await teammateSettings({ fresh: true })

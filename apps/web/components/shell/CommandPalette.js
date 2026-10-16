@@ -40,7 +40,7 @@ export function CommandPalette({ user, open, onClose }) {
       .filter(match)
       .slice(0, 8)
     const owners = companies
-      .map((company) => ({ id: company.id, label: company.name, hint: [company.entityType, `${company.properties} ${company.properties === 1 ? "property" : "properties"}`].filter(Boolean).join(" · "), href: `/companies/${company.id}`, icon: "briefcase" }))
+      .map((company) => ({ id: company.id, label: company.name, hint: [company.entityType, `${company.properties} ${company.properties === 1 ? "property" : "properties"}`].filter(Boolean).join(" · "), href: `/companies/${company.id}`, icon: "buildings" }))
       .filter(match)
       .slice(0, 6)
     return [

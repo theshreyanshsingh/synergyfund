@@ -18,13 +18,13 @@ const KINDS = [
   { id: "bill", label: "Bills" },
   { id: "loan", label: "Loans" },
   { id: "draw", label: "Draws" },
-  { id: "task", label: "To-dos" },
+  { id: "task", label: "Tasks" },
   { id: "expense", label: "Posted costs" },
 ]
 const VIEWS = [{ id: "month", label: "Month" }, { id: "week", label: "Week" }, { id: "day", label: "Day" }]
 const VIEW_KEY = "synergifund-calendar-view"
 const HOUR = 48
-const OPEN_LABELS = { bill: "Open in Payments", loan: "Open the loan", draw: "Open the draws", task: "Open the to-do", expense: "Open in Expenses" }
+const OPEN_LABELS = { bill: "Open in Payments", loan: "Open the loan", draw: "Open the draws", task: "Open the task", expense: "Open in Expenses" }
 
 export default function CalendarPage() {
   return (
@@ -50,7 +50,7 @@ function CalendarScreen() {
   const canSeeAllTasks = Boolean(data.data?.canSeeAllTasks)
   const canTask = Boolean(session?.user && can(session.user, PERMISSIONS.tasksManage))
   const events = (data.data?.events || []).filter((event) => kinds[event.kind])
-  const today = data.data?.today || iso(new Date())
+  const today = iso(new Date())
   const urgent = events.filter((event) => event.urgent)
 
   // Remember the view; a link to a date (from an invitation) opens that day.
@@ -103,7 +103,7 @@ function CalendarScreen() {
     setCursor(next)
   }
 
-  // A new event or to-do, on a day (and time) or at the next full hour today.
+  // A new event or task, on a day (and time) or at the next full hour today.
   function create(kind, date = "", start = "") {
     setCreating(false)
     setDayOpen("")
@@ -129,7 +129,7 @@ function CalendarScreen() {
             {creating && (
               <div className="cal-create-menu" role="menu">
                 <button type="button" role="menuitem" onClick={() => create("event")}><Icon name="calendar" size={15} /> Event</button>
-                {canTask && <button type="button" role="menuitem" onClick={() => create("task")}><Icon name="check" size={15} /> To-do</button>}
+                {canTask && <button type="button" role="menuitem" onClick={() => create("task")}><Icon name="check" size={15} /> Task</button>}
               </div>
             )}
           </div>
@@ -141,10 +141,10 @@ function CalendarScreen() {
                 <label>
                   <input type="checkbox" checked={kinds[kind.id]} onChange={() => setKinds((current) => ({ ...current, [kind.id]: !current[kind.id] }))} />
                   <i className={`tone-${kindTone(kind.id)}`} />
-                  {kind.id === "task" && taskScope === "mine" ? "My to-dos" : kind.label}
+                  {kind.id === "task" && taskScope === "mine" ? "My tasks" : kind.label}
                 </label>
                 {kind.id === "task" && canSeeAllTasks && (
-                  <div className="paycal-scope" role="group" aria-label="Whose to-dos">
+                  <div className="paycal-scope" role="group" aria-label="Whose tasks">
                     <button type="button" className={taskScope === "mine" ? "is-on" : undefined} onClick={() => setTaskScope("mine")}>Mine</button>
                     <button type="button" className={taskScope === "all" ? "is-on" : undefined} onClick={() => setTaskScope("all")}>Everyone</button>
                   </div>
@@ -230,7 +230,7 @@ function MonthView({ cursor, events, today, selected, onDay, onItem }) {
         const key = iso(cell.date)
         const matches = sortDay(events.filter((event) => event.date === key))
         return (
-          <div key={key} role="button" tabIndex={0} className={`paycal-cell${cell.inMonth ? "" : " is-outside"}${key === selected ? " is-selected" : ""}`} onClick={() => onDay(key)} onKeyDown={(event) => { if (event.key === "Enter") onDay(key) }}>
+          <div key={key} role="button" tabIndex={0} className={`paycal-cell${cell.inMonth ? "" : " is-outside"}${key === selected ? " is-selected" : ""}`} onClick={() => onDay(key)} onKeyDown={(event) => { if (event.key === "Enter" && event.target === event.currentTarget) onDay(key) }}>
             <span className={key === today ? "paycal-num is-today" : "paycal-num"}>{cell.date.getDate()}</span>
             {matches.slice(0, 3).map((event) => (
               <button key={event.id} type="button" className={`paycal-pill tone-${event.tone}`} onClick={(click) => { click.stopPropagation(); onItem(event) }}>
@@ -333,9 +333,14 @@ function TimeGrid({ days, events, today, onDay, onMore, onSlot, onItem }) {
   )
 }
 
-// Side by side when events overlap, like a paper diary.
+// Side by side when events overlap, like a paper diary. Blocks are at least half an hour tall on screen, so a 15-minute
+// event and the one right after it sit side by side instead of covering each other.
+function shownEnd(event) {
+  return Math.max(toMinutes(event.end), toMinutes(event.start) + 30)
+}
+
 function layout(items) {
-  const sorted = [...items].sort((a, b) => toMinutes(a.start) - toMinutes(b.start) || toMinutes(b.end) - toMinutes(a.end))
+  const sorted = [...items].sort((a, b) => toMinutes(a.start) - toMinutes(b.start) || shownEnd(b) - shownEnd(a))
   const placed = []
   let group = []
   let groupEnd = -1
@@ -344,7 +349,7 @@ function layout(items) {
     for (const item of group) {
       let column = ends.findIndex((end) => end <= toMinutes(item.start))
       if (column === -1) column = ends.length
-      ends[column] = toMinutes(item.end)
+      ends[column] = shownEnd(item.event)
       item.column = column
     }
     for (const item of group) placed.push({ event: item.event, column: item.column, columns: ends.length })
@@ -353,8 +358,7 @@ function layout(items) {
   for (const event of sorted) {
     if (group.length && toMinutes(event.start) >= groupEnd) flush()
     group.push({ event, start: event.start, end: event.end })
-    groupEnd = Math.max(groupEnd, toMinutes(event.end))
-    if (group.length === 1) groupEnd = toMinutes(event.end)
+    groupEnd = group.length === 1 ? shownEnd(event) : Math.max(groupEnd, shownEnd(event))
   }
   if (group.length) flush()
   return placed
@@ -363,16 +367,19 @@ function layout(items) {
 /* ---------- popovers ---------- */
 
 function Popover({ title, onClose, children, wide = false }) {
+  const back = useRef(null)
   useEffect(() => {
     function onKey(event) {
-      // A list inside (the guest picker) handles its own Escape first.
-      if (event.key === "Escape" && !event.defaultPrevented) onClose()
+      // A list inside (the guest picker) handles its own Escape first, and only the popover on top closes.
+      if (event.key !== "Escape" || event.defaultPrevented) return
+      const open = document.querySelectorAll(".paycal-pop-back")
+      if (open[open.length - 1] === back.current) onClose()
     }
     document.addEventListener("keydown", onKey)
     return () => document.removeEventListener("keydown", onKey)
   }, [onClose])
   return (
-    <div className="paycal-pop-back" onMouseDown={onClose}>
+    <div className="paycal-pop-back" ref={back} onMouseDown={onClose}>
       <section className={wide ? "paycal-pop cal-pop is-wide" : "paycal-pop cal-pop"} role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
         {children}
       </section>
@@ -390,7 +397,7 @@ function DayList({ date, today, items, canTask, onClose, onCreate, onItem }) {
       </header>
       <div className="cal-day-actions">
         <button type="button" onClick={() => onCreate("event")}><Icon name="plus" size={14} /> Event</button>
-        {canTask && <button type="button" onClick={() => onCreate("task")}><Icon name="plus" size={14} /> To-do</button>}
+        {canTask && <button type="button" onClick={() => onCreate("task")}><Icon name="plus" size={14} /> Task</button>}
       </div>
       {sorted.length === 0 && <p className="cal-empty">Nothing on this day yet.</p>}
       <div className="cal-day-list">
@@ -471,11 +478,12 @@ function Editor({ initial, canTask, canAssign, me, onClose, onSaved }) {
   const properties = useApi("/properties")
   const assignees = useApi(canAssign && kind === "task" ? "/tasks/assignees" : "")
 
+  const lastLength = useRef(60)
   function moveStart(value) {
-    // Keep the same length when the start moves.
-    const length = Math.max(15, toMinutes(end) - toMinutes(start))
+    // Keep the same length when the start moves (remembered while the start is being retyped).
+    if (start && end && toMinutes(end) > toMinutes(start)) lastLength.current = toMinutes(end) - toMinutes(start)
     setStart(value)
-    if (value) setEnd(fromMinutes(Math.min(23 * 60 + 59, toMinutes(value) + length)))
+    if (value) setEnd(fromMinutes(Math.min(23 * 60 + 59, toMinutes(value) + Math.max(15, lastLength.current))))
   }
 
   async function save(event) {
@@ -501,19 +509,20 @@ function Editor({ initial, canTask, canAssign, me, onClose, onSaved }) {
     }
   }
 
-  const options = (people.data?.items || []).filter((person) => person.id !== me).map((person) => ({ id: person.id, label: person.name, hint: person.email }))
+  const organizer = initial.organizerId || me
+  const options = (people.data?.items || []).filter((person) => person.id !== organizer).map((person) => ({ id: person.id, label: person.name, hint: person.email }))
   return (
-    <Popover title={editing ? "Edit event" : kind === "task" ? "New to-do" : "New event"} onClose={pending ? () => {} : onClose} wide>
+    <Popover title={editing ? "Edit event" : kind === "task" ? "New task" : "New event"} onClose={pending ? () => {} : onClose} wide>
       <form className="cal-editor" onSubmit={save}>
         <header>
           <span />
           <button type="button" aria-label="Close" onClick={onClose}>×</button>
         </header>
-        <input className="cal-editor-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder={kind === "task" ? "Add a to-do" : "Add title"} maxLength={200} autoFocus />
+        <input className="cal-editor-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder={kind === "task" ? "Add a task" : "Add title"} maxLength={200} autoFocus />
         {!editing && canTask && (
           <div className="cal-kind" role="tablist">
             <button type="button" role="tab" aria-selected={kind === "event"} className={kind === "event" ? "is-on" : undefined} onClick={() => setKind("event")}>Event</button>
-            <button type="button" role="tab" aria-selected={kind === "task"} className={kind === "task" ? "is-on" : undefined} onClick={() => setKind("task")}>To-do</button>
+            <button type="button" role="tab" aria-selected={kind === "task"} className={kind === "task" ? "is-on" : undefined} onClick={() => setKind("task")}>Task</button>
           </div>
         )}
         <div className="cal-editor-row">
@@ -530,7 +539,7 @@ function Editor({ initial, canTask, canAssign, me, onClose, onSaved }) {
             {kind === "event" && <label className="cal-allday-toggle"><input type="checkbox" checked={allDay} onChange={(event) => setAllDay(event.target.checked)} /> All day</label>}
             {kind === "task" && (
               <select value={priority} onChange={(event) => setPriority(event.target.value)} aria-label="Priority">
-                {["Low", "Medium", "High"].map((item) => <option key={item} value={item}>{item} priority</option>)}
+                {["Low", "Medium", "High"].map((item) => <option key={item} value={item}>{item} Priority</option>)}
               </select>
             )}
           </div>
@@ -538,7 +547,7 @@ function Editor({ initial, canTask, canAssign, me, onClose, onSaved }) {
         {kind === "event" && (
           <div className="cal-editor-row">
             <Icon name="users" size={16} />
-            <MultiSelect options={options} selected={guestIds} onChange={setGuestIds} placeholder="Add guests" noun={["person", "people"]} emptyText={people.data ? "Nobody else uses the calendar yet." : "Loading people…"} />
+            <MultiSelect options={options} selected={guestIds} onChange={setGuestIds} placeholder="Add guests" noun={["person", "people"]} emptyText={people.error ? `Couldn't load people: ${people.error}` : people.data ? "Nobody else uses the calendar yet." : "Loading people…"} />
           </div>
         )}
         {kind === "task" && canAssign && (
@@ -559,7 +568,7 @@ function Editor({ initial, canTask, canAssign, me, onClose, onSaved }) {
         <div className="cal-editor-row">
           <Icon name="building" size={16} />
           <select value={propertyId} onChange={(event) => setPropertyId(event.target.value)} aria-label="Property">
-            <option value="">No property</option>
+            <option value="">No Property</option>
             {(properties.data?.items || []).map((property) => <option key={property.id} value={property.id}>{property.address}</option>)}
           </select>
         </div>
@@ -612,7 +621,7 @@ function MiniMonth({ cursor, today, events, onPick }) {
 }
 
 function kindLabel(kind) {
-  return { event: "Event", bill: "Bill", loan: "Loan", draw: "Draw", task: "To-do", expense: "Posted cost" }[kind] || "Item"
+  return { event: "Event", bill: "Bill", loan: "Loan", draw: "Draw", task: "Task", expense: "Posted cost" }[kind] || "Item"
 }
 
 function kindTone(kind) {

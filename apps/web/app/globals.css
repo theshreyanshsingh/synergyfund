@@ -101,9 +101,12 @@ button { cursor: pointer; }
 /* Labels have every word capitalized: menus, buttons, titles, tabs, headings, table headers, field names and status
    pills. What people typed stays exactly as written (fields, messages, notes, file names, emails), and so do sentences.
    All :where(), so a component's own text-transform (an uppercase eyebrow) still wins. */
-:where(h1, h2, h3, h4, h5, h6, th, legend, summary, button, label, select, a[role="button"], [role="tab"], [role="menuitem"]) { text-transform: capitalize; }
-:where(input, textarea, [contenteditable], td, p, small, em, blockquote, li, pre, code, .keep-case, .chat-nav-row, .palette-row, .paycal-pill, .paycal-attn, .cal-event, .cal-day-item, .cal-detail-title, .agent-download, .sr-only) { text-transform: none; }
-:where(.nav-link, .nav-label, .page-title, .stat-label, .pill, .role-pill, .label-chip, .doc-badge, .chat-nav-heading, .chat-nav-sub, .palette-label, .agent-label, .agent-draft-head span, .agent-email-field > span, .agent-send-main, .agent-send-menu a, .agent-send-menu button, .contractor-link, a.tool, a.primary, a.ghost, .field > span, .role-block > span, .property-figure > span, .overview-card-copy > span, .install-card strong, .crumbs-text, .agent-empty p, .chat-empty-main p, .paycal-group h2, .overview-projection > div > span, .draw-health) { text-transform: capitalize; }
+:where(h1, h2, h3, h4, h5, h6, th, legend, summary, button, label, a[role="button"], [role="tab"], [role="menuitem"]) { text-transform: capitalize; }
+:where(input, textarea, [contenteditable], td, p, small, em, blockquote, li, pre, code, .keep-case, .chat-nav-row, .palette-row, .paycal-pill, .paycal-attn, .cal-event, .cal-day-item, .cal-detail-title, .agent-download, .sr-only,
+  .overview-attn-copy strong, .scope-line-head b, .draw-fold-title b, .draw-property-name b, .draw-lines-head b, .line-card-head b, .folder-copy strong,
+  .chat-head-copy h2, .chat-results, .chat-results button, .chat-mention-menu, .chat-mention-menu button, .chat-text, .agent-history-row button, .agent-md h1, .agent-md h2, .agent-md h3, .agent-md h4, .agent-md th, .agent-title, .agent-history-row,
+  .reader-tab, .sheet, .doc-html) { text-transform: none; }
+:where(.nav-link, .nav-label, .page-title, .stat-label, .pill, .role-pill, .doc-badge, .chat-nav-heading, .chat-nav-sub, .palette-label, .agent-label, .agent-draft-head span, .agent-email-field > span, .agent-send-main, .agent-send-menu a, .agent-send-menu button, .contractor-link, a.tool, a.primary, a.ghost, .field > span, .role-block > span, .property-figure > span, .overview-card-copy > span, .install-card strong, .agent-empty p, .chat-empty-main p, .paycal-group h2, .overview-projection > div > span, .draw-health) { text-transform: capitalize; }
 a { color: inherit; text-decoration: none; }
 
 .app { display: flex; height: 100vh; overflow: hidden; }
@@ -117,6 +120,7 @@ a { color: inherit; text-decoration: none; }
 .contractor-nav { display: flex; align-items: center; justify-content: center; gap: 22px; min-width: 0; }
 .contractor-link { color: var(--muted); font-weight: 650; padding: 6px 2px; white-space: nowrap; }
 .contractor-link.is-on { color: var(--text); }
+.contractor-count { display: inline-grid; place-items: center; min-width: 17px; height: 17px; margin-left: 5px; padding: 0 5px; border-radius: 99px; background: var(--accent); color: var(--on-accent); font-size: 10.5px; font-style: normal; font-weight: 700; vertical-align: 1px; }
 .contractor-tools { display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-width: 0; }
 .contractor-person { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 760px) {
@@ -851,6 +855,7 @@ button.paycal-more { border: 0; background: transparent; text-align: left; curso
 .agent-page .workspace-top { margin-bottom: 0; }
 .agent-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .agent-head-actions .import-button { display: inline-flex; align-items: center; gap: 6px; }
+.agent-temp-toggle.is-on { border-color: var(--ink); background: var(--ink); color: var(--on-ink); }
 .agent-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; scroll-behavior: smooth; }
 .agent-scroll > * { width: min(760px, 100%); }
 .agent-list { display: flex; flex-direction: column; gap: 8px; padding: 12px 0 16px; color: var(--text); font-size: 13px; font-weight: 500; line-height: 1.65; }
@@ -1805,6 +1810,9 @@ button.paycal-more { border: 0; background: transparent; text-align: left; curso
 .chat-empty-main p { margin: 8px 0 0; color: var(--text); font-size: 15px; font-weight: 650; }
 .chat-empty-main span { font-size: 13px; }
 .chat-empty-main .chat-empty-start { margin: 12px 0 0; }
+.chat-nav-error { display: flex; align-items: flex-start; gap: 8px; margin: 0 10px 8px; font-size: 12px; }
+.chat-nav-error span { flex: 1; }
+.chat-nav-error button { border: 0; background: transparent; color: inherit; padding: 2px; }
 .chat-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line); background: var(--white); }
 .chat-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 60px; padding: 10px 14px 10px 18px; border-bottom: 1px solid var(--line); }
 .chat-panel-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
@@ -1892,6 +1900,13 @@ button.paycal-more { border: 0; background: transparent; text-align: left; curso
 .app.is-contractor .main:has(.chat-page) { padding: 0; }
 @media (max-width: 1100px) {
   .app.is-contractor .main:has(.chat-page) { height: calc(100dvh - 58px); margin-top: 0; padding: 0; }
+}
+
+/* Installed on an iPhone home screen the app has no viewport-fit=cover, so iOS reports a zero bottom safe area
+   while the home indicator still sits over the bottom of the screen. Keep the message boxes clear of it. */
+@media (display-mode: standalone) and (max-width: 900px) {
+  .chat-composer, .chat-panel .chat-composer { padding-bottom: max(calc(10px + env(safe-area-inset-bottom)), 30px); }
+  .agent-composer { padding-bottom: max(calc(4px + env(safe-area-inset-bottom)), 26px); }
 }
 
 /* No zooming on phones and tablets: scrolling still works, pinch and double-tap zoom do not. */
@@ -2847,22 +2862,23 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .fold-open { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 40px; border: 0; border-radius: 10px; background: var(--ink); color: var(--on-ink); font: inherit; font-weight: 650; cursor: pointer; }
   .fold-open svg { transform: rotate(-90deg); }
 
-  /* To-do list: a short card per task. */
   .grid td.hide-phone { display: none; }
   .grid td.phone-only { display: flex; }
-  .grid tr:has(> td.task-meta) { gap: 6px 10px; padding: 10px 12px; }
-  .grid tr:has(> td.task-meta) > td.check-col { display: none; }
-  /* First line: the name with its priority. Second line: who, when and status, with the buttons. */
-  .grid tr:has(> td.task-meta) > td[data-primary="true"] { flex: 1 1 calc(100% - 110px); min-width: 0; }
-  .grid tr:has(> td.task-meta) .avatar { display: none; }
-  .grid tr:has(> td.task-meta) .task-note { font-size: 12px; }
-  .grid tr:has(> td.task-meta) .task-note.is-empty { display: none; }
+
+  /* Tasks: one line per task (name, due date, priority). Everything else opens with a tap. */
+  .grid tr:has(> td.task-title-col) { align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; }
+  .grid tr > td.task-title-col[data-primary="true"] { flex: 1 1 0; min-width: 0; }
+  .grid tr > td.task-due[data-label]:not([data-primary="true"]):not(.pin-right),
   .grid tr > td.task-priority[data-label]:not([data-primary="true"]):not(.pin-right) { flex: none; }
+  .grid tr > td.task-due[data-label]:not([data-primary="true"]):not(.pin-right)::before,
   .grid tr > td.task-priority[data-label]:not([data-primary="true"]):not(.pin-right)::before { display: none; }
-  .grid td.task-meta { flex: 1 1 120px; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; color: var(--muted); font-size: 13px; }
-  .grid td.pin-right.task-actions { flex: 0 0 auto; margin-left: auto; align-self: center; }
-  .grid td.task-actions .row-actions button { padding: 5px 10px; font-size: 13px; }
 }
+
+.task-title { display: block; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.task-title.is-done { color: var(--muted); font-weight: 500; text-decoration: line-through; }
+.grid td.task-due { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.grid tr:has(> td.task-title-col) { cursor: pointer; }
+.task-sheet-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* A row opened from a link (a task from its "Task assigned" email): highlighted for a moment. */
 .grid tr.is-linked td { background: color-mix(in srgb, var(--accent) 12%, var(--white)); transition: background .4s; }

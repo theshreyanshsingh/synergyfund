@@ -48,7 +48,7 @@ export default function DocumentViewerPage({ params }) {
     <DetailFrame
       backHref={back.href}
       backLabel={back.label}
-      title={data.file.name}
+      title={<span className="keep-case">{data.file.name}</span>}
       meta={[labelFor(data), sizeText(data.file.size), `Added ${when(data.file.createdAt)}`, data.file.uploadedBy].filter(Boolean).join(" · ")}
       actions={[
         data.kind === "pdf" && <a key="open" className="import-button" href={data.url} target="_blank" rel="noopener">Open full screen</a>,

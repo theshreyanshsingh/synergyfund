@@ -210,7 +210,7 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camer
 
   if (!canEdit) {
     return (
-      <InfoSheet eyebrow="Expenses" title={item.title} hint={`${item.book} · ${property?.address || "Company"}`} onClose={onClose}>
+      <InfoSheet eyebrow="Expenses" title={<span className="keep-case">{item.title}</span>} hint={`${item.book} · ${property?.address || "Company"}`} onClose={onClose}>
         {photosBlock}
         <dl className="property-facts">
           <div><dt>Amount</dt><dd>{money(item.amount)}</dd></div>
@@ -236,7 +236,7 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camer
   }
 
   return (
-    <FormSheet eyebrow="Expenses" title={item.title} hint="Save sends this request back for review. You can still change the photos until it is approved or rejected." onClose={onClose} onSubmit={save} submitLabel="Save changes" pending={pending} error={error}>
+    <FormSheet eyebrow="Expenses" title={<span className="keep-case">{item.title}</span>} hint="Save sends this request back for review. You can still change the photos until it is approved or rejected." onClose={onClose} onSubmit={save} submitLabel="Save changes" pending={pending} error={error}>
       {photosBlock}
       <div className="form-grid">
         {removed.map((id) => <input key={id} type="hidden" name="removeProof" value={id} />)}

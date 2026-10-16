@@ -12,6 +12,7 @@ export const agentRouter = Router()
 const MAX_PROMPT = 10000
 const MODEL_ID = /^[a-z0-9][\w.-]*\/[\w.:-]+$/i
 const CATALOG_TTL_MS = 60 * 60 * 1000
+const TEMPORARY_CHAT_TTL_MS = 24 * 60 * 60 * 1000
 let catalog = { at: 0, models: null }
 
 export async function agentSettings() {
@@ -168,7 +169,7 @@ agentRouter.patch(
 agentRouter.get(
   "/threads",
   asyncHandler(async (req, res) => {
-    const threads = await AgentThread.find({ userId: req.user._id }).select("title updatedAt").sort({ updatedAt: -1 }).limit(100)
+    const threads = await AgentThread.find({ userId: req.user._id, temporary: { $ne: true } }).select("title updatedAt").sort({ updatedAt: -1 }).limit(100)
     res.json({ items: threads.map(presentThread) })
   }),
 )
@@ -188,13 +189,13 @@ agentRouter.get(
 agentRouter.delete(
   "/threads/:id",
   asyncHandler(async (req, res) => {
-    const thread = await AgentThread.findOne({ _id: req.params.id, userId: req.user._id }).select("title").catch(() => null)
+    const thread = await AgentThread.findOne({ _id: req.params.id, userId: req.user._id }).select("title temporary").catch(() => null)
     const result = thread ? await AgentThread.deleteOne({ _id: thread._id }) : null
     if (!result?.deletedCount) {
       sendError(res, 404, "That conversation was not found.")
       return
     }
-    await recordActivity({ user: req.user, title: "Agent chat deleted", detail: thread.title || "" })
+    if (!thread.temporary) await recordActivity({ user: req.user, title: "Agent chat deleted", detail: thread.title || "" })
     res.json({ ok: true })
   }),
 )
@@ -219,10 +220,14 @@ agentRouter.post(
         return
       }
     }
-    if (!thread) thread = new AgentThread({ userId: req.user._id, title: chatTitleFromPrompt(prompt), messages: [] })
+    if (!thread) {
+      thread = new AgentThread({ userId: req.user._id, title: chatTitleFromPrompt(prompt), messages: [], temporary: req.body.temporary === true })
+    }
+    // A temporary chat lives for a day after its last message and leaves no trace in Team Activity.
+    if (thread.temporary) thread.expiresAt = new Date(Date.now() + TEMPORARY_CHAT_TTL_MS)
     thread.messages.push({ role: "user", content: prompt })
     await thread.save()
-    await recordActivity({ user: req.user, title: "Asked the agent", detail: chatTitleFromPrompt(prompt) })
+    if (!thread.temporary) await recordActivity({ user: req.user, title: "Asked the agent", detail: chatTitleFromPrompt(prompt) })
     const settings = await agentSettings()
     res.setHeader("X-Chat-Id", String(thread._id))
     res.setHeader("Access-Control-Expose-Headers", "X-Chat-Id, X-Run-Id")

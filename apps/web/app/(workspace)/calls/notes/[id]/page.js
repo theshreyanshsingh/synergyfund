@@ -177,7 +177,7 @@ export default function CallNotesPage({ params }) {
                     </span>
                     {canAddTasks && (
                       <button type="button" className="tool notes-add" disabled={Boolean(added[index])} onClick={() => addTask(item, index)}>
-                        {added[index] === "added" ? <><Icon name="check" size={13} /> Added</> : added[index] === "adding" ? "Adding…" : <><Icon name="plus" size={13} /> Add to to-do list</>}
+                        {added[index] === "added" ? <><Icon name="check" size={13} /> Added</> : added[index] === "adding" ? "Adding…" : <><Icon name="plus" size={13} /> Add to Tasks</>}
                       </button>
                     )}
                   </li>

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto"
 import bcrypt from "bcryptjs"
-import { AGENT_DEFAULTS, LINE_STATUSES, TEAMMATE_DEFAULTS } from "@synergifund/shared"
+import { AGENT_DEFAULTS, LINE_STATUSES, TEAMMATE_DEFAULTS, isPendingDraw } from "@synergifund/shared"
 import { AgentSetting, ChatChannel, ChatMessage, DocumentFile, Draw, ExpenseRequest, PhotoSet, Property, SiteWatch, Task, User } from "../models/index.js"
 import { postChatMessage } from "../routes/chat.js"
 import { chat, modelKey } from "./agent/llm.js"
@@ -11,7 +11,7 @@ import { notify, recordActivity, sendMail } from "./notify.js"
 
 // The AI teammate in property chats. It reads what the team and contractors say and the photos they post, keeps
 // each line item's status (Not started → In progress → Complete) and expected finish date up to date, raises a
-// draw when enough work is done (an email to the draws inbox and a high-priority to-do), answers when someone talks
+// draw when enough work is done (an email to the draws inbox and a high-priority task), answers when someone talks
 // to it, and checks in with contractors when a house has gone quiet. It never claims to be a person.
 
 const TIMEZONE = process.env.TEAM_TIMEZONE || "America/New_York"
@@ -51,6 +51,7 @@ export async function teammateSettings({ fresh = false } = {}) {
     followUpDays: clamp(stored?.followUpDays, 1, 30, TEAMMATE_DEFAULTS.followUpDays),
     drawEmail: String(stored?.drawEmail || TEAMMATE_DEFAULTS.drawEmail).trim().toLowerCase(),
     decisionModel: stored?.decisionModel || AGENT_DEFAULTS.decisionModel,
+    onAt: stored?.teammateOnAt || null,
   }
   cached = { at: Date.now(), settings }
   return settings
@@ -127,8 +128,8 @@ async function onMessage({ channel, property, message, author }) {
   if (author.role === "contractor") await SiteWatch.updateOne({ propertyId: property._id }, { $set: { followUpsUnanswered: 0 } }, { upsert: true }).catch(() => {})
   const mentioned = (message.mentionIds || []).some((id) => String(id) === settings.userId)
   const named = new RegExp(`\\b${firstName(settings.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(message.text || "")
-  const previous = await ChatMessage.findOne({ channelId: channel._id, _id: { $ne: message._id }, deletedAt: null, parentId: null }).sort({ createdAt: -1 }).select("userId createdAt")
-  const answering = previous && String(previous.userId) === settings.userId && Date.now() - previous.createdAt.getTime() < 2 * DAY_MS
+  const previous = await ChatMessage.findOne({ channelId: channel._id, _id: { $ne: message._id }, deletedAt: null, parentId: null }).sort({ createdAt: -1 }).select("userId createdAt mentionIds")
+  const answering = previous && String(previous.userId) === settings.userId && Date.now() - previous.createdAt.getTime() < 2 * DAY_MS && (previous.mentionIds || []).some((id) => String(id) === String(author._id))
   schedule(String(property._id), { reply: mentioned || named || answering })
 }
 
@@ -252,7 +253,7 @@ export async function reviewProperty(propertyId, { reply = false, force = false 
       ...fresh.flatMap((message) => (message.attachments || []).map((file) => file.fileId)),
       ...photoSets.flatMap((set) => set.fileIds || []),
     ])
-    const draws = await Draw.find({ propertyId: property._id }).sort({ createdAt: 1 }).select("title status requestedDate fundedDate lines")
+    const draws = await Draw.find({ propertyId: property._id }).sort({ createdAt: 1 }).select("title status requestedDate fundedDate fundedAmount lines")
     const openDrawTasks = await Task.find({ propertyId: property._id, done: false, labels: "Draw" }).select("title createdAt")
     const { today } = localParts()
     const facts = {
@@ -270,21 +271,27 @@ export async function reviewProperty(propertyId, { reply = false, force = false 
     const result = readJson(answer.content)
     if (!result) throw new Error("The AI model's answer could not be read.")
 
-    const changes = applyLineItems(property, result.lineItems, settings, today)
+    const current = (await Property.findById(property._id)) || property
+    const changes = applyLineItems(current, result.lineItems, settings, today)
     if (changes.length) {
-      await property.save()
-      await recordActivity({ user: bot, title: "Line item progress", detail: `${property.address}: ${changes.join(" · ")}`, propertyId: property._id })
+      await current.save()
+      await recordActivity({ user: bot, title: "Line item progress", detail: `${current.address}: ${changes.join(" · ")}`, propertyId: current._id })
     }
     let raised = null
-    if (result.draw?.needed) raised = await raiseDraw({ property, watch, settings, bot, reason: String(result.draw.reason || "").slice(0, 600), items: Array.isArray(result.draw.items) ? result.draw.items.map(String).slice(0, 20) : [], draws, openDrawTasks })
+    if (result.draw?.needed) raised = await raiseDraw({ property: current, watch, settings, bot, reason: String(result.draw.reason || "").slice(0, 600), items: Array.isArray(result.draw.items) ? result.draw.items.map(String).slice(0, 20) : [], draws, openDrawTasks })
     const text = String(result.message || "").trim()
     let posted = null
     if (channel && text && (reply || changes.length)) posted = await postChatMessage({ channel, property, author: bot, text: text.slice(0, 1200) })
-    watch.memory = String(result.memory || watch.memory || "").slice(0, 1500)
-    watch.lastReviewedAt = recent.length ? recent[recent.length - 1].createdAt : new Date()
-    if (photoSets[0] && photoSets[0].createdAt > watch.lastReviewedAt) watch.lastReviewedAt = photoSets[0].createdAt
-    if (posted) watch.lastReplyAt = new Date()
-    await watch.save()
+    let lastReviewedAt = recent.length ? recent[recent.length - 1].createdAt : new Date()
+    if (photoSets[0] && photoSets[0].createdAt > lastReviewedAt) lastReviewedAt = photoSets[0].createdAt
+    await SiteWatch.updateOne({ propertyId: property._id }, {
+      $set: {
+        memory: String(result.memory || watch.memory || "").slice(0, 1500),
+        lastReviewedAt,
+        ...(posted ? { lastReplyAt: new Date() } : {}),
+        ...(raised ? { lastDrawAlertAt: watch.lastDrawAlertAt, drawTaskId: watch.drawTaskId } : {}),
+      },
+    }, { upsert: true })
     return { changes, draw: Boolean(raised), message: posted ? posted.text : "" }
   } finally {
     running.delete(propertyId)
@@ -312,15 +319,18 @@ function applyLineItems(property, items, settings, today) {
       notes.push(status)
     }
     const expected = /^\d{4}-\d{2}-\d{2}$/.test(String(item.expected || "")) ? item.expected : ""
+    const forecastSetAt = line.forecastAt || line.statusAt
+    const forecastHeld = line.forecastBy && !line.forecastBy.endsWith("(AI)") && (!forecastSetAt || Date.now() - forecastSetAt.getTime() < HUMAN_HOLD_MS)
     if (line.status === "Complete") {
       if (line.forecastDate) {
         line.forecastDate = ""
         line.forecastNote = ""
       }
-    } else if (expected && expected >= today && expected <= latest && expected !== line.forecastDate) {
+    } else if (expected && expected >= today && expected <= latest && expected !== line.forecastDate && !forecastHeld) {
       line.forecastDate = expected
       line.forecastNote = reason
       line.forecastBy = by
+      line.forecastAt = new Date()
       notes.push(`expected ${expected}`)
     }
     if (notes.length) changes.push(`${line.title} → ${notes.join(", ")}`)
@@ -328,9 +338,9 @@ function applyLineItems(property, items, settings, today) {
   return changes
 }
 
-// Enough work is done for the next draw: email the draws inbox and add a high-priority to-do, once.
+// Enough work is done for the next draw: email the draws inbox and add a high-priority task, once.
 async function raiseDraw({ property, watch, settings, bot, reason, items, draws, openDrawTasks }) {
-  const waiting = draws.some((draw) => draw.status === "Requested")
+  const waiting = draws.some(isPendingDraw)
   const recent = watch.lastDrawAlertAt && Date.now() - watch.lastDrawAlertAt.getTime() < DRAW_ALERT_GAP_MS
   if (waiting || recent || openDrawTasks.length) return null
   const { today } = localParts()
@@ -349,7 +359,7 @@ async function raiseDraw({ property, watch, settings, bot, reason, items, draws,
     people: [{ email: settings.drawEmail, name: "" }],
     title: `Draw needed: ${property.address}`,
     body: `${settings.name}, the AI teammate, thinks it is time to request the next draw for ${property.address}.\n\n${reason || "Enough work has been finished since the last draw."}`,
-    details: [["Property", [property.address, property.city].filter(Boolean).join(", ")], ["Work finished", done], ["Line items", lines.join("\n")], ["Draws so far", draws.map((draw) => `${draw.title}: ${draw.status}`).join(", ") || "None"], ["To-do", "A high-priority task was added to the to-do list."]],
+    details: [["Property", [property.address, property.city].filter(Boolean).join(", ")], ["Work finished", done], ["Line items", lines.join("\n")], ["Draws so far", draws.map((draw) => `${draw.title}: ${draw.status}`).join(", ") || "None"], ["Task", "A high-priority task was added to Tasks."]],
     href: `/properties/${property._id}?tab=draws`,
     event: "draw.needed",
   }).catch((error) => ({ status: "Failed", error: error.message }))
@@ -372,7 +382,7 @@ async function lastContractorUpdate(property, contractors, channel) {
 }
 
 // Houses under renovation whose contractors have not posted, filed photos or sent an expense for a while get a
-// friendly check-in. After two unanswered check-ins the team gets a to-do to call them.
+// friendly check-in. After two unanswered check-ins the team gets a task to call them.
 export async function followUpSweep({ force = false, propertyId = "" } = {}) {
   const settings = await teammateSettings()
   if ((!settings.on && !force) || !modelKey()) return []
@@ -387,29 +397,31 @@ export async function followUpSweep({ force = false, propertyId = "" } = {}) {
     if (!contractors.length) continue
     const channel = await propertyChannel(property._id)
     if (!channel) continue
-    const watch = (await SiteWatch.findOne({ propertyId: property._id })) || new SiteWatch({ propertyId: property._id })
-    const gap = settings.followUpDays * DAY_MS
     // The clock starts when the teammate began following this house, so turning it on never sends a burst of
-    // check-ins: contractors get the full quiet period first.
-    if (watch.isNew) await watch.save()
+    // check-ins: contractors get the full quiet period first. (An upsert, as a review may be creating it too.)
+    const watch = await SiteWatch.findOneAndUpdate({ propertyId: property._id }, { $setOnInsert: { propertyId: property._id } }, { upsert: true, new: true })
+    const gap = settings.followUpDays * DAY_MS
     const contractorLast = await lastContractorUpdate(property, contractors, channel)
-    const quietFor = Date.now() - Math.max(contractorLast, watch.createdAt?.getTime?.() || Date.now())
+    const quietFor = Date.now() - Math.max(contractorLast, watch.createdAt?.getTime?.() || Date.now(), settings.onAt ? new Date(settings.onAt).getTime() : 0)
     const nudgedRecently = watch.lastFollowUpAt && Date.now() - watch.lastFollowUpAt.getTime() < gap
     if (!force && (quietFor < gap || nudgedRecently)) continue
     const text = await checkInText({ settings, property, contractors, watch, days: Math.max(1, Math.floor(quietFor / DAY_MS)) })
     if (!text) continue
     const mentions = contractors.map((person) => `<@${person._id}>`).join(" ")
     await postChatMessage({ channel, property, author: bot, text: `${mentions} ${text}` })
-    watch.lastFollowUpAt = new Date()
-    watch.followUpsUnanswered = (watch.followUpsUnanswered || 0) + 1
-    if (watch.followUpsUnanswered >= 3 && (!watch.escalatedAt || watch.escalatedAt < new Date(Date.now() - gap * 2))) {
+    const answered = Boolean(watch.lastFollowUpAt && contractorLast > watch.lastFollowUpAt.getTime())
+    const update = { $set: { lastFollowUpAt: new Date() } }
+    if (answered) update.$set.followUpsUnanswered = force ? 0 : 1
+    else if (!force) update.$inc = { followUpsUnanswered: 1 }
+    const counted = (await SiteWatch.findOneAndUpdate({ _id: watch._id }, update, { new: true })) || watch
+    watch.followUpsUnanswered = counted.followUpsUnanswered || 0
+    if (!force && watch.followUpsUnanswered >= 3 && (!watch.escalatedAt || watch.escalatedAt < new Date(Date.now() - gap * 2))) {
       const names = contractors.map((person) => person.name).join(", ")
       const lastSeen = contractorLast ? new Date(contractorLast).toLocaleDateString("en-US", { timeZone: TIMEZONE, month: "short", day: "numeric" }) : "none on file"
       const task = await Task.create({ propertyId: property._id, title: `Call ${names} · no update on ${property.address}`, priority: "High", labels: ["Verify"], due: localParts().today, notes: `${settings.name} (AI teammate) checked in ${watch.followUpsUnanswered - 1} times with no reply. Their last update: ${lastSeen}.` })
       await notify({ roles: ["admin"], title: `No update on ${property.address}`, body: `${names} has not answered ${watch.followUpsUnanswered - 1} check-ins.`, href: `/tasks?task=${task._id}`, event: "teammate.escalated", email: false })
-      watch.escalatedAt = new Date()
+      await SiteWatch.updateOne({ _id: watch._id }, { $set: { escalatedAt: new Date() } })
     }
-    await watch.save()
     sent.push({ property: property.address, text })
   }
   return sent

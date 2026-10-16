@@ -45,6 +45,12 @@ function storeThread(id) {
   } catch {}
 }
 
+// Throws a temporary chat away. It also expires on its own a day after its last message.
+function discardTemporaryThread(id) {
+  if (!id) return
+  fetch(`/api/agent/threads/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include", keepalive: true }).catch(() => {})
+}
+
 function History({ threads, activeId, onOpen, onDelete }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
@@ -100,10 +106,33 @@ export default function AgentPage() {
   const [streaming, setStreaming] = useState(false)
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState("")
+  const [temporary, setTemporary] = useState(false)
   const streamingRef = useRef(false)
+  // The current temporary chat's id, so it can be thrown away when the person leaves it.
+  const temporaryIdRef = useRef("")
+
+  function leaveTemporary() {
+    discardTemporaryThread(temporaryIdRef.current)
+    temporaryIdRef.current = ""
+    setTemporary(false)
+  }
+
+  // Leaving the page (or closing the tab) ends a temporary chat.
+  useEffect(() => {
+    const onHide = () => discardTemporaryThread(temporaryIdRef.current)
+    window.addEventListener("pagehide", onHide)
+    return () => {
+      window.removeEventListener("pagehide", onHide)
+      discardTemporaryThread(temporaryIdRef.current)
+    }
+  }, [])
 
   const openThread = useCallback(async (id) => {
     if (streamingRef.current) return
+    // Opening a saved chat ends any temporary one.
+    discardTemporaryThread(temporaryIdRef.current)
+    temporaryIdRef.current = ""
+    setTemporary(false)
     setOpening(true)
     setError("")
     try {
@@ -130,11 +159,20 @@ export default function AgentPage() {
 
   function newChat() {
     if (streamingRef.current) return
+    if (temporary) leaveTemporary()
     setThreadId("")
     setTitle("")
     storeThread("")
     setRows([])
     setError("")
+  }
+
+  // A temporary chat is not saved to History. Pressing it again goes back to a normal new chat.
+  function toggleTemporary() {
+    if (streamingRef.current) return
+    const starting = !temporary
+    newChat()
+    if (starting) setTemporary(true)
   }
 
   async function deleteThread(thread) {
@@ -159,11 +197,12 @@ export default function AgentPage() {
     const add = (row) => setRows((current) => [...current, row])
     try {
       await streamAgent(
-        { prompt, threadId },
+        { prompt, threadId, temporary },
         {
           onChatId: (id) => {
             setThreadId(id)
-            storeThread(id)
+            if (temporary) temporaryIdRef.current = id
+            else storeThread(id)
           },
           onPacket: (parsed) => {
             const parts = streamPayloadToAssistantParts(parsed)
@@ -195,7 +234,7 @@ export default function AgentPage() {
   }
 
   const listed = (threadsApi.data?.items || []).find((thread) => thread.id === threadId)
-  const chatTitle = listed?.title || title || "New chat"
+  const chatTitle = temporary ? "Temporary chat" : listed?.title || title || "New chat"
 
   return (
     <div className="workspace agent-page">
@@ -205,6 +244,17 @@ export default function AgentPage() {
         </div>
         <div className="agent-head-actions">
           <History threads={threadsApi.data?.items || []} activeId={threadId} onOpen={openThread} onDelete={deleteThread} />
+          <button
+            type="button"
+            className={temporary ? "import-button agent-temp-toggle is-on" : "import-button agent-temp-toggle"}
+            aria-pressed={temporary}
+            disabled={streaming}
+            title={temporary ? "Leave the temporary chat" : "Start a chat that is not saved to History"}
+            onClick={toggleTemporary}
+          >
+            <Icon name="tempChat" size={14} />
+            <span className="agent-history-label">Temporary</span>
+          </button>
           <button type="button" className="primary" disabled={streaming} onClick={newChat}>
             <Icon name="plus" size={14} />
             New chat
@@ -216,7 +266,11 @@ export default function AgentPage() {
         {opening ? (
           <PageSpinner />
         ) : (
-          <AgentMessages rows={rows} streaming={streaming} emptyHint="Ask about properties, lenders, draws, loans or upcoming payments" />
+          <AgentMessages
+            rows={rows}
+            streaming={streaming}
+            emptyHint={temporary ? "Temporary chat: it is not saved to History and is deleted within a day." : "Ask about properties, lenders, draws, loans or upcoming payments"}
+          />
         )}
       </div>
       <AgentComposer onSend={send} streaming={streaming} connected={settingsApi.data?.settings?.modelConnected} />

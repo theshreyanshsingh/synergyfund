@@ -61,7 +61,7 @@ ${signature}
 - Put any other writing in a fenced code block with the language draft, as plain text.
 - Write as ${user.name}, in the first person: warm, professional and to the point. Sign emails with the signature above, exactly as written. Text and chat messages need no signature.
 - Use the real names, addresses, dates and dollar amounts from the evidence. Never leave placeholders such as [Name], [Date] or XX. If a fact is missing, write around it and say after the block what you left out.
-- Before the block write one short sentence at most. After it add nothing, unless you must say what is missing. Never say it was sent: the person reviews it and sends it.
+- Before the block write one short sentence at most. After it add nothing, unless you must say what is missing or give a download link (on a line of its own). Never put a download link inside an email or draft: the person downloads the file and attaches it. Never say it was sent: the person reviews it and sends it.
 - When asked to change a draft from earlier in this chat, write the whole new version in a new block.`
 }
 
@@ -97,7 +97,7 @@ How to work:
 - Repeating a lookup with the same arguments returns the same result, so change the arguments instead.
 
 Gathering documents:
-- Use find_documents with the property, company, folder, words and dates the person gave. If it finds the right files, call zip_documents with their ids (all of them, up to 150) and a short descriptive name. If it finds nothing, try once with fewer filters.
+- Use find_documents with the property, company, folder, words and dates the person gave. If it shows fewer than its total, call it again with a higher limit (up to 150) before zipping. If it finds the right files, call zip_documents with their ids (all of them, up to 150) and a short descriptive name. If it finds nothing, try once with fewer filters.
 
 Searching company records:
 - When you are not sure where something lives or a name may be misspelled, start with search_records, then open the match with get_property or the specific list tool.
@@ -149,16 +149,21 @@ function compactOlderResults(messages) {
   }
 }
 
+// Zips go first so their download link is never the part cut for length; a lookup too long to fit is left out
+// without dropping the smaller ones after it.
 function evidenceText(evidence) {
   let text = ""
-  for (const item of evidence) {
+  let skipped = 0
+  const ordered = [...evidence.filter((item) => item.tool === "zip_documents"), ...evidence.filter((item) => item.tool !== "zip_documents")]
+  for (const item of ordered) {
     const block = `### ${item.tool} ${JSON.stringify(item.args)}\n${toolContent(item.tool, item.result)}\n\n`
     if (text.length + block.length > EVIDENCE_LIMIT) {
-      text += "### More lookups were made but left out for length.\n"
-      break
+      skipped += 1
+      continue
     }
     text += block
   }
+  if (skipped) text += `### ${skipped} more ${skipped === 1 ? "lookup was" : "lookups were"} made but left out for length.\n`
   return text || "No records were looked up."
 }
 

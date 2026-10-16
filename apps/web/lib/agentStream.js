@@ -90,12 +90,12 @@ async function failure(response) {
   return new Error(data.error || "The agent could not answer. Try again.")
 }
 
-export async function streamAgent({ prompt, threadId }, { onPacket, onChatId }) {
+export async function streamAgent({ prompt, threadId, temporary = false }, { onPacket, onChatId }) {
   const response = await fetch("/api/agent/run", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, threadId: threadId || undefined }),
+    body: JSON.stringify({ prompt, threadId: threadId || undefined, temporary: temporary || undefined }),
   })
   if (!response.ok || !response.body) throw await failure(response)
   const chatId = response.headers.get("x-chat-id")

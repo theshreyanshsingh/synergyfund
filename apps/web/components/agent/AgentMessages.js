@@ -17,7 +17,7 @@ const STATUS_LABELS = {
   list_draws: "Reading draws",
   upcoming_payments: "Checking upcoming payments",
   list_expenses: "Reading expenses",
-  list_tasks: "Reading the to-do list",
+  list_tasks: "Reading the task list",
   list_team: "Looking up the team",
   search_documents: "Searching documents",
   find_documents: "Finding documents",
@@ -72,7 +72,7 @@ const markdown = {
   hr: tag("hr", "agent-md-hr"),
 }
 
-const DOWNLOAD_LINK = /\[([^\]\n]+)\]\((\/api\/documents\/[^)\s]+)\)/g
+const DOWNLOAD_LINK = /\[([^\]\n]+)\]\((\/api\/documents\/(?:[^()\s]|\([^()\s]*\))+)\)/g
 
 // Downloads the agent made (a zip or a file) are shown as buttons at the end of its answer, wherever it wrote them.
 // A line that is only the link goes; in a sentence the link's words stay.
@@ -97,15 +97,17 @@ function hastText(node) {
   return (node.children || []).map(hastText).join("")
 }
 
-// "To: a@b.com / Subject: … / (blank line) / body" → its parts. Headers end at the first blank line.
+// "To: a@b.com / Subject: … / (blank line) / body" → its parts. Headers end at the first blank line; a From or
+// Reply-To line is skipped (the person sends from their own mail).
 export function parseEmailDraft(text) {
-  const lines = String(text || "").replace(/\r\n/g, "\n").replace(/\n+$/, "").split("\n")
-  const draft = { to: "", cc: "", subject: "", body: "" }
+  const lines = String(text || "").replace(/\r\n/g, "\n").replace(/^\s*\n/, "").replace(/\n+$/, "").split("\n")
+  const draft = { to: "", cc: "", bcc: "", subject: "", body: "" }
   let index = 0
   while (index < lines.length) {
-    const match = /^(to|cc|subject)\s*:\s*(.*)$/i.exec(lines[index])
+    const match = /^(to|cc|bcc|subject|from|reply-to)\s*:\s*(.*)$/i.exec(lines[index])
     if (!match) break
-    draft[match[1].toLowerCase()] = match[2].trim()
+    const key = match[1].toLowerCase()
+    if (key in draft) draft[key] = match[2].trim()
     index += 1
   }
   while (index < lines.length && !lines[index].trim()) index += 1
@@ -118,6 +120,7 @@ function useCopy() {
   const timer = useRef(null)
   useEffect(() => () => clearTimeout(timer.current), [])
   async function copy(text) {
+    let ok = true
     try {
       await navigator.clipboard.writeText(text)
     } catch {
@@ -127,12 +130,17 @@ function useCopy() {
       area.style.opacity = "0"
       document.body.appendChild(area)
       area.select()
-      document.execCommand("copy")
+      try {
+        ok = document.execCommand("copy")
+      } catch {
+        ok = false
+      }
       area.remove()
     }
-    setCopied(true)
+    setCopied(ok ? "yes" : "no")
     clearTimeout(timer.current)
     timer.current = setTimeout(() => setCopied(false), 1600)
+    return ok
   }
   return [copied, copy]
 }
@@ -154,9 +162,10 @@ function addresses(value) {
   return String(value || "").split(/[,;]/).map((item) => item.trim()).filter(Boolean).join(",")
 }
 
-function mailtoLink({ to, cc, subject, body }) {
+function mailtoLink({ to, cc, bcc, subject, body }) {
   const query = new URLSearchParams()
   if (cc) query.set("cc", cc)
+  if (bcc) query.set("bcc", bcc)
   if (subject) query.set("subject", subject)
   if (body) query.set("body", body)
   // URLSearchParams writes spaces as "+", which mail apps show literally; mailto wants %20.
@@ -177,18 +186,18 @@ const MAIL_APPS = [
   {
     id: "gmail",
     label: "Gmail",
-    href: ({ to, cc, subject, body }) => `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}${cc ? `&cc=${encodeURIComponent(cc)}` : ""}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+    href: ({ to, cc, bcc, subject, body }) => `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}${cc ? `&cc=${encodeURIComponent(cc)}` : ""}${bcc ? `&bcc=${encodeURIComponent(bcc)}` : ""}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
   },
   {
     id: "outlook",
     label: "Outlook",
-    href: ({ to, cc, subject, body }) => `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(to)}${cc ? `&cc=${encodeURIComponent(cc)}` : ""}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+    href: ({ to, cc, bcc, subject, body }) => `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(to)}${cc ? `&cc=${encodeURIComponent(cc)}` : ""}${bcc ? `&bcc=${encodeURIComponent(bcc)}` : ""}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
   },
   {
     id: "yahoo",
     label: "Yahoo Mail",
     copies: true,
-    href: ({ to, cc, subject, body }) => `https://compose.mail.yahoo.com/?to=${encodeURIComponent(to)}${cc ? `&cc=${encodeURIComponent(cc)}` : ""}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+    href: ({ to, cc, bcc, subject, body }) => `https://compose.mail.yahoo.com/?to=${encodeURIComponent(to)}${cc ? `&cc=${encodeURIComponent(cc)}` : ""}${bcc ? `&bcc=${encodeURIComponent(bcc)}` : ""}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
   },
   { id: "app", label: "Email App", sameTab: true, href: mailtoLink },
 ]
@@ -238,8 +247,8 @@ function MailMark({ id }) {
   return <Icon name="mail" size={16} />
 }
 
-function withHeaders({ to, cc, subject, body }) {
-  const head = [to && `To: ${to}`, cc && `Cc: ${cc}`, subject && `Subject: ${subject}`].filter(Boolean).join("\n")
+function withHeaders({ to, cc, bcc, subject, body }) {
+  const head = [to && `To: ${to}`, cc && `Cc: ${cc}`, bcc && `Bcc: ${bcc}`, subject && `Subject: ${subject}`].filter(Boolean).join("\n")
   return head ? `${head}\n\n${body}` : body
 }
 
@@ -247,6 +256,9 @@ function EmailDraft({ text }) {
   const parsed = parseEmailDraft(text)
   const [to, setTo] = useState(parsed.to)
   const [cc, setCc] = useState(parsed.cc)
+  const [bcc, setBcc] = useState(parsed.bcc)
+  // Cc and Bcc stay on the card once there, even while being emptied to retype them.
+  const [extra] = useState(() => ({ cc: Boolean(parsed.cc), bcc: Boolean(parsed.bcc) }))
   const [subject, setSubject] = useState(parsed.subject)
   const [body, setBody] = useState(parsed.body)
   const [menu, setMenu] = useState(false)
@@ -276,7 +288,7 @@ function EmailDraft({ text }) {
       document.removeEventListener("keydown", onKey)
     }
   }, [menu])
-  const draft = { to: addresses(to), cc: addresses(cc), subject, body }
+  const draft = { to: addresses(to), cc: addresses(cc), bcc: addresses(bcc), subject, body }
   const main = MAIL_APPS.find((app) => app.id === choice) || MAIL_APPS[0]
   function opened(app) {
     setMenu(false)
@@ -285,8 +297,7 @@ function EmailDraft({ text }) {
       localStorage.setItem(MAIL_KEY, app.id)
     } catch {}
     if (app.copies) {
-      copy(body)
-      setNotice(`The message is copied too. If ${app.label} opens without it, paste it in.`)
+      copy(body).then((ok) => setNotice(ok ? `The message is copied too. If ${app.label} opens without it, paste it in.` : `If ${app.label} opens without the message, come back and press Copy, then paste it in.`))
     } else setNotice("")
   }
   const link = (app, props) => (
@@ -304,10 +315,16 @@ function EmailDraft({ text }) {
         <span>To</span>
         <input value={to} onChange={(event) => setTo(event.target.value)} placeholder="Add an email address" inputMode="email" autoComplete="off" />
       </label>
-      {cc && (
+      {extra.cc && (
         <label className="agent-email-field">
           <span>Cc</span>
-          <input value={cc} onChange={(event) => setCc(event.target.value)} autoComplete="off" />
+          <input value={cc} onChange={(event) => setCc(event.target.value)} inputMode="email" autoComplete="off" />
+        </label>
+      )}
+      {extra.bcc && (
+        <label className="agent-email-field">
+          <span>Bcc</span>
+          <input value={bcc} onChange={(event) => setBcc(event.target.value)} inputMode="email" autoComplete="off" />
         </label>
       )}
       <label className="agent-email-field">
@@ -318,7 +335,7 @@ function EmailDraft({ text }) {
       {notice && <p className="agent-draft-notice">{notice}</p>}
       <footer className="agent-draft-foot">
         <button type="button" className="agent-draft-copy" onClick={() => copy(body)}>
-          <Icon name={copied ? "tick" : "copy"} size={14} /> {copied ? "Copied" : "Copy"}
+          <Icon name={copied === "yes" ? "tick" : "copy"} size={14} /> {copied === "yes" ? "Copied" : copied === "no" ? "Couldn't Copy" : "Copy"}
         </button>
         <div className="agent-send" ref={box}>
           {link(main, { className: "agent-send-main", title: `Opens a new message in ${main.label} with this filled in. Nothing is sent until you press Send there.` })}
@@ -351,7 +368,7 @@ function TextDraft({ text }) {
       <GrowingText value={value} onChange={setValue} label="Draft" />
       <footer className="agent-draft-foot">
         <button type="button" className="agent-draft-copy" onClick={() => copy(value)}>
-          <Icon name={copied ? "tick" : "copy"} size={14} /> {copied ? "Copied" : "Copy"}
+          <Icon name={copied === "yes" ? "tick" : "copy"} size={14} /> {copied === "yes" ? "Copied" : copied === "no" ? "Couldn't Copy" : "Copy"}
         </button>
       </footer>
     </section>
