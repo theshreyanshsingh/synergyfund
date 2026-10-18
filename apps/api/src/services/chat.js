@@ -28,16 +28,21 @@ function inPropertyRoom(user, property) {
   return user.role === "admin" || Boolean(user.bot) || assignedTo(user, property)
 }
 
-function isMember(channel, user) {
+export function isMember(channel, user) {
   const id = String(user._id)
   return (channel.memberIds || []).some((member) => String(member) === id)
+}
+
+// Direct messages, private channels and channels made with a member list include only their members.
+export function hasMemberList(channel) {
+  return channel.kind === "direct" || Boolean(channel.private) || Boolean(channel.memberList)
 }
 
 export function canSee(user, channel, property) {
   if (!channel || channel.archivedAt || !usesChat(user)) return false
   if (channel.kind === "direct") return isMember(channel, user)
   if (channel.kind === "property") return inPropertyRoom(user, property)
-  if (channel.private) return isMember(channel, user)
+  if (channel.private || channel.memberList) return isMember(channel, user)
   return !isGuest(user)
 }
 
@@ -103,9 +108,9 @@ export async function visibleChannels(user) {
   await ensurePropertyChannels(properties)
   const or = [
     { kind: "direct", memberIds: user._id },
-    { kind: "channel", private: true, memberIds: user._id },
+    { kind: "channel", memberIds: user._id, $or: [{ private: true }, { memberList: true }] },
   ]
-  if (!isGuest(user)) or.push({ kind: "general" }, { kind: "channel", private: false })
+  if (!isGuest(user)) or.push({ kind: "general" }, { kind: "channel", private: false, memberList: { $ne: true } })
   if (properties.length) or.push({ kind: "property", propertyId: { $in: properties.map((property) => property._id) } })
   const channels = await ChatChannel.find({ archivedAt: null, $or: or })
   const byId = new Map(properties.map((property) => [String(property._id), property]))
@@ -113,7 +118,7 @@ export async function visibleChannels(user) {
 }
 
 export async function audience(channel, property) {
-  if (channel.kind === "direct" || channel.private) {
+  if (hasMemberList(channel)) {
     const members = await User.find({ _id: { $in: channel.memberIds || [] } }).select("_id name email role extraPermissions deniedPermissions createdAt bot")
     return members.filter(usesChat)
   }
@@ -138,7 +143,8 @@ export function presentChannel(channel, property, extra = {}) {
     private: Boolean(channel.private),
     propertyId: channel.propertyId ? String(channel.propertyId) : "",
     city: property?.city || "",
-    memberIds: channel.kind === "direct" || channel.private ? (channel.memberIds || []).map(String) : [],
+    memberIds: hasMemberList(channel) ? (channel.memberIds || []).map(String) : [],
+    memberList: hasMemberList(channel),
     createdBy: channel.createdBy ? String(channel.createdBy) : "",
     lastMessageAt: channel.lastMessageAt || null,
     createdAt: channel.createdAt,

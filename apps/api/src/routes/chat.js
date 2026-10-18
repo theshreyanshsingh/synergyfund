@@ -8,7 +8,9 @@ import {
   canManage,
   directKey,
   escapeRegex,
+  hasMemberList,
   isGuest,
+  isMember,
   loadChannel,
   mentionsIn,
   presentChannel,
@@ -235,14 +237,17 @@ chatRouter.post(
     const taken = await ChatChannel.findOne({ kind: "channel", name, archivedAt: null })
     if (taken) return sendError(res, 409, `#${name} already exists.`)
     const isPrivate = Boolean(req.body.private)
+    // A new channel starts with its creator (the channel admin) and only the people they picked. Others on the
+    // team join a public channel from Browse; a private one needs an invite.
     const wanted = Array.isArray(req.body.memberIds) ? req.body.memberIds.filter((id) => mongoose.isValidObjectId(id)) : []
-    const members = isPrivate ? (await User.find({ _id: { $in: [...wanted, req.user._id] } }).select("_id role extraPermissions deniedPermissions")).filter(usesChat) : []
+    const picked = (await User.find({ _id: { $in: wanted } }).select("_id role bot extraPermissions deniedPermissions")).filter((person) => usesChat(person) && !person.bot)
     const channel = await ChatChannel.create({
       kind: "channel",
       name,
       topic: String(req.body.topic || "").trim().slice(0, 250),
       private: isPrivate,
-      memberIds: isPrivate ? members.map((member) => member._id) : [],
+      memberList: true,
+      memberIds: [req.user._id, ...picked.map((person) => person._id).filter((id) => String(id) !== String(req.user._id))],
       createdBy: req.user._id,
     })
     await recordActivity({ user: req.user, title: "Chat channel created", detail: `${isPrivate ? "Private" : "Public"} channel #${name}` })
@@ -275,7 +280,7 @@ chatRouter.patch(
     }
     const before = await audience(channel, property)
     if (Array.isArray(req.body.addMemberIds) || Array.isArray(req.body.removeMemberIds)) {
-      if (!channel.private || channel.kind !== "channel") return sendError(res, 400, "Only private channels have a member list.")
+      if (channel.kind !== "channel" || !hasMemberList(channel)) return sendError(res, 400, "Everyone on the team is in this channel.")
       const add = (Array.isArray(req.body.addMemberIds) ? req.body.addMemberIds : []).filter((id) => mongoose.isValidObjectId(id))
       const remove = new Set((Array.isArray(req.body.removeMemberIds) ? req.body.removeMemberIds : []).map(String))
       if (remove.size && !canManage(req.user, channel)) return sendError(res, 403, "Only the channel owner or an admin can remove people.")
@@ -298,13 +303,41 @@ chatRouter.patch(
   }),
 )
 
+// Public channels the person has not joined yet, for Browse.
+chatRouter.get(
+  "/channels/browse",
+  asyncHandler(async (req, res) => {
+    if (isGuest(req.user)) return res.json({ items: [] })
+    const channels = await ChatChannel.find({ kind: "channel", private: false, memberList: true, archivedAt: null, memberIds: { $ne: req.user._id } }).sort({ name: 1 }).limit(200)
+    res.json({ items: channels.map((channel) => presentChannel(channel, null, { memberCount: (channel.memberIds || []).length })) })
+  }),
+)
+
+chatRouter.post(
+  "/channels/:id/join",
+  asyncHandler(async (req, res) => {
+    if (isGuest(req.user) || !mongoose.isValidObjectId(req.params.id)) return sendError(res, 404, "That channel was not found.")
+    const channel = await ChatChannel.findOne({ _id: req.params.id, kind: "channel", private: false, memberList: true, archivedAt: null })
+    if (!channel) return sendError(res, 404, "That channel was not found.")
+    if (!isMember(channel, req.user)) {
+      channel.memberIds = [...(channel.memberIds || []), req.user._id]
+      await channel.save()
+      await recordActivity({ user: req.user, title: "Joined chat channel", detail: `#${channel.name}` })
+      await broadcastChannel(channel, null)
+    }
+    const presented = presentChannel(channel, null, { unread: 0, mentions: 0, canManage: canManage(req.user, channel) })
+    emitToUsers([String(req.user._id)], "channel:new", { channel: presented })
+    res.json({ channel: presented })
+  }),
+)
+
 chatRouter.post(
   "/channels/:id/leave",
   asyncHandler(async (req, res) => {
     const found = await loadChannel(req.user, req.params.id)
     if (!found) return sendError(res, 404, "That conversation was not found.")
     const { channel } = found
-    if (!channel.private || channel.kind !== "channel") return sendError(res, 400, "You can only leave private channels.")
+    if (channel.kind !== "channel" || !hasMemberList(channel)) return sendError(res, 400, "Everyone on the team is in this channel.")
     channel.memberIds = (channel.memberIds || []).filter((id) => String(id) !== String(req.user._id))
     await channel.save()
     await recordActivity({ user: req.user, title: "Left chat channel", detail: `#${channel.name}` })

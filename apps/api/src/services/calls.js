@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto"
 import mongoose from "mongoose"
 import { Call, ChatChannel, ChatMessage, ChatRead, Notification, User } from "../models/index.js"
-import { audience, isGuest, loadChannel, presentChannel, presentMessage, usesChat, visibleChannels } from "./chat.js"
+import { audience, hasMemberList, isGuest, loadChannel, presentChannel, presentMessage, usesChat, visibleChannels } from "./chat.js"
 import { chatIo, emitToUsers } from "./chatHub.js"
 import { isApplePush, pushToUsers, sendPush, subscriptionsFor } from "./push.js"
 import { addNoteParticipant, notesAvailable, startNotes, stopNotes } from "./callNotes.js"
@@ -570,7 +570,7 @@ export function registerCallHandlers(socket) {
       // The AI teammate is in property chats but never in calls.
       const others = people.filter((person) => String(person._id) !== me && !person.bot)
       if (!others.length) return reply({ error: "There is no one else in this conversation to call." })
-      const ringing = found.channel.kind === "direct" || found.channel.private || others.length <= RING_LIMIT
+      const ringing = hasMemberList(found.channel) || others.length <= RING_LIMIT
       const invitedIds = ringing ? others.map((person) => String(person._id)) : []
       const doc = await Call.create({
         channelId: found.channel._id,
@@ -600,7 +600,7 @@ export function registerCallHandlers(socket) {
         invitedIds,
         audienceIds: people.map((person) => String(person._id)),
         // Direct and private conversations show who is in them; big rooms show the room name.
-        names: found.channel.kind === "direct" || found.channel.private ? Object.fromEntries(people.map((person) => [String(person._id), person.name])) : {},
+        names: hasMemberList(found.channel) ? Object.fromEntries(people.map((person) => [String(person._id), person.name])) : {},
         peers: new Map([[socket.id, { userId: me, name: user.name, audio: cleanMedia(data.audio, true), video: cleanMedia(data.video, media === "video"), screen: false }]]),
         away: new Map(),
         joinedIds: new Set([me]),
@@ -739,7 +739,7 @@ export function registerCallHandlers(socket) {
       state.guestIds.add(id)
       if (!state.invitedIds.includes(id)) state.invitedIds.push(id)
       if (!state.audienceIds.includes(id)) state.audienceIds.push(id)
-      if (state.names && (state.channel.kind === "direct" || state.channel.private)) state.names[id] = person.name
+      if (state.names && hasMemberList(state.channel)) state.names[id] = person.name
     }
     Call.updateOne({ _id: state.id }, { $addToSet: { invitedIds: { $each: people.map((person) => person._id) } } }).catch(() => {})
     ringPeople(state, ids, user.name)

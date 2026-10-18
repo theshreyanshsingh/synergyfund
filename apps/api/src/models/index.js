@@ -653,6 +653,9 @@ export const ChatChannel = register(
       name: { type: String, default: "" },
       topic: { type: String, default: "" },
       private: { type: Boolean, default: false },
+      // Channels made after member lists arrived only include people who were added or joined. Older public
+      // channels (no flag) still include everyone on the team.
+      memberList: { type: Boolean, default: false },
       propertyId: { type: Schema.Types.ObjectId, ref: "Property" },
       memberIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
       directKey: String,

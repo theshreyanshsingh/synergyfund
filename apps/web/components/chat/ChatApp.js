@@ -4,7 +4,7 @@ import Link from "next/link"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useSession } from "../shell/Providers"
-import { FormSheet } from "../ui/FormSheet"
+import { FormSheet, InfoSheet } from "../ui/FormSheet"
 import { Icon } from "../ui/Icon"
 import { PageSpinner, Spinner } from "../ui/Spinner"
 import { api } from "../../lib/api"
@@ -470,6 +470,7 @@ export function ChatApp({ mode = "channels" }) {
         onSearch={runSearch}
         onOpen={(id) => open(id)}
         onCreate={() => setDialog("channel")}
+        onBrowse={() => setDialog("browse")}
         onDirect={() => setDialog("direct")}
         onPerson={(id) => startDirect([id]).catch((err) => setError(err.message))}
       />
@@ -555,6 +556,9 @@ export function ChatApp({ mode = "channels" }) {
           onCreated={(channel) => { upsertChannel(channel); setDialog(""); open(channel.id) }}
         />
       )}
+      {dialog === "browse" && (
+        <BrowseChannels onClose={() => setDialog("")} onJoined={(channel) => { upsertChannel(channel); setDialog(""); open(channel.id) }} />
+      )}
       {dialog === "direct" && (
         <StartDirect peopleList={peopleList.filter((person) => person.id !== me)} online={online} onClose={() => setDialog("")} onStart={startDirect} />
       )}
@@ -562,7 +566,7 @@ export function ChatApp({ mode = "channels" }) {
   )
 }
 
-function ChatNav({ mode, error, onDismissError, channels, people, peopleList, me, online, activeId, status, filter, canCreate, onFilter, onSearch, onOpen, onCreate, onDirect, onPerson }) {
+function ChatNav({ mode, error, onDismissError, channels, people, peopleList, me, online, activeId, status, filter, canCreate, onFilter, onSearch, onOpen, onCreate, onBrowse, onDirect, onPerson }) {
   const direct = mode === "direct"
   const [collapsed, setCollapsed] = useState({})
   const [permission, setPermission] = useState("granted")
@@ -580,7 +584,7 @@ function ChatNav({ mode, error, onDismissError, channels, people, peopleList, me
   // On Direct messages everyone you have not talked to yet is listed, to start a conversation in one click.
   const suggestions = query || direct ? peopleList.filter((person) => person.id !== me && !person.bot && !talkedTo.has(person.id) && (!query || person.name.toLowerCase().includes(query))).slice(0, direct && !query ? 50 : 5) : []
 
-  function section(key, label, items, render, action) {
+  function section(key, label, items, render, action, footer) {
     const closed = collapsed[key] && !query
     return (
       <div className="chat-nav-section">
@@ -594,6 +598,7 @@ function ChatNav({ mode, error, onDismissError, channels, people, peopleList, me
         </div>
         {!closed && items.map(render)}
         {!closed && !items.length && <p className="chat-nav-empty">{query ? "No matches" : "Nothing here yet"}</p>}
+        {!closed && !query && footer}
       </div>
     )
   }
@@ -633,6 +638,8 @@ function ChatNav({ mode, error, onDismissError, channels, people, peopleList, me
       <div className="chat-nav-list">
         {!direct && section("channels", "Channels", rooms, (channel) => row(channel, <Icon name={channel.private ? "lock" : "hash"} size={15} />), canCreate && (
           <button type="button" className="chat-nav-add" aria-label="Create a channel" title="Create a channel" onClick={onCreate}><Icon name="plus" size={14} /></button>
+        ), canCreate && (
+          <button type="button" className="chat-nav-row chat-nav-browse" onClick={onBrowse}><Icon name="search" size={15} /><span>Browse channels</span></button>
         ))}
         {direct && section("direct", "Direct messages", directs, (channel) => {
           const others = channel.memberIds.filter((id) => id !== me)
@@ -950,7 +957,7 @@ function DetailsPanel({ channel, people, peopleList, me, isAdmin, online, member
   }
 
   async function leave() {
-    if (!window.confirm(`Leave #${channel.name}? You will need to be added again to see it.`)) return
+    if (!window.confirm(channel.private ? `Leave #${channel.name}? You will need to be added again to see it.` : `Leave #${channel.name}? You can join it again from Browse channels.`)) return
     try {
       await api(`/chat/channels/${channel.id}/leave`, { method: "POST", body: {} })
       onLeft(channel.id)
@@ -1000,10 +1007,11 @@ function DetailsPanel({ channel, people, peopleList, me, isAdmin, online, member
           <p className="chat-details-note">Everyone who can open this property is in this room. Give or remove property access on the Members page to change who is here.</p>
         )}
         {channel.kind === "general" && <p className="chat-details-note">Everyone on the team is in #general. Contractors only see their property rooms and direct messages.</p>}
+        {channel.kind === "channel" && !channel.memberList && <p className="chat-details-note">Everyone on the team is in this channel. Channels created now start with only their creator.</p>}
         <div className="chat-details-members">
           <div className="chat-details-label">
             <span>{members.length} {members.length === 1 ? "member" : "members"}</span>
-            {channel.kind === "channel" && channel.private && <button type="button" className="import-button" onClick={() => setAdding((current) => !current)}>{adding ? "Cancel" : "Add people"}</button>}
+            {channel.kind === "channel" && channel.memberList && <button type="button" className="import-button" onClick={() => setAdding((current) => !current)}>{adding ? "Cancel" : "Add people"}</button>}
           </div>
           {adding && (
             <div className="chat-add-people">
@@ -1014,9 +1022,9 @@ function DetailsPanel({ channel, people, peopleList, me, isAdmin, online, member
           {sorted.map((person) => (
             <div key={person.id} className="chat-member">
               <Avatar name={person.name} online={online.has(person.id)} size="sm" />
-              <span><b>{person.name}{person.id === me ? " (you)" : ""}</b><small>{person.email}</small></span>
+              <span><b>{person.name}{person.id === me ? " (you)" : ""}{channel.kind === "channel" && person.id === channel.createdBy && <em className="chat-member-role">Channel admin</em>}</b><small>{person.email}</small></span>
               {person.id !== me && !person.bot && <button type="button" className="chat-member-action" onClick={() => onMessage(person.id)}>Message</button>}
-              {manage && channel.private && person.id !== me && (
+              {manage && channel.memberList && person.id !== me && (
                 <button type="button" className="chat-member-action is-danger" onClick={() => patch({ removeMemberIds: [person.id] })}>Remove</button>
               )}
             </div>
@@ -1024,7 +1032,7 @@ function DetailsPanel({ channel, people, peopleList, me, isAdmin, online, member
         </div>
         {channel.kind === "channel" && (
           <div className="chat-details-actions">
-            {channel.private && <button type="button" className="import-button" onClick={leave}>Leave channel</button>}
+            {channel.memberList && <button type="button" className="import-button" onClick={leave}>Leave channel</button>}
             {manage && <button type="button" className="import-button is-danger" onClick={archive}>Archive channel</button>}
           </div>
         )}
@@ -1081,24 +1089,71 @@ function CreateChannel({ peopleList, onClose, onCreated }) {
   }
 
   return (
-    <FormSheet eyebrow="Channels" title="Create a channel" hint="Channels are where the team talks about a topic." onClose={onClose} onSubmit={submit} submitLabel="Create channel" pending={pending} error={error}>
+    <FormSheet eyebrow="Channels" title="Create a channel" hint="You will be the channel admin. Add people now or later." onClose={onClose} onSubmit={submit} submitLabel="Create channel" pending={pending} error={error}>
       <div className="form-grid">
         <label className="field wide"><span>Name</span><input autoFocus required value={name} placeholder="e.g. acquisitions" onChange={(event) => setName(event.target.value)} /></label>
         {slug && slug !== name && <p className="chat-form-hint wide">It will be called #{slug}.</p>}
         <label className="field wide"><span>Topic <em>· optional</em></span><input value={topic} placeholder="What is this channel for?" onChange={(event) => setTopic(event.target.value)} /></label>
         <label className={isPrivate ? "access-row is-on wide" : "access-row wide"}>
           <input type="checkbox" hidden checked={isPrivate} onChange={(event) => setPrivate(event.target.checked)} />
-          <span><b>Make it private</b><small>Only people you invite can see a private channel.</small></span>
+          <span><b>Make it private</b><small>{isPrivate ? "Only people you add can see it." : "Public: anyone on the team can find it in Browse channels and join."}</small></span>
           <i />
         </label>
-        {isPrivate && (
-          <div className="wide">
-            <p className="chat-form-hint">Invite people ({picked.length} picked)</p>
-            <PeoplePicker people={peopleList} online={new Set()} picked={picked} onChange={setPicked} />
-          </div>
-        )}
+        <div className="wide">
+          <p className="chat-form-hint">Add people <em>· optional</em> ({picked.length} picked)</p>
+          <PeoplePicker people={peopleList} online={new Set()} picked={picked} onChange={setPicked} />
+        </div>
       </div>
     </FormSheet>
+  )
+}
+
+// Public channels you are not in yet. Joining adds you and opens the channel.
+function BrowseChannels({ onClose, onJoined }) {
+  const [items, setItems] = useState(null)
+  const [query, setQuery] = useState("")
+  const [joining, setJoining] = useState("")
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    let active = true
+    api("/chat/channels/browse")
+      .then((data) => { if (active) setItems(data.items || []) })
+      .catch((err) => { if (active) { setItems([]); setError(err.message) } })
+    return () => { active = false }
+  }, [])
+
+  async function join(channel) {
+    setJoining(channel.id)
+    setError("")
+    try {
+      const data = await api(`/chat/channels/${channel.id}/join`, { method: "POST", body: {} })
+      onJoined(data.channel)
+    } catch (err) {
+      setError(err.message)
+      setJoining("")
+    }
+  }
+
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+  const shown = (items || []).filter((channel) => words.every((word) => `${channel.name} ${channel.topic}`.toLowerCase().includes(word)))
+  return (
+    <InfoSheet eyebrow="Channels" title="Browse channels" hint="Public channels you have not joined yet." onClose={onClose}>
+      {error && <div className="banner">{error}</div>}
+      {items === null ? <PageSpinner /> : (
+        <div className="chat-browse">
+          {items.length > 0 && <input className="chat-browse-search" value={query} placeholder="Search channels" aria-label="Search channels" onChange={(event) => setQuery(event.target.value)} />}
+          {shown.map((channel) => (
+            <div key={channel.id} className="chat-browse-row">
+              <Icon name="hash" size={15} />
+              <span><b>{channel.name}</b><small>{[channel.topic, `${channel.memberCount} ${channel.memberCount === 1 ? "member" : "members"}`].filter(Boolean).join(" · ")}</small></span>
+              <button type="button" className="import-button" disabled={Boolean(joining)} onClick={() => join(channel)}>{joining === channel.id ? "Joining…" : "Join"}</button>
+            </div>
+          ))}
+          {!shown.length && <p className="chat-nav-empty">{items.length ? "No channels match." : "You are in every public channel."}</p>}
+        </div>
+      )}
+    </InfoSheet>
   )
 }
 
