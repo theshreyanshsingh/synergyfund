@@ -106,7 +106,7 @@ export function ArvSection({ property, writable, onChanged }) {
   const [busy, setBusy] = useState("")
   const [facts, setFacts] = useState({ sqft: property.sqft ?? "", beds: property.beds ?? "", baths: property.baths ?? "" })
   const comps = property.comps || []
-  const stats = useMemo(() => compStats(comps, property.sqft), [comps, property.sqft])
+  const stats = useMemo(() => compStats(comps, property.sqft, { beds: property.beds, baths: property.baths }), [comps, property.sqft, property.beds, property.baths])
   const location = useCompLocations(property)
   const numbered = placedComps(property, location)
   const subject = { address: property.address, lat: location?.subject?.lat ?? property.lat, lng: location?.subject?.lng ?? property.lng }

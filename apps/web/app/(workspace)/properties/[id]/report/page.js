@@ -61,7 +61,7 @@ export default function PropertyReport({ params }) {
   }, [property, settings?.title])
 
   const draws = useMemo(() => detail.data?.draws?.items || [], [detail.data])
-  const stats = useMemo(() => compStats(property?.comps || [], property?.sqft), [property])
+  const stats = useMemo(() => compStats(property?.comps || [], property?.sqft, { beds: property?.beds, baths: property?.baths }), [property])
 
   if (!settings || (detail.loading && !detail.data)) return <PageSpinner label="Building the report" />
   if (detail.error || !property) return <div className="report-page"><p className="banner">{detail.error || "That property is not available."}</p></div>

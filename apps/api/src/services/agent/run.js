@@ -8,7 +8,8 @@ const MAX_GATHER_STEPS = 12
 const MAX_TODO_NUDGES = 2
 const MAX_FOLLOW_UPS = 1
 const EVIDENCE_LIMIT = 80000
-const RUN_DEADLINE_MS = 4 * 60 * 1000
+// An ARV reads several listing pages, so a run may take a few minutes.
+const RUN_DEADLINE_MS = 6 * 60 * 1000
 const TITLE_UNTIL_PROMPTS = 3
 const KEEP_FULL_RESULTS = 6
 const COMPACT_RESULT_CHARS = 1200
@@ -75,6 +76,7 @@ Your job in this step is to decide how to answer.
 ${webAllowed
     ? "- Questions about listings for sale or rent, market rents, comparable sales, neighborhoods, tax rates, insurance, news, or anything else outside the company records need web steps. Never say you cannot browse the web."
     : "- Web search is not connected in this workspace. If the person asks for something only the web has, reply that web search is not connected yet and an admin can connect it in Settings, and offer what the company records can show instead."}
+- If the person wants an ARV (after repair value), comps, what a house would sell for once renovated, or a maximum offer, plan two steps: get the subject's square footage, bedrooms, bathrooms, ZIP and rehab budget (get_property when it is in the records, otherwise its listing on the web); then run arv_analysis, which finds and checks the sold comps itself.${webAllowed ? "" : " Without web search, say comps cannot be looked up yet and offer to run arv_analysis on comps the person pastes in."}
 - If the person wants documents gathered, collected, bundled, zipped or downloaded (for example "zip the closing docs for 3318 Nolan"), plan two steps: find the documents, then zip them.
 - If the person wants an email, message, letter or note written (or a reply, or a change to an earlier draft) and it is about a property, loan, lender, draw, payment, task, document or a person on the team, plan steps to look up those facts first, plus a step to find the recipient's email address with list_team when they are on the team. If it needs no records, write it now by the writing rules below and do not call a tool.
 - If the message is a greeting, a thank you, or something you can answer without any data, reply in one or two plain sentences and do not call a tool.
@@ -98,6 +100,10 @@ How to work:
 
 Gathering documents:
 - Use find_documents with the property, company, folder, words and dates the person gave. If it shows fewer than its total, call it again with a higher limit (up to 150) before zipping. If it finds the right files, call zip_documents with their ids (all of them, up to 150) and a short descriptive name. If it finds nothing, try once with fewer filters.
+
+Working out an ARV (after repair value):
+- The subject: get_property gives its square footage, beds, baths, ZIP (in its city) and rehab budget. If it is not in the records or a fact is missing, find its listing (web_search with sites ["zillow.com", "redfin.com", "realtor.com"]) and read it for beds, baths, square feet, ZIP, list price and home type.
+- Then call arv_analysis with the property (or the subject's address, ZIP, beds, baths and sq ft). It finds the sold comps on Redfin itself, checks each one by the team's rules and does the math, which takes about a minute. Do not search for comps yourself first, and only pass comps when the person gave specific ones.
 
 Searching company records:
 - When you are not sure where something lives or a name may be misspelled, start with search_records, then open the match with get_property or the specific list tool.
@@ -127,7 +133,8 @@ Write the answer to the person's question using only the evidence below. Rules:
 - When the person asks what to do, give a clear recommendation and the reason, based on the evidence.
 - Never show JSON, tool names or ids. You cannot change records; if asked to, say which page in SynergiFund does it.
 - When zip_documents made a download, give its link exactly as written in its instructions (a markdown link) on a line of its own, and list what is in it briefly. The page shows the link as a download button at the very end of the answer, so never say "above" or "below" about it. Never make up a link.
-- When the person asked for an email, message, letter or note, the draft is the answer: follow the writing rules below.${canFollowUp ? "\n- If the evidence clearly cannot answer the question and specific lookups would, call request_more_data once with those steps instead of answering. Otherwise answer now." : ""}
+- When the person asked for an email, message, letter or note, the draft is the answer: follow the writing rules below.
+- When arv_analysis ran, use its numbers exactly and never work out an ARV or offer yourself. When it searched for comps, say they are sold houses from Redfin for that ZIP (public web data, not company records). Lead with the ARV and the maximum offer with its formula (ARV x 0.70 - renovation estimate), saying where the renovation estimate came from. When there is no renovation estimate, give the offer before repairs (offerBeforeRepairs, ARV x 0.70) and say to type the renovation estimate into the card to get the maximum offer. When there is a purchase or list price, say how it compares with the maximum offer (purchaseGap or listGap: above means it costs more than the maximum offer). Then a few short bullets: which comps were used and any adjustment, which were skipped and why, and any comp it flagged to check. If it found fewer than 3 usable comps, say the ARV is not reliable yet, what it searched (its summary says), and which skipped comps are worth a second look. Do not repeat the full comp table or the math: the page shows them in an ARV card under your answer, with buttons to copy the comp log and save it to the property.${canFollowUp ? "\n- If the evidence clearly cannot answer the question and specific lookups would, call request_more_data once with those steps instead of answering. Otherwise answer now." : ""}
 
 ${writingRules(user)}`
 }

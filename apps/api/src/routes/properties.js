@@ -208,6 +208,66 @@ propertiesRouter.post(
   }),
 )
 
+// Saves an Agent ARV analysis to the ARV tab: the comps it used (any not there yet), how each was adjusted, and the
+// ARV (the average of their adjusted prices, rounded to the nearest thousand). Missing size and rooms are filled in.
+propertiesRouter.post(
+  "/:id/arv-analysis",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const property = await loadForComps(req, res)
+    if (!property) return
+    const incoming = (Array.isArray(req.body.comps) ? req.body.comps : []).slice(0, 12)
+    const key = (address) => String(address || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+    const have = new Set((property.comps || []).map((comp) => key(comp.address)))
+    const prices = []
+    let added = 0
+    for (const raw of incoming) {
+      const adjusted = Number(raw?.adjustedPrice)
+      if (Number.isFinite(adjusted) && adjusted > 0) prices.push(adjusted)
+      if (have.has(key(raw?.address)) || (property.comps || []).length >= 25) continue
+      const url = String(raw?.url || "")
+      const notes = [
+        "From the Agent's ARV analysis",
+        (raw?.adjustments || []).length ? `adjusted ${(raw.adjustments || []).map((item) => `${item.amount < 0 ? "-" : "+"}$${Math.abs(Number(item.amount) || 0).toLocaleString("en-US")} (${item.label})`).join(", ")}, used $${Math.round(adjusted).toLocaleString("en-US")}` : "no adjustment",
+        raw?.distanceMiles != null ? `${raw.distanceMiles} mi away` : "",
+        raw?.note || "",
+        url && !/zillow\.com/i.test(url) ? url : "",
+      ].filter(Boolean).join(" · ")
+      const { fields, error } = compFields({
+        address: raw?.address,
+        city: raw?.city || property.city || "",
+        salePrice: raw?.salePrice ?? "",
+        saleDate: /^\d{4}-\d{2}-\d{2}$/.test(String(raw?.saleDate || "")) ? raw.saleDate : "",
+        beds: raw?.beds ?? "",
+        baths: raw?.baths ?? "",
+        sqft: raw?.sqft ?? "",
+        zillowUrl: /^https:\/\/(www\.)?zillow\.com\//i.test(url) ? url : "",
+        notes,
+        include: true,
+      })
+      if (error || !fields.address) continue
+      property.comps.push(fields)
+      await placeComp(property.comps[property.comps.length - 1], property)
+      have.add(key(fields.address))
+      added += 1
+    }
+    if (!prices.length) return sendError(res, 400, "There are no comps with a price to save.")
+    const subject = req.body.subject || {}
+    for (const field of ["sqft", "beds", "baths"]) {
+      const value = Number(subject[field])
+      if (property[field] == null && Number.isFinite(value) && value > 0) property[field] = value
+    }
+    property.arv = Math.round(prices.reduce((sum, value) => sum + value, 0) / prices.length / 1000) * 1000
+    property.arvMethod = `Agent ARV analysis: average of ${prices.length} adjusted comps (team ARV rules)`
+    property.arvDate = new Date().toISOString().slice(0, 10)
+    property.compsUpdatedAt = new Date()
+    property.updatedBy = req.user.name
+    await property.save()
+    await recordActivity({ user: req.user, title: "ARV saved from the Agent", detail: `${property.address}: $${property.arv.toLocaleString("en-US")} from ${prices.length} comps${added ? `, ${added} added to the ARV tab` : ""}`, propertyId: property._id })
+    res.json({ property: presentProperty(property, req.user), added, arv: property.arv })
+  }),
+)
+
 propertiesRouter.patch(
   "/:id/comps/:compId",
   requirePermission("properties.write"),
@@ -484,6 +544,12 @@ propertiesRouter.patch(
     }
     const before = property.toObject()
     Object.assign(property, parsed.data, { updatedBy: req.user.name })
+    // Removing the rehab budget removes it everywhere: a copy kept on the draw budget record (from a draw sheet
+    // import or when lender funding was first set) would otherwise keep showing as the budget. Only when a budget
+    // is really being removed (a form that just leaves the field empty does not touch the draw record).
+    if ("rehabBudget" in req.body && parsed.data.rehabBudget == null && (before.rehabBudget != null || req.body.clearDrawBudget === true)) {
+      await DrawBudget.updateMany({ propertyId: property._id, budget: { $ne: null } }, { $unset: { budget: 1 } })
+    }
     if (("address" in parsed.data && parsed.data.address !== before.address) || ("city" in parsed.data && parsed.data.city !== before.city)) {
       property.lat = undefined
       property.lng = undefined

@@ -158,7 +158,8 @@ export default function DrawsPage() {
   async function saveSheetValue({ project, column, draw, value }) {
     const text = String(value ?? "").trim()
     if (!text) {
-      if (column === "budget") await api(`/properties/${project.id}`, { method: "PATCH", body: { rehabBudget: null } })
+      // The sheet shows the budget from the property or its draw budget record: clearing it clears both.
+      if (column === "budget") await api(`/properties/${project.id}`, { method: "PATCH", body: { rehabBudget: null, clearDrawBudget: true } })
       else if (column === "funding" && project.budgetId) await api(`/draws/budgets/${project.budgetId}`, { method: "PATCH", body: { fundingLimit: null } })
       else if (draw) {
         if (!window.confirm(`Delete ${draw.title} from ${project.address}?`)) return
@@ -177,7 +178,7 @@ export default function DrawsPage() {
       } else {
         await api("/draws/budgets", {
           method: "POST",
-          body: { propertyId: project.id, title: "Lender funding", budget: project.totalBudget, fundingLimit: amount },
+          body: { propertyId: project.id, title: "Lender funding", fundingLimit: amount },
         })
       }
     } else if (draw) {

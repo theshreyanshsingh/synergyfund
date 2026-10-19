@@ -5,6 +5,8 @@ import { propertyFilter } from "../access.js"
 import { presentContractorDraw, presentDraw } from "../../routes/draws.js"
 import { matchScore, rank } from "./match.js"
 import { insuranceDates, loanPaymentDates, paymentDates } from "../schedule.js"
+import { geocode, nearbyZips } from "../geocode.js"
+import { analyzeArv, milesBetween } from "./arv.js"
 
 const MODEL_RESULT_LIMIT = 12000
 const OPEN_REQUEST_STATUSES = ["Submitted", "Needs information", "Needs second approval"]
@@ -193,6 +195,132 @@ async function firecrawl(path, body) {
     if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1500))
   }
   return last
+}
+
+// ---------- finding sold comps for an ARV (Redfin through Firecrawl) ----------
+
+const SOLD_LIST_SCHEMA = {
+  type: "object",
+  properties: {
+    homes: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { address: { type: "string" }, price: { type: "number" }, soldDate: { type: "string" }, beds: { type: "number" }, baths: { type: "number" }, sqft: { type: "number" }, url: { type: "string" } },
+      },
+    },
+  },
+}
+const LISTING_SCHEMA = {
+  type: "object",
+  properties: {
+    status: { type: "string" },
+    soldPrice: { type: "number" },
+    soldDate: { type: "string" },
+    beds: { type: "number" },
+    baths: { type: "number" },
+    sqft: { type: "number" },
+    homeType: { type: "string" },
+    yearBuilt: { type: "number" },
+    description: { type: "string" },
+  },
+}
+
+// The ZIP code from "Jacksonville, FL 32209" or an address ending in one (never a 5-digit house number).
+export function zipOf(...texts) {
+  for (const text of texts) {
+    const match = String(text || "").match(/\b[A-Z]{2}\s+(\d{5})(?:-\d{4})?\b/i) || String(text || "").match(/(?:^|,\s*)(\d{5})(?:-\d{4})?\s*$/)
+    if (match) return match[1]
+  }
+  return ""
+}
+
+function homeType(text) {
+  const value = String(text || "").toLowerCase()
+  if (!value) return "unknown"
+  if (/single|house|detached/.test(value)) return "single-family"
+  if (/condo|co-op/.test(value)) return "condo"
+  if (/town/.test(value)) return "townhome"
+  if (/multi|duplex|triplex|fourplex/.test(value)) return "multi-family"
+  if (/mobile|manufactured/.test(value)) return "mobile"
+  if (/land|lot/.test(value)) return "land"
+  return "unknown"
+}
+
+function splitAddress(full) {
+  const [street, ...rest] = String(full || "").split(",")
+  return { address: street.trim(), city: rest.join(",").trim() }
+}
+
+// Redfin's square-footage filter value: 920 -> "920-sqft", 1250 -> "1.25k-sqft".
+function sqftFilter(value) {
+  const rounded = Math.round(value / 10) * 10
+  return rounded < 1000 ? `${rounded}-sqft` : `${Number((rounded / 1000).toFixed(2))}k-sqft`
+}
+
+// Sold houses on Redfin in the given ZIPs, filtered to within 20% of the subject's size. The likely matches (rooms,
+// size) not looked at yet are opened, closest and most recent first, to read their sale, year built and what the
+// listing says about condition. Houses in the lists that do not match are passed along too, so the reason they
+// were skipped shows.
+async function findSoldComps({ subject, zips, months, home, known = new Set(), open = 8 }) {
+  const range = `min-sqft=${sqftFilter(subject.sqft * 0.8)},max-sqft=${sqftFilter(subject.sqft * 1.2)}`
+  const prompt = "Every sold home on the page: full street address with city, state and ZIP, sold price, sold date as YYYY-MM-DD, beds, baths, square feet, and the full link to its page."
+  const read = (url) => firecrawl("/scrape", { url, formats: [{ type: "json", schema: SOLD_LIST_SCHEMA, prompt }], onlyMainContent: true, timeout: 60000, maxAge: FIRECRAWL_CACHE_MS })
+  const lists = await Promise.all(zips.map(async (zip) => {
+    const url = `https://www.redfin.com/zipcode/${zip}/filter/property-type=house,${range},include=sold-${months}mo`
+    let list = await read(url)
+    if (!(list.success && list.data?.json?.homes?.length)) list = await read(`https://www.redfin.com/zipcode/${zip}/recently-sold`)
+    return { zip, url, homes: list.success ? list.data?.json?.homes || [] : [], error: list.success ? "" : list.error }
+  }))
+  const homes = lists.flatMap((list) => list.homes.map((item) => ({ ...item, zip: list.zip })))
+  if (!homes.length) return { success: false, error: lists.find((list) => list.error)?.error || `No sold houses were found on Redfin for ${zips.join(", ")}.` }
+  const seen = new Set()
+  const rows = homes.filter((item) => item?.address && !seen.has(item.address.toLowerCase()) && seen.add(item.address.toLowerCase())).map((item) => ({
+    ...splitAddress(item.address),
+    zip: item.zip,
+    salePrice: item.price,
+    saleDate: item.soldDate,
+    beds: item.beds,
+    baths: item.baths,
+    sqft: item.sqft,
+    url: /^https?:\/\//.test(item.url || "") ? item.url : item.url ? `https://www.redfin.com${item.url.startsWith("/") ? "" : "/"}${item.url}` : "",
+    propertyType: "single-family",
+    status: "sold",
+  })).filter((row) => !known.has(row.address.toLowerCase()))
+  const likely = (row) => (!row.sqft || Math.abs(row.sqft - subject.sqft) <= subject.sqft * 0.2) && (row.beds == null || Math.abs(row.beds - subject.beds) <= 2) && (row.baths == null || Math.abs(row.baths - subject.baths) <= 2)
+  const age = (row) => (row.saleDate ? (Date.now() - new Date(`${String(row.saleDate).slice(0, 10)}T12:00:00Z`).getTime()) / 86400000 : 999)
+  // Nearest first needs a distance: measure the most recent likely ones (the map lookup is one a second).
+  const candidates = rows.filter(likely).sort((a, b) => age(a) - age(b)).slice(0, 18)
+  for (const row of candidates) {
+    const spot = home ? await geocode(row.address, row.city || subject.city) : null
+    row.distanceMiles = spot ? milesBetween(home, spot) : null
+  }
+  candidates.sort((a, b) => (age(a) > 90) - (age(b) > 90) || (a.distanceMiles ?? 99) - (b.distanceMiles ?? 99))
+  const opened = candidates.slice(0, open)
+  const details = []
+  for (let index = 0; index < opened.length; index += 4) {
+    details.push(...(await Promise.all(opened.slice(index, index + 4).map((row) => (row.url
+      ? firecrawl("/scrape", { url: row.url, formats: [{ type: "json", schema: LISTING_SCHEMA, prompt: "This home's sale: status (sold, pending or for sale), sold price, sold date as YYYY-MM-DD, beds, baths, square feet, home type, year built, and the listing description about its condition (renovated, updated, as-is and so on), up to 600 characters." }], onlyMainContent: true, timeout: 60000, maxAge: FIRECRAWL_CACHE_MS })
+      : Promise.resolve({ success: false }))))))
+  }
+  const comps = opened.map((row, index) => {
+    const found = details[index]?.success ? details[index].data?.json || {} : {}
+    const status = String(found.status || "sold").toLowerCase()
+    return {
+      ...row,
+      salePrice: found.soldPrice || row.salePrice,
+      saleDate: found.soldDate || row.saleDate,
+      beds: found.beds ?? row.beds,
+      baths: found.baths ?? row.baths,
+      sqft: found.sqft || row.sqft,
+      propertyType: found.homeType ? homeType(found.homeType) : "single-family",
+      yearBuilt: found.yearBuilt,
+      status: /pending|contingent/.test(status) ? "pending" : /sale|active/.test(status) && !/sold/.test(status) ? "listed" : "sold",
+      note: details[index]?.success ? String(found.description || "").replace(/\s+/g, " ").trim().slice(0, 300) : "The listing page could not be read",
+    }
+  })
+  const others = rows.filter((row) => !likely(row)).slice(0, 12).map((row) => ({ ...row, listOnly: true }))
+  return { success: true, comps: [...comps, ...others], lists: lists.map((list) => ({ zip: list.zip, url: list.url, found: list.homes.length })), checked: opened.length }
 }
 
 function cleanMarkdown(text, limit) {
@@ -889,6 +1017,156 @@ export const TOOLS = [
       return result
     },
     summarize: (result, args) => ({ title: result.title || result.url, url: result.url, extracted: Boolean(args.extract) }),
+  },
+  {
+    name: "arv_analysis",
+    label: "Working out the ARV",
+    permission: PERMISSIONS.propertiesRead,
+    staffOnly: true,
+    description: "Work out the After Repair Value (ARV) from comparable sales, by the team's rules: single-family houses only, fully renovated, already sold (not listed or pending) in the last 6 months (90 days preferred), within 20% of the subject's square footage and 2 bedrooms or bathrooms of it, not across a highway, river or train tracks. Adjusts each comp $10,000 per bedroom and $5,000 per bathroom of difference, prefers the closest and most recent, leaves out one far from the rest, averages and rounds to the nearest thousand, then works out the maximum offer (ARV x 0.70 - renovation estimate). It finds the comps itself: it reads the houses sold in the subject's ZIP on Redfin (last 3 months, widening to 6 when needed), opens the likely matches to read their sale, year built and condition, and measures distances. So pass just the property (or the subject's address with ZIP, beds, baths and sq ft). Only pass comps when the person gave you specific ones. Always use its numbers; never work out an ARV yourself.",
+    parameters: {
+      type: "object",
+      properties: {
+        property: { type: "string", description: "The subject property's id or address when it is in the company records (its size, rooms and rehab budget are read from there)." },
+        subject: {
+          type: "object",
+          description: "The subject house, for one not in the records or to fill in missing facts.",
+          properties: {
+            address: { type: "string" },
+            city: { type: "string", description: "City, state and ZIP." },
+            zip: { type: "string" },
+            beds: { type: "number" },
+            baths: { type: "number" },
+            sqft: { type: "number" },
+            listPrice: { type: "number", description: "The asking price, if it is listed." },
+          },
+        },
+        zip: { type: "string", description: "The ZIP code to search for comps, when the property's address has none." },
+        rehabEstimate: { type: "number", description: "Renovation estimate in dollars, if the person gave one. Otherwise the property's rehab budget is used." },
+        comps: {
+          type: "array",
+          description: "Only when the person gave specific comps to use. Leave out to have it find them.",
+          items: {
+            type: "object",
+            properties: {
+              address: { type: "string" },
+              city: { type: "string", description: "City, state and ZIP." },
+              salePrice: { type: "number", description: "The closed sale price." },
+              saleDate: { type: "string", description: "Sale date, YYYY-MM-DD." },
+              beds: { type: "number" },
+              baths: { type: "number", description: "Full baths count 1, half baths 0.5." },
+              sqft: { type: "number" },
+              propertyType: { type: "string", enum: ["single-family", "condo", "townhome", "apartment", "multi-family", "mobile", "land", "unknown"] },
+              condition: { type: "string", enum: ["renovated", "as-is", "new-construction", "unknown"], description: "renovated: the description or photos show it updated and move-in ready (renovated, remodeled, updated, new kitchen, flooring, roof). as-is: sold as-is, distressed, bank-owned, foreclosure, fixer, needs work or investor special. new-construction: built in the last two years. unknown: the listing says nothing about condition." },
+              yearBuilt: { type: "number" },
+              status: { type: "string", enum: ["sold", "pending", "listed"] },
+              distanceMiles: { type: "number", description: "Distance from the subject if the page shows it." },
+              acrossBarrier: { type: "boolean", description: "True when it is across a highway, river or train tracks from the subject." },
+              url: { type: "string", description: "The listing page." },
+              note: { type: "string", description: "What the listing says about its condition, in its own words (for example \"fully renovated, new kitchen and LVP floors\" or \"sold as-is, cash only\")." },
+            },
+            required: ["address"],
+          },
+        },
+      },
+    },
+    run: async (args, context) => {
+      const given = args.subject && typeof args.subject === "object" ? args.subject : {}
+      let record = null
+      if (args.property) {
+        const found = await findProperty(context, args.property)
+        if (!found.property) return notFound(args.property, found.matches)
+        record = found.property
+      } else if (given.address) {
+        // A subject given by address that is a property in the records is that property (so it can be saved there).
+        const found = await findProperty(context, given.address)
+        if (found.property && !found.corrected) record = found.property
+      }
+      const subject = {
+        address: record?.address || String(given.address || "").trim(),
+        city: record?.city || String(given.city || "").trim(),
+        beds: given.beds ?? record?.beds,
+        baths: given.baths ?? record?.baths,
+        sqft: given.sqft ?? record?.sqft,
+      }
+      if (!subject.address) return { success: false, error: "Say which house: a property in the records or its address." }
+      // The renovation estimate: the one given, else the property's rehab budget, else its scope line budgets.
+      let rehab = { value: args.rehabEstimate ?? null, source: args.rehabEstimate != null ? "given" : "" }
+      if (rehab.value == null && record) {
+        const [budgets, draws] = await Promise.all([DrawBudget.find({ propertyId: record._id }), Draw.find({ propertyId: record._id })])
+        const resolved = resolveBudget({ rehabBudget: record.rehabBudget, recordBudget: budgets[0]?.budget, scopeLines: record.scopeLines || [], draws })
+        if (resolved.budget != null) rehab = { value: resolved.budget, source: resolved.estimated ? "the property's scope line budgets (estimated)" : "the property's rehab budget" }
+      }
+      // Distances are measured on the map, not taken from the listing pages, when both places can be found.
+      const home = record?.lat != null && record?.lng != null ? { lat: record.lat, lng: record.lng } : await geocode(subject.address, subject.city)
+      const analyze = (comps) => analyzeArv({ subject, comps, rehabEstimate: rehab.value, listPrice: given.listPrice ?? null, today: todayKey() })
+      const settled = (result) => !result.success || (result.ready && !result.clearOutlier)
+      let result
+      let search = null
+      if (Array.isArray(args.comps) && args.comps.length) {
+        const comps = []
+        for (const comp of args.comps.slice(0, 30)) {
+          const spot = home && comp?.address ? await geocode(comp.address, comp.city || subject.city) : null
+          const measured = spot ? milesBetween(home, spot) : null
+          comps.push({ ...comp, distanceMiles: measured ?? comp?.distanceMiles ?? null })
+        }
+        result = analyze(comps)
+      } else {
+        const facts = { beds: Number(subject.beds), baths: Number(subject.baths), sqft: Number(subject.sqft), city: subject.city }
+        if (!(facts.beds > 0 && facts.baths > 0 && facts.sqft > 0)) return analyze([])
+        if (!webAllowed(context)) return { success: false, error: "Web search is not connected, so comps cannot be looked up. Paste comps (address, sale price, date, beds, baths, sq ft, condition) to work out the ARV from them." }
+        const zip = String(args.zip || given.zip || zipOf(subject.city, given.city, subject.address)).trim()
+        if (!/^\d{5}$/.test(zip)) return { success: false, error: "The subject's ZIP code is needed to look for comps. Add it to the property's city (like \"Jacksonville, FL 32209\") or give it." }
+        // Widen until there are 3 good comps: this ZIP's last 6 months of sales (the most recent are preferred), then
+        // the ZIPs next to it.
+        const pool = new Map()
+        const lists = []
+        let checked = 0
+        const months = 6
+        let neighbors = []
+        for (const pass of ["zip", "nearby"]) {
+          let zips = [zip]
+          if (pass === "nearby") {
+            neighbors = await nearbyZips(home, zip, 3)
+            if (!neighbors.length) break
+            zips = neighbors
+          }
+          const found = await findSoldComps({ subject: facts, zips, months, home, known: new Set(pool.keys()), open: pass === "nearby" ? 6 : 8 })
+          if (!found.success) {
+            if (pass === "zip") return found
+            break
+          }
+          for (const comp of found.comps) {
+            const key = comp.address.toLowerCase()
+            if (!pool.has(key) || (pool.get(key).listOnly && !comp.listOnly)) pool.set(key, pass === "nearby" ? { ...comp, nearby: true } : comp)
+          }
+          lists.push(...found.lists.filter((list) => !lists.some((item) => item.zip === list.zip && item.url === list.url)))
+          checked += found.checked
+          result = analyze([...pool.values()])
+          if (settled(result)) break
+        }
+        search = { site: "Redfin", zip, months, neighbors, url: lists[0]?.url || "", found: pool.size, checked, lists }
+        if (result?.success && !result.ready) {
+          const where = neighbors.length ? `${zip} and the ZIPs next to it (${neighbors.join(", ")})` : zip
+          result.summary = `Only ${result.used.length} usable ${result.used.length === 1 ? "comp" : "comps"} after searching ${months} months of sales in ${where}, so this ARV is not reliable. Check the skipped ones (a comp that only needs its photos checked can be added on the ARV tab) or add comps you know.`
+        }
+      }
+      if (!result.success) return result
+      if (search) result.search = search
+      const purchase = record?.purchasePrice ?? null
+      return {
+        ...result,
+        propertyId: record ? String(record._id) : "",
+        subject: { ...result.subject, city: subject.city, inRecords: Boolean(record) },
+        rehabSource: rehab.source,
+        offerBeforeRepairs: result.arv != null ? Math.round(result.arv * 0.7) : null,
+        purchasePrice: purchase,
+        purchaseGap: purchase != null && result.maxOffer != null ? purchase - result.maxOffer : null,
+        instructions: "Report these numbers exactly; never work out your own. The page shows this whole analysis (comp log, skipped comps, math and offer, with a box to type a renovation estimate) as a card under your answer, with buttons to copy it and save it to the property.",
+      }
+    },
+    // The whole analysis goes to the page, which shows it as the ARV card.
+    summarize: (result) => ({ title: result.ready ? `ARV $${result.arv.toLocaleString("en-US")} from ${result.used.length} comps` : result.summary, analysis: result }),
   },
   {
     name: "search_records",

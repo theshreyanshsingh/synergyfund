@@ -955,3 +955,13 @@ function ScopeLine({ item, showBudget, showMoney, canPost, canRequest, canProgre
     </article>
   )
 }
+
+async function removeProperty(id, address, router) {
+  if (!window.confirm(`Delete ${address}? Its draws, loans, costs, photos and documents will be removed.`)) return
+  try {
+    await api(`/properties/${id}`, { method: "DELETE" })
+    router.push("/properties")
+  } catch (error) {
+    window.alert(`${address} could not be deleted: ${error.message}`)
+  }
+}

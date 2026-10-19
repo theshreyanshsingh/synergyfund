@@ -3,12 +3,17 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import Link from "next/link"
+import { PERMISSIONS, can } from "@synergifund/shared"
+import { useSession } from "../shell/Providers"
 import { Icon } from "../ui/Icon"
+import { api } from "../../lib/api"
 
 const AGENT_NAME = "SynergiFund"
 
 const STATUS_LABELS = {
   todo_write: "Planning Next Moves",
+  arv_analysis: "Working out the ARV",
   portfolio_summary: "Reading the portfolio",
   list_properties: "Reading properties",
   get_property: "Opening the property",
@@ -391,6 +396,184 @@ function AgentAnswer({ content }) {
   )
 }
 
+// The last ARV the agent worked out in this answer (the full analysis rides along with the tool step).
+function arvOf(rows) {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const step = rows[index].toolResult
+    if (step?.UsedTool === "arv_analysis" && step.result?.analysis?.success) return step.result.analysis
+  }
+  return null
+}
+
+const cash = (value) => (value == null ? "—" : `${value < 0 ? "-" : ""}$${Math.round(Math.abs(value)).toLocaleString("en-US")}`)
+
+function shortDay(value) {
+  if (!value) return "—"
+  const date = new Date(`${value}T12:00:00`)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+}
+
+function adjustmentText(comp) {
+  return comp.adjustments?.length ? comp.adjustments.map((item) => `${item.amount < 0 ? "-" : "+"}${cash(Math.abs(item.amount))} (${item.label})`).join(", ") : "None"
+}
+
+// Maximum offer = ARV x 0.70 - renovation estimate (the team's offer formula).
+function offerFrom(arv, rehab) {
+  return arv != null && rehab != null ? Math.round(arv * 0.7 - rehab) : null
+}
+
+// Tab-separated, so it pastes into a spreadsheet as rows and columns.
+function compLog(analysis, rehab) {
+  const maxOffer = offerFrom(analysis.arv, rehab)
+  const head = ["Address", "Sale price", "Adjustment", "Price used", "Sq ft", "Beds", "Baths", "Distance (mi)", "Sold", "Notes", "Listing"]
+  const rows = analysis.used.map((comp) => [comp.address, comp.salePrice, adjustmentText(comp), comp.adjustedPrice, comp.sqft, comp.beds, comp.baths, comp.distanceMiles ?? "", comp.saleDate, (comp.flags || []).join("; "), comp.url || ""])
+  const lines = [
+    [`ARV analysis: ${analysis.subject.address}`],
+    [`Subject: ${analysis.subject.beds} beds, ${analysis.subject.baths} baths, ${analysis.subject.sqft} sq ft`],
+    [],
+    head,
+    ...rows,
+    [],
+    ["ARV", analysis.arv ?? ""],
+    ["Math", analysis.math],
+    ...(maxOffer != null ? [["Renovation estimate", rehab], ["Maximum offer", maxOffer], ["Formula", `${cash(analysis.arv)} x 0.70 - ${cash(rehab)} = ${cash(maxOffer)}`]] : []),
+  ]
+  return lines.map((line) => line.join("\t")).join("\n")
+}
+
+function priceCompare(label, price, maxOffer) {
+  if (price == null || maxOffer == null) return null
+  const gap = price - maxOffer
+  return { label, price, gap, text: gap > 0 ? `${cash(gap)} above the maximum offer` : gap < 0 ? `${cash(-gap)} under the maximum offer` : "Exactly the maximum offer" }
+}
+
+function ArvCard({ analysis }) {
+  const session = useSession()
+  const [copied, copy] = useCopy()
+  const [saving, setSaving] = useState("")
+  const [error, setError] = useState("")
+  const [rehabText, setRehabText] = useState(analysis.rehabEstimate != null ? String(Math.round(analysis.rehabEstimate)) : "")
+  const canSave = Boolean(analysis.propertyId && analysis.used.length && session?.user && can(session.user, PERMISSIONS.propertiesWrite))
+  const subject = analysis.subject
+  const rehabValue = rehabText.trim() === "" ? null : Number(rehabText.replace(/[$,\s]/g, ""))
+  const rehab = Number.isFinite(rehabValue) && rehabValue >= 0 ? rehabValue : null
+  const maxOffer = offerFrom(analysis.arv, rehab)
+  const beforeRepairs = analysis.arv != null ? Math.round(analysis.arv * 0.7) : null
+  const edited = rehab !== (analysis.rehabEstimate ?? null)
+  const compare = priceCompare("List price", analysis.listPrice, maxOffer) || priceCompare("Purchase price", analysis.purchasePrice, maxOffer)
+  async function save() {
+    setSaving("saving")
+    setError("")
+    try {
+      const data = await api(`/properties/${analysis.propertyId}/arv-analysis`, { method: "POST", body: { comps: analysis.used, subject: { beds: subject.beds, baths: subject.baths, sqft: subject.sqft } } })
+      setSaving(`Saved: ARV ${cash(data.arv)} on file${data.added ? `, ${data.added} ${data.added === 1 ? "comp" : "comps"} added` : ""}.`)
+    } catch (err) {
+      setError(err.message)
+      setSaving("")
+    }
+  }
+  return (
+    <section className="agent-arv" aria-label="ARV analysis">
+      <header className="agent-arv-head">
+        <span><Icon name="chart" size={15} /> ARV Analysis</span>
+        <small>{subject.address} · {subject.beds} bd · {subject.baths} ba · {subject.sqft?.toLocaleString("en-US")} sq ft</small>
+      </header>
+      <div className="agent-arv-figures">
+        <div>
+          <small>After repair value</small>
+          <b>{cash(analysis.arv)}</b>
+          <em>{analysis.ready ? `Average of ${analysis.used.length} adjusted comps` : analysis.arv != null ? `From only ${analysis.used.length} ${analysis.used.length === 1 ? "comp" : "comps"}: not reliable yet` : "No usable comps"}</em>
+        </div>
+        <div className="agent-arv-offer">
+          <small>Maximum offer</small>
+          <b>{maxOffer != null ? cash(maxOffer) : "—"}</b>
+          <em>
+            {maxOffer != null
+              ? `${cash(analysis.arv)} × 0.70 − ${cash(rehab)} renovation`
+              : beforeRepairs != null ? `${cash(beforeRepairs)} before repairs (ARV × 0.70). Add the renovation estimate.` : "Needs an ARV"}
+          </em>
+          {analysis.arv != null && (
+            <label className="agent-arv-rehab">
+              <span>Renovation estimate</span>
+              <span className="agent-arv-rehab-input">
+                <i>$</i>
+                <input inputMode="numeric" value={rehabText} placeholder="e.g. 45,000" aria-label="Renovation estimate" onChange={(event) => setRehabText(event.target.value.replace(/[^\d,.]/g, ""))} />
+              </span>
+              <small>{edited ? "Your number" : analysis.rehabSource ? `From ${analysis.rehabSource}` : "Not on file: type it to get the maximum offer"}</small>
+            </label>
+          )}
+        </div>
+        {compare && (
+          <div className={compare.gap > 0 ? "agent-arv-compare is-over" : "agent-arv-compare is-under"}>
+            <small>{compare.label}</small>
+            <b>{cash(compare.price)}</b>
+            <em>{compare.text}</em>
+          </div>
+        )}
+      </div>
+      {analysis.search && (
+        <p className="agent-arv-source">
+          Comps from <a href={analysis.search.url} target="_blank" rel="noreferrer">{analysis.search.site} sold houses in {analysis.search.zip}</a>
+          {analysis.search.neighbors?.length ? ` and ${analysis.search.neighbors.join(", ")}` : ""}, last {analysis.search.months} months · {analysis.search.found} found, {analysis.search.checked} checked
+        </p>
+      )}
+      {!analysis.ready && <p className="agent-arv-warn">{analysis.summary}</p>}
+      {analysis.used.length > 0 && (
+        <div className="agent-arv-table-wrap">
+          <table className="agent-arv-table">
+            <thead>
+              <tr><th>Comp</th><th>Sold for</th><th>Adjustment</th><th>Price used</th><th>Sq ft</th><th>Bd/Ba</th><th>Distance</th><th>Sold</th></tr>
+            </thead>
+            <tbody>
+              {analysis.used.map((comp) => (
+                <tr key={comp.address}>
+                  <td>
+                    {comp.url ? <a href={comp.url} target="_blank" rel="noreferrer">{comp.address}</a> : comp.address}
+                    {comp.flags?.length > 0 && <span className="agent-arv-flags">{comp.flags.map((flag) => <i key={flag}>{flag}</i>)}</span>}
+                  </td>
+                  <td>{cash(comp.salePrice)}</td>
+                  <td>{adjustmentText(comp)}</td>
+                  <td><b>{cash(comp.adjustedPrice)}</b></td>
+                  <td>{comp.sqft?.toLocaleString("en-US") ?? "—"}</td>
+                  <td>{comp.beds}/{comp.baths}</td>
+                  <td>{comp.distanceMiles == null ? "—" : comp.distanceMiles < 0.1 ? "Under 0.1 mi" : `${comp.distanceMiles} mi`}</td>
+                  <td>{shortDay(comp.saleDate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {analysis.math && <p className="agent-arv-math">{analysis.math}{maxOffer != null ? <><br />{cash(analysis.arv)} x 0.70 - {cash(rehab)} = {cash(maxOffer)}</> : null}</p>}
+      {analysis.skipped.length > 0 && (
+        <details className="agent-arv-skipped">
+          <summary>{analysis.skipped.length} skipped</summary>
+          <ul>
+            {analysis.skipped.map((comp, index) => (
+              <li key={`${comp.address}-${index}`}>
+                <b>{comp.url ? <a href={comp.url} target="_blank" rel="noreferrer">{comp.address || "No address"}</a> : comp.address || "No address"}</b>
+                {comp.salePrice ? ` · ${cash(comp.salePrice)}` : ""}{comp.sqft ? ` · ${comp.sqft.toLocaleString("en-US")} sq ft` : ""} — {comp.reasons.join("; ")}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {error && <p className="agent-arv-warn">{error}</p>}
+      <footer className="agent-draft-foot">
+        {saving && saving !== "saving" && <span className="agent-arv-saved">{saving} <Link href={`/properties/${analysis.propertyId}?tab=arv`}>Open the ARV tab</Link></span>}
+        <button type="button" className="agent-draft-copy" onClick={() => copy(compLog(analysis, rehab))}>
+          <Icon name={copied === "yes" ? "tick" : "copy"} size={14} /> {copied === "yes" ? "Copied" : copied === "no" ? "Couldn't Copy" : "Copy Comp Log"}
+        </button>
+        {canSave && (
+          <button type="button" className="agent-arv-save" disabled={Boolean(saving)} onClick={save}>
+            <Icon name="check" size={14} /> {saving === "saving" ? "Saving…" : saving ? "Saved" : "Save To ARV Tab"}
+          </button>
+        )}
+      </footer>
+    </section>
+  )
+}
+
 export function formatAgentDuration(ms) {
   const seconds = Math.max(1, Math.round((Number(ms) || 0) / 1000))
   if (seconds < 60) return `${seconds}s`
@@ -406,6 +589,7 @@ function stepText(toolResult) {
   const title = result.title || ""
   if (name === "portfolio_summary") return { verb: "Read", detail: "portfolio totals" }
   if (name === "get_property") return { verb: "Opened", detail: title }
+  if (name === "arv_analysis") return { verb: "Worked out", detail: title }
   if (name === "upcoming_payments") return { verb: "Checked", detail: title }
   if (name === "web_search") return { verb: "Searched the web for", detail: `“${result.query || ""}” · ${title}` }
   if (name === "read_webpage") return { verb: result.extracted ? "Pulled details from" : "Visited", detail: title || result.url || "a web page" }
@@ -604,6 +788,7 @@ export function AgentMessages({ rows, streaming, emptyHint }) {
                   )}
                 </div>
               ))}
+              {!live && arvOf(turn.replies) && <ArvCard key={`arv-${turn.user?.id || turnIndex}`} analysis={arvOf(turn.replies)} />}
               {live && <Shimmer rows={turn.replies} showHeader={!visible} />}
             </div>
           </div>

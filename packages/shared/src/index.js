@@ -625,7 +625,17 @@ function middle(values) {
   return sorted.length % 2 ? sorted[half] : (sorted[half - 1] + sorted[half]) / 2
 }
 
-export function compStats(comps = [], subjectSqft = null) {
+// The team's ARV rule: each comp's sale price adjusted $10,000 per bedroom and $5,000 per bathroom it has more (or
+// fewer) than the subject, then averaged and rounded to the nearest thousand.
+export function adjustedCompPrice(comp, subject) {
+  const price = Number(comp.salePrice)
+  if (!(price > 0)) return null
+  const beds = Number(comp.beds) > 0 && Number(subject?.beds) > 0 ? Number(comp.beds) - Number(subject.beds) : 0
+  const baths = Number(comp.baths) > 0 && Number(subject?.baths) > 0 ? Number(comp.baths) - Number(subject.baths) : 0
+  return price - beds * 10000 - baths * 5000
+}
+
+export function compStats(comps = [], subjectSqft = null, subjectRooms = null) {
   const used = comps.filter((comp) => comp.include !== false && Number(comp.salePrice) > 0)
   const prices = used.map((comp) => Number(comp.salePrice))
   const perSqft = used.filter((comp) => Number(comp.sqft) > 0).map((comp) => Number(comp.salePrice) / Number(comp.sqft))
@@ -636,7 +646,11 @@ export function compStats(comps = [], subjectSqft = null) {
   const ppsfMedian = middle(perSqft)
   const bySqft = sqft && perSqft.length >= MIN_COMPS ? ppsfMedian * sqft : null
   const round = (value) => (value == null ? null : Math.round(value / 100) * 100)
+  const rooms = Number(subjectRooms?.beds) > 0 && Number(subjectRooms?.baths) > 0 ? subjectRooms : null
+  const adjusted = rooms ? used.map((comp) => adjustedCompPrice(comp, rooms)).filter((value) => value != null) : []
+  const teamValue = adjusted.length ? Math.round(adjusted.reduce((sum, value) => sum + value, 0) / adjusted.length / 1000) * 1000 : null
   const methods = [
+    teamValue != null && { key: "team", label: `Average of ${adjusted.length} comps adjusted for bedrooms and bathrooms (team ARV rules)`, value: teamValue },
     bySqft != null && { key: "sqft", label: `Median $${Math.round(ppsfMedian).toLocaleString("en-US")}/sq ft × ${sqft.toLocaleString("en-US")} sq ft`, value: round(bySqft) },
     median != null && { key: "median", label: `Median of ${prices.length} comp sales`, value: round(median) },
     average != null && { key: "average", label: `Average of ${prices.length} comp sales`, value: round(average) },

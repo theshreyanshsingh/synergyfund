@@ -3049,3 +3049,45 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .agent-email-field { grid-template-columns: 56px minmax(0, 1fr); }
   .agent-draft-foot { flex-wrap: wrap; }
 }
+/* Agent ARV analysis card: the figures, the comp log, what was skipped, and Save To ARV Tab */
+.agent-arv { display: grid; margin: 10px 0 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--white); overflow: hidden; color: var(--text); }
+.agent-arv-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.agent-arv-head span { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 650; }
+.agent-arv-head span svg { color: var(--muted); }
+.agent-arv-head small { color: var(--muted); font-size: 12px; }
+.agent-arv-figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; padding: 14px; }
+.agent-arv-figures div { display: grid; gap: 2px; }
+.agent-arv-figures small { color: var(--muted); font-size: 12px; }
+.agent-arv-figures b { font-size: 22px; letter-spacing: -0.02em; }
+.agent-arv-figures em { color: var(--muted); font-size: 12px; font-style: normal; }
+.agent-arv-source { margin: -4px 14px 10px; color: var(--muted); font-size: 12px; }
+.agent-arv-source a { color: var(--accent); }
+.agent-arv-warn { margin: 0 14px 10px; padding: 8px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-size: 12.5px; }
+.agent-arv-table-wrap { overflow-x: auto; border-top: 1px solid var(--line); }
+.agent-arv-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.agent-arv-table th { padding: 8px 10px; color: var(--muted); font-size: 11.5px; font-weight: 650; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.agent-arv-table td { padding: 8px 10px; border-bottom: 1px solid var(--row-line, var(--line)); vertical-align: top; white-space: nowrap; }
+.agent-arv-table td:first-child { white-space: normal; min-width: 170px; }
+.agent-arv-table td a { color: var(--accent); }
+.agent-arv-flags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.agent-arv-flags i { padding: 1px 7px; border-radius: 999px; background: var(--warn-bg); color: var(--warn); font-size: 10.5px; font-style: normal; font-weight: 650; white-space: nowrap; }
+.agent-arv-rehab { display: grid; gap: 3px; margin-top: 8px; max-width: 220px; }
+.agent-arv-rehab > span:first-child { color: var(--muted); font-size: 11.5px; font-weight: 650; }
+.agent-arv-rehab-input { display: flex; align-items: center; gap: 4px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.agent-arv-rehab-input:focus-within { border-color: var(--accent); }
+.agent-arv-rehab-input i { color: var(--muted); font-style: normal; }
+.agent-arv-rehab-input input { width: 100%; min-width: 0; padding: 7px 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 14px; outline: none; }
+.agent-arv-rehab small { color: var(--muted); font-size: 11px; }
+.agent-arv-compare.is-over b { color: var(--bad); }
+.agent-arv-compare.is-under b { color: var(--good); }
+.agent-arv-math { margin: 0; padding: 10px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+.agent-arv-skipped { padding: 8px 14px 10px; border-top: 1px solid var(--line); font-size: 12.5px; }
+.agent-arv-skipped summary { color: var(--muted); font-weight: 600; cursor: pointer; }
+.agent-arv-skipped ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+.agent-arv-skipped li { margin: 3px 0; }
+.agent-arv-skipped li b { color: var(--text); font-weight: 600; }
+.agent-arv .agent-draft-foot { flex-wrap: wrap; }
+.agent-arv-saved { margin-right: auto; color: var(--good); font-size: 12.5px; }
+.agent-arv-saved a { color: var(--accent); margin-left: 4px; }
+.agent-arv-save { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border: 0; border-radius: 9px; background: var(--ink); color: var(--on-ink); font-size: 13px; font-weight: 650; }
+.agent-arv-save:disabled { opacity: 0.6; }
