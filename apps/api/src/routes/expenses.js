@@ -6,6 +6,7 @@ import { ownsProperty, propertyFilter } from "../services/access.js"
 import { saveUploadedFile, upload, withProofUrls } from "../services/files.js"
 import { notify, recordActivity } from "../services/notify.js"
 import { refreshRehabRemaining } from "./draws.js"
+import { teamToday } from "../lib/dates.js"
 
 export const expensesRouter = Router()
 
@@ -123,7 +124,7 @@ expensesRouter.post(
       amount,
       category: EXPENSE_CATEGORIES.includes(req.body.category) ? req.body.category : "Materials",
       vendor: req.body.vendor || "",
-      date: req.body.date || new Date().toISOString().slice(0, 10),
+      date: req.body.date || teamToday(),
       entity: req.body.entity || "Construction company",
       costTreatment: req.body.costTreatment || "Include in construction margin",
       status: "Submitted",
@@ -178,7 +179,7 @@ expensesRouter.post(
       amount,
       category: EXPENSE_CATEGORIES.includes(req.body.category) ? req.body.category : "Materials",
       vendor: req.body.vendor || "",
-      date: req.body.date || new Date().toISOString().slice(0, 10),
+      date: req.body.date || teamToday(),
       entity: req.body.entity || "Construction company",
       costTreatment: req.body.costTreatment || "Include in construction margin",
       proofFileId: proofs[0]?._id,
@@ -247,7 +248,23 @@ expensesRouter.patch(
       return
     }
     if (!request.proofFileId) request.proofFileId = request.proofFileIds[0]
+    // Answering "Needs information" sends the request back to the approvers.
+    const answered = request.status === "Needs information"
+    if (answered) {
+      request.status = "Submitted"
+      request.reviewNote = ""
+    }
     await request.save()
+    if (answered) {
+      await notify({
+        roles: ["admin", "finance"],
+        exceptUserIds: [req.user._id],
+        title: "Expense updated for review",
+        body: `${req.user.name} answered the questions on ${request.title}.`,
+        href: "/expenses",
+        event: "expense.submitted",
+      })
+    }
     await recordActivity({ user: req.user, title: "Expense request updated", detail: request.title, propertyId: request.propertyId })
     res.json({ request: await withProofUrls(presentRequest(request)) })
   }),
@@ -333,6 +350,11 @@ expensesRouter.post(
       res.json({ request: await withProofUrls(presentRequest(request)) })
       return
     }
+    // The second approval on a large request is an admin's (that is who is asked for it), not another finance click.
+    if (request.status === "Needs second approval" && req.user.role !== "admin") {
+      sendError(res, 403, "An admin gives the second approval on this request.")
+      return
+    }
     if (request.propertyId && request.category !== "Shared rehab") {
       const [property, spent] = await Promise.all([
         Property.findById(request.propertyId),
@@ -353,11 +375,14 @@ expensesRouter.post(
       res.json({ request: await withProofUrls(presentRequest(request)) })
       return
     }
-    request.status = "Approved"
-    request.reviewNote = req.body.note || ""
-    request.reviewedBy = req.user._id
-    if (req.body.drawId) request.drawId = req.body.drawId
-    await request.save()
+    const decided = { status: "Approved", reviewNote: req.body.note || "", reviewedBy: req.user._id, ...(req.body.drawId ? { drawId: req.body.drawId } : {}) }
+    // Two quick clicks must not post the cost twice: only the first one moves the request out of its open status.
+    const claimed = await ExpenseRequest.findOneAndUpdate({ _id: request._id, status: request.status }, { $set: decided }, { new: true })
+    if (!claimed) {
+      sendError(res, 400, "That request was just decided.")
+      return
+    }
+    Object.assign(request, decided)
     const expense = await Expense.create({
       propertyId: request.propertyId,
       requestId: request._id,

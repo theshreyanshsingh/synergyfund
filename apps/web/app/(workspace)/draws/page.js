@@ -155,14 +155,14 @@ export default function DrawsPage() {
     data.reload()
   }
 
-  async function saveSheetValue({ project, column, draw, value }) {
+  async function saveSheetValue({ project, column, draw, value, confirmed = false }) {
     const text = String(value ?? "").trim()
     if (!text) {
       // The sheet shows the budget from the property or its draw budget record: clearing it clears both.
       if (column === "budget") await api(`/properties/${project.id}`, { method: "PATCH", body: { rehabBudget: null, clearDrawBudget: true } })
       else if (column === "funding" && project.budgetId) await api(`/draws/budgets/${project.budgetId}`, { method: "PATCH", body: { fundingLimit: null } })
       else if (draw) {
-        if (!window.confirm(`Delete ${draw.title} from ${project.address}?`)) return
+        if (!confirmed && !window.confirm(`Delete ${draw.title} from ${project.address}?`)) return
         await api(`/draws/${draw.id}`, { method: "DELETE" })
       }
       await data.reload()
@@ -452,7 +452,7 @@ function DrawPropertyBody({ project, writable, canDelete, onSave, onRemove, onFo
 
   async function remove(draw) {
     if (!window.confirm(`Remove ${draw.title} from ${project.address}?`)) return
-    await run(() => onSave({ project, column: drawIndex(draw.title), draw, value: "" }))
+    await run(() => onSave({ project, column: drawIndex(draw.title), draw, value: "", confirmed: true }))
   }
 
   const openDraw = writable ? (draw) => setEditor({ kind: "draw", draw }) : null
@@ -676,7 +676,11 @@ function DrawControls({ draw, label, onEdit, onPulled, onForecast, onPull, onRem
       <label><small>Amount</small><button type="button" className="draw-control-lines" onClick={onEdit} title="Edit this draw's line items">{cash(draw.amount)}<span>{(draw.lines || []).length ? `${draw.lines.length} lines · edit` : "Split into lines"}</span></button></label>
       <label><small>Pulled</small><SheetMoneyCell value={drawPulled(draw)} label={`${label} pulled`} onSave={onPulled} /></label>
       {draw.status !== "Funded" ? (
-        <label><small>Forecast</small><input type="date" defaultValue={draw.requestedDate || ""} onChange={(event) => onForecast(event.target.value)} /></label>
+        <label><small>Forecast</small><input type="date" defaultValue={draw.requestedDate || ""} onBlur={(event) => {
+          // Saved when you leave the box, not on every keystroke (typing a year would save 0002, 0020, 0202…).
+          const value = event.target.value
+          if (value !== (draw.requestedDate || "") && (!value || (/^\d{4}-\d{2}-\d{2}$/.test(value) && value >= "2000-01-01"))) onForecast(value)
+        }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur() }} /></label>
       ) : <span />}
       <span className="draw-control-actions">
         {draw.status !== "Funded" && <button type="button" onClick={onPull}>Pull draw</button>}

@@ -15,6 +15,8 @@ import { money } from "../../../lib/format"
 import { useApi } from "../../../lib/useApi"
 import { useChatEvents } from "../../../lib/chatSocket"
 
+const BLANK_FORM = { address: "", city: "", stage: "Under contract", strategy: "Fix & flip", purchasePrice: "", arv: "", rehabBudget: "", nextAction: "" }
+
 function PropertiesScreen() {
   const router = useRouter()
   const params = useSearchParams()
@@ -22,7 +24,7 @@ function PropertiesScreen() {
   const list = useApi("/properties")
   const [open, setOpen] = useState(params.get("new") === "1")
   const [error, setError] = useState("")
-  const [form, setForm] = useState({ address: "", city: "", stage: "Under contract", strategy: "Fix & flip", purchasePrice: "", arv: "", rehabBudget: "", nextAction: "" })
+  const [form, setForm] = useState(BLANK_FORM)
   const [labels, setLabels] = useState([])
   const [labelDraft, setLabelDraft] = useState("")
   const [assigned, setAssigned] = useState([])
@@ -81,6 +83,7 @@ function PropertiesScreen() {
     try {
       await api("/properties", { method: "POST", body })
       setOpen(false)
+      setForm(BLANK_FORM)
       setLabels([])
       setLabelDraft("")
       setAssigned([])

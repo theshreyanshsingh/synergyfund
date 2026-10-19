@@ -192,7 +192,11 @@ async function postCallNote(state, outcome) {
   }
   const people = await audience(found, state.property).catch(() => null)
   const ids = people ? people.map((person) => String(person._id)) : state.audienceIds
-  emitToUsers(ids, "message:new", { message: presentMessage(message), channel: presentChannel(found, state.property) })
+  const payload = { message: presentMessage(message), channel: presentChannel(found, state.property) }
+  // People who were on the call get it as already read: no chime and no unread badge.
+  const took = new Set(joined)
+  emitToUsers(ids.filter((id) => !took.has(id)), "message:new", payload)
+  if (took.size) emitToUsers(ids.filter((id) => took.has(id)), "message:new", { ...payload, read: true })
 }
 
 async function endCall(state, reason) {
@@ -570,7 +574,8 @@ export function registerCallHandlers(socket) {
       // The AI teammate is in property chats but never in calls.
       const others = people.filter((person) => String(person._id) !== me && !person.bot)
       if (!others.length) return reply({ error: "There is no one else in this conversation to call." })
-      const ringing = hasMemberList(found.channel) || others.length <= RING_LIMIT
+      // Direct messages and private channels ring everyone; a big public channel (even one with a member list) shows Join.
+      const ringing = found.channel.kind === "direct" || Boolean(found.channel.private) || others.length <= RING_LIMIT
       const invitedIds = ringing ? others.map((person) => String(person._id)) : []
       const doc = await Call.create({
         channelId: found.channel._id,
@@ -719,7 +724,8 @@ export function registerCallHandlers(socket) {
     if (!state || !state.peers.has(socket.id)) return reply({ error: "Join the call before adding people." })
     const wanted = [...new Set((Array.isArray(data.userIds) ? data.userIds : []).map(cleanId).filter(Boolean))].filter((id) => id !== me).slice(0, MAX_PEERS)
     if (!wanted.length) return reply({ error: "Pick at least one person." })
-    let people = (await User.find({ _id: { $in: wanted } }).select("_id name role extraPermissions deniedPermissions createdAt")).filter(usesChat)
+    // The AI teammate is never rung into a call (it would count as someone still to answer).
+    let people = (await User.find({ _id: { $in: wanted }, bot: { $ne: true } }).select("_id name role extraPermissions deniedPermissions createdAt")).filter(usesChat)
     if (isGuest(user)) {
       // Contractors can add admins and people they already work with, the same rule as starting a chat.
       const shared = new Set()
@@ -871,8 +877,10 @@ export async function recheckCalls(channelId = "") {
       await removePeer(state, peerId)
     }
     if (!live.has(state.id)) continue
-    const property = channel.kind === "property" ? state.property : null
-    state.audienceIds = (await audience(channel, property).catch(() => null))?.map((person) => String(person._id)) || state.audienceIds
+    // The property is read again (someone may have been taken off it), and people added to the call from outside the
+    // conversation stay in its audience.
+    const people = await audience(channel, channel.kind === "property" ? undefined : null).catch(() => null)
+    if (people) state.audienceIds = [...new Set([...people.map((person) => String(person._id)), ...state.guestIds])]
     announce(state)
   }
 }

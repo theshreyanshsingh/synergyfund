@@ -30,8 +30,8 @@ export function SoundAlerts({ user, chat }) {
   }
 
   useChatEvents({
-    "message:new": ({ message, channel } = {}) => {
-      if (!message || message.userId === me || !onScreen()) return
+    "message:new": ({ message, channel, read } = {}) => {
+      if (!message || message.userId === me || read || !onScreen()) return
       const forMe = channel?.kind === "direct" || message.mentionsChannel || (message.mentionIds || []).includes(me)
       if (!forMe) return
       if (message.channelId === activeChatId() && document.hasFocus()) return

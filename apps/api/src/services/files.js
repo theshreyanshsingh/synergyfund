@@ -186,7 +186,7 @@ export async function sendStoredFile(res, file, { download = false, range = "" }
   const inline = !download && SAFE_INLINE.has(mime)
   const size = Number(file.size) || 0
   res.setHeader("Content-Type", inline ? mime : "application/octet-stream")
-  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${safeHeaderName(file.name)}"; filename*=UTF-8''${encodeURIComponent(file.name || "file")}`)
+  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${safeHeaderName(file.name)}"; filename*=UTF-8''${headerNameUtf8(file.name || "file")}`)
   res.setHeader("X-Content-Type-Options", "nosniff")
   if (mime !== "application/pdf") res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'")
   if (size) res.setHeader("Accept-Ranges", "bytes")
@@ -253,6 +253,11 @@ function s3() {
 
 function clean(value) {
   return String(value || "").trim()
+}
+
+// filename* allows no apostrophes or brackets (browsers drop it and fall back to the plain name): escape them too.
+export function headerNameUtf8(name) {
+  return encodeURIComponent(String(name)).replace(/['()*!]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
 }
 
 // The plain filename in the header must be Latin-1; the full name travels in filename* as UTF-8.

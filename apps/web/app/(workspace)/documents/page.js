@@ -118,7 +118,7 @@ function DocumentsScreen() {
             </header>
             <div className="member-sheet-body">
               {error && <div className="banner">{error}</div>}
-              <label className="field"><span>Workbook</span><input name="file" type="file" accept=".xlsx,.xls" required={!importId} /></label>
+              <label className="field"><span>Workbook</span><input name="file" type="file" accept=".xlsx,.xls" required={!importId} onChange={() => { setImportId(""); setPreviewCount(0) }} /></label>
               {importId && <p className="muted">{previewCount} rows found. Blank cells stay blank. Nothing is overwritten.</p>}
             </div>
             <footer>

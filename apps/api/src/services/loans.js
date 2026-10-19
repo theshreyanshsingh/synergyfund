@@ -1,14 +1,17 @@
 import { insuranceDates, loanPaymentDates } from "./schedule.js"
+import { teamToday } from "../lib/dates.js"
 
-function key(date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
+function shift(key, days) {
+  const [year, month, day] = key.split("-").map(Number)
+  const date = new Date(Date.UTC(year, month - 1, day + days))
+  return date.toISOString().slice(0, 10)
 }
 
-// The next loan payment and insurance dates from today, the same dates the calendar shows.
+// The next loan payment and insurance dates from today (the team's today), the same dates the calendar shows.
 export function loanSchedule(loan, now = new Date()) {
-  const today = key(now)
-  const inTwoMonths = key(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 62))
-  const inAYear = key(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 400))
+  const today = teamToday(now)
+  const inTwoMonths = shift(today, 62)
+  const inAYear = shift(today, 400)
   return {
     nextPaymentDue: loanPaymentDates(loan, today, inTwoMonths)[0] || "",
     nextInsuranceDue: insuranceDates(loan, today, inAYear)[0] || "",

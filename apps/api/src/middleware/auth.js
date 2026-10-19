@@ -4,8 +4,10 @@ import { User } from "../models/index.js"
 import { sendError } from "../lib/http.js"
 import { publicUser } from "../lib/serialize.js"
 
-export function signSession(userId) {
-  return jwt.sign({ sub: String(userId) }, process.env.JWT_SECRET, { expiresIn: "7d" })
+// Takes the user (or just an id, for a user who never reset their password).
+export function signSession(user) {
+  const id = user && typeof user === "object" && "passwordHash" in user ? user._id : user
+  return jwt.sign({ sub: String(id), sv: Number(user?.sessionVersion) || 0 }, process.env.JWT_SECRET, { expiresIn: "7d" })
 }
 
 export function setSessionCookie(res, token) {
@@ -68,7 +70,8 @@ export async function requireAuth(req, res, next) {
       return
     }
     const user = await User.findById(payload.sub)
-    if (!user) {
+    // A session from before a password reset or change no longer works.
+    if (!user || (payload.sv || 0) !== (user.sessionVersion || 0)) {
       sendError(res, 401, "Sign in to continue.")
       return
     }

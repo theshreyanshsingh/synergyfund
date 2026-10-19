@@ -3,7 +3,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { homeFor } from "@synergifund/shared"
-import { api } from "../../lib/api"
+import { api, SIGNED_OUT } from "../../lib/api"
+import { disablePush } from "../../lib/pwa"
 
 const SessionContext = createContext(null)
 
@@ -38,6 +39,28 @@ export function Providers({ children }) {
       .finally(() => setReady(true))
   }, [])
 
+  // A request answered "sign in" means the session is over: go to sign-in, keeping the page to come back to.
+  useEffect(() => {
+    const ended = () => setUser(null)
+    window.addEventListener(SIGNED_OUT, ended)
+    return () => window.removeEventListener(SIGNED_OUT, ended)
+  }, [])
+
+  // Coming back to the app re-reads who is signed in, so access an admin changed (or a removed account) shows
+  // without a reload. At most once a minute.
+  useEffect(() => {
+    let checked = Date.now()
+    function refresh() {
+      if (document.visibilityState !== "visible" || Date.now() - checked < 60000) return
+      checked = Date.now()
+      api("/auth/me")
+        .then((data) => setUser((current) => (current && JSON.stringify(current) === JSON.stringify(data.user) ? current : data.user)))
+        .catch((err) => { if (err.status === 401) setUser(null) })
+    }
+    document.addEventListener("visibilitychange", refresh)
+    return () => document.removeEventListener("visibilitychange", refresh)
+  }, [])
+
   useEffect(() => {
     if (!ready) return
     if (user) leaving.current = false
@@ -52,6 +75,11 @@ export function Providers({ children }) {
 
   // Logging out forgets the signed-in person here too, so the sign-in page does not send them straight back in.
   const signOut = useCallback(async () => {
+    // This device's notifications belong to the person signing out: stop them before the session ends, so whoever
+    // signs in next does not get their messages and calls (they can turn notifications on for themselves).
+    if ("serviceWorker" in navigator) {
+      await Promise.race([disablePush(), new Promise((resolve) => setTimeout(resolve, 4000))]).catch(() => {})
+    }
     await api("/auth/logout", { method: "POST" }).catch(() => {})
     leaving.current = true
     setUser(null)

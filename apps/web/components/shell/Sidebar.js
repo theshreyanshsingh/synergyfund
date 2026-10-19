@@ -118,8 +118,11 @@ function SidebarNav({ primary, sections, onNavigate, chat, me }) {
   const pathname = usePathname()
   const [counts, setCounts] = useState({ notifications: 0, channels: 0, direct: 0 })
   const timer = useRef(null)
+  const onNotifications = useRef(pathname === "/notifications")
+  onNotifications.current = pathname === "/notifications"
   useEffect(() => {
-    api("/counts").then(setCounts).catch(() => {})
+    // Counted before the Notifications page marks them read, so keep 0 while that page is open.
+    api("/counts").then((data) => setCounts({ ...data, ...(onNotifications.current ? { notifications: 0 } : {}) })).catch(() => {})
     return () => clearTimeout(timer.current)
   }, [])
   // Opening Notifications reads them, so the count clears.
@@ -132,8 +135,8 @@ function SidebarNav({ primary, sections, onNavigate, chat, me }) {
       api("/chat/unread").then((data) => setCounts((current) => ({ ...current, channels: data.channels, direct: data.direct }))).catch(() => {})
     }, 1200)
   }
-  function onMessage({ message, channel }) {
-    if (!message || message.userId === me) return
+  function onMessage({ message, channel, read }) {
+    if (!message || message.userId === me || read) return
     if (channel?.kind === "direct" || message.mentionsChannel || (message.mentionIds || []).includes(me)) refreshChat()
   }
   function onNotification() {

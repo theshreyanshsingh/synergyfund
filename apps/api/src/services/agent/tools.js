@@ -7,6 +7,7 @@ import { matchScore, rank } from "./match.js"
 import { insuranceDates, loanPaymentDates, paymentDates } from "../schedule.js"
 import { geocode, nearbyZips } from "../geocode.js"
 import { analyzeArv, milesBetween } from "./arv.js"
+import { teamToday } from "../../lib/dates.js"
 
 const MODEL_RESULT_LIMIT = 32000
 const OPEN_REQUEST_STATUSES = ["Submitted", "Needs information", "Needs second approval"]
@@ -22,8 +23,7 @@ function escapeRegex(value) {
 }
 
 function todayKey() {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
+  return teamToday()
 }
 
 function shiftKey(key, days) {

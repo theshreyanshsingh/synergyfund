@@ -9,8 +9,24 @@ import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { signDownloadLink } from "../middleware/auth.js"
 import { propertyFilter } from "../services/access.js"
 import { readWorkbook } from "../services/drawImport.js"
-import { deleteStoredFile, materializeStoredFile, publicFileUrl, readStoredFile, receiveDocument, receiveFile, saveUploadedFile, sendStoredFile } from "../services/files.js"
+import { deleteStoredFile, headerNameUtf8, materializeStoredFile, publicFileUrl, readStoredFile, receiveDocument, receiveFile, saveUploadedFile, sendStoredFile } from "../services/files.js"
 import { recordActivity } from "../services/notify.js"
+
+// A Word file's links and images come through the preview as written, including "javascript:" links that would run
+// in the viewer's session. Keep only web, mail, in-page and embedded-image addresses.
+const SAFE_LINK = /^(https?:|mailto:|tel:|#|data:image\/(png|jpe?g|gif|webp|bmp);)/
+export function safeDocumentHtml(html) {
+  return String(html || "").replace(/\s(href|src)\s*=\s*("([^"]*)"|'([^']*)'|[^\s>]+)/gi, (match, name, quoted, double, single) => {
+    const raw = double ?? single ?? quoted
+    const value = raw
+      .replace(/&#x([0-9a-f]+);?/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+      .replace(/&#(\d+);?/g, (_, code) => String.fromCodePoint(Number(code)))
+      .replace(/&(amp|quot|lt|gt|apos|colon|tab|newline);/gi, (_, entity) => ({ amp: "&", quot: '"', lt: "<", gt: ">", apos: "'", colon: ":", tab: "", newline: "" })[entity.toLowerCase()])
+      .replace(/[\u0000-\u0020\u007f-\u009f]/g, "")
+      .toLowerCase()
+    return SAFE_LINK.test(value) ? match : ""
+  })
+}
 
 export const documentsRouter = Router()
 
@@ -284,7 +300,9 @@ documentsRouter.patch(
         sendError(res, 400, "Give the file a name.")
         return
       }
-      file.name = name
+      // Keep the file's type: "Purchase Contract.pdf" renamed "Purchase Contract - 123 Main" stays a .pdf.
+      const extension = (String(file.name || "").match(/\.[a-z0-9]{1,8}$/i) || [""])[0]
+      file.name = extension && !name.toLowerCase().endsWith(extension.toLowerCase()) ? `${name}${extension}` : name
     }
     await file.save()
     const changes = []
@@ -436,7 +454,7 @@ documentsRouter.get(
     if (total > ZIP_MAX_BYTES) return sendError(res, 400, "That is too much to download at once. Choose fewer files.")
     const name = String(req.query.name || "SynergiFund documents").replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 100) || "SynergiFund documents"
     res.setHeader("Content-Type", "application/zip")
-    res.setHeader("Content-Disposition", `attachment; filename="${name.replace(/[^\x20-\x7e]/g, "_")}.zip"; filename*=UTF-8''${encodeURIComponent(name)}.zip`)
+    res.setHeader("Content-Disposition", `attachment; filename="${name.replace(/["\\\r\n]/g, "").replace(/[^\x20-\x7e]/g, "_")}.zip"; filename*=UTF-8''${headerNameUtf8(name)}.zip`)
     res.setHeader("X-Content-Type-Options", "nosniff")
     const propertyIds = [...new Set(files.map((file) => file.propertyId && String(file.propertyId)).filter(Boolean))]
     const companyIds = [...new Set(files.map((file) => file.companyId && String(file.companyId)).filter(Boolean))]
@@ -502,7 +520,7 @@ documentsRouter.get(
       try {
         if (lower.endsWith(".docx")) {
           const result = await mammoth.convertToHtml({ path: stored.path })
-          res.json({ kind: "document", file: (await presentMany([file], req.user))[0], html: result.value })
+          res.json({ kind: "document", file: (await presentMany([file], req.user))[0], html: safeDocumentHtml(result.value) })
           return
         }
         const book = xlsx.readFile(stored.path)
@@ -553,6 +571,16 @@ documentsRouter.delete(
     }
     if (file.kind === "receipt" || file.kind === "photo") {
       sendError(res, 400, "This file belongs to an expense or weekly photo set. Remove it from there instead.")
+      return
+    }
+    // A contractor removes only what they uploaded, the same rule as renaming and moving.
+    if (req.user.role === "contractor" && String(file.uploadedBy || "") !== String(req.user._id)) {
+      sendError(res, 403, "You can remove only files you uploaded.")
+      return
+    }
+    // Draw and property imports read their rows from the workbook each time, so it stays while an import uses it.
+    if (file.kind === "import" && (await ImportJob.exists({ fileId: file._id }))) {
+      sendError(res, 400, "This workbook is behind an import, so it stays in the library.")
       return
     }
     await deleteStoredFile(file)
@@ -613,11 +641,14 @@ documentsRouter.post(
     try {
       tables = readWorkbook(stored.path, PORTFOLIO_ALIASES)
     } catch {
+      await stored.cleanup()
+      // A workbook that can't be read is not kept in the library.
+      await deleteStoredFile(saved).catch(() => {})
+      await saved.deleteOne()
       sendError(res, 400, "That workbook could not be read. Use an .xls or .xlsx file.")
       return
-    } finally {
-      await stored.cleanup()
     }
+    await stored.cleanup()
     const rows = tables.flatMap((table) => table.rows.map((source) => ({
       sheet: source.sheet,
       row: source.row,
@@ -625,6 +656,8 @@ documentsRouter.post(
       mapped: mapPortfolioRow(source.cells),
     })))
     if (!rows.length) {
+      await deleteStoredFile(saved).catch(() => {})
+      await saved.deleteOne()
       sendError(res, 400, "That workbook has no rows to read.")
       return
     }

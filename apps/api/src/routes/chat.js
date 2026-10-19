@@ -279,6 +279,7 @@ chatRouter.patch(
       channel.name = name
     }
     const before = await audience(channel, property)
+    let joining = []
     if (Array.isArray(req.body.addMemberIds) || Array.isArray(req.body.removeMemberIds)) {
       if (channel.kind !== "channel" || !hasMemberList(channel)) return sendError(res, 400, "Everyone on the team is in this channel.")
       const add = (Array.isArray(req.body.addMemberIds) ? req.body.addMemberIds : []).filter((id) => mongoose.isValidObjectId(id))
@@ -286,6 +287,7 @@ chatRouter.patch(
       if (remove.size && !canManage(req.user, channel)) return sendError(res, 403, "Only the channel owner or an admin can remove people.")
       const valid = (await User.find({ _id: { $in: add } }).select("_id name role extraPermissions deniedPermissions")).filter(usesChat)
       const next = new Map((channel.memberIds || []).map((id) => [String(id), id]))
+      joining = valid.filter((person) => !next.has(String(person._id))).map((person) => person._id)
       for (const person of valid) next.set(String(person._id), person._id)
       for (const id of remove) next.delete(id)
       channel.memberIds = [...next.values()]
@@ -293,6 +295,7 @@ chatRouter.patch(
       if (remove.size) changes.push(`removed ${remove.size} ${remove.size === 1 ? "person" : "people"}`)
     }
     await channel.save()
+    await readFromNow(channel._id, joining)
     if (changes.length) await recordActivity({ user: req.user, title: "Chat channel updated", detail: `${channelLabel(channel, property, req.user, [])}: ${changes.join("; ")}` })
     const after = await broadcastChannel(channel, property)
     const kept = new Set(ids(after))
@@ -302,6 +305,16 @@ chatRouter.patch(
     res.json({ channel: presentChannel(channel, property, { canManage: canManage(req.user, channel) }) })
   }),
 )
+
+// Someone joining (or added to) a channel starts with it read, as the page shows it: older posts and @channel
+// mentions are not counted as unread for them (a badge they could never clear).
+async function readFromNow(channelId, userIds) {
+  if (!userIds.length) return
+  const now = new Date()
+  await ChatRead.bulkWrite(userIds.map((userId) => ({
+    updateOne: { filter: { userId, channelId }, update: { $max: { lastReadAt: now } }, upsert: true },
+  })), { ordered: false }).catch(() => {})
+}
 
 // Public channels the person has not joined yet, for Browse.
 chatRouter.get(
@@ -322,6 +335,7 @@ chatRouter.post(
     if (!isMember(channel, req.user)) {
       channel.memberIds = [...(channel.memberIds || []), req.user._id]
       await channel.save()
+      await readFromNow(channel._id, [req.user._id])
       await recordActivity({ user: req.user, title: "Joined chat channel", detail: `#${channel.name}` })
       await broadcastChannel(channel, null)
     }

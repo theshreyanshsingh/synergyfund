@@ -9,6 +9,7 @@ import { DRAW_FIELD_ALIASES, appendNewDrawRows, classifyDrawRows, importPortfoli
 import { materializeStoredFile, receiveFile, saveUploadedFile } from "../services/files.js"
 import { orderProperties } from "../services/propertyOrder.js"
 import { changeSummary, notify, recordActivity } from "../services/notify.js"
+import { teamToday } from "../lib/dates.js"
 
 export const drawsRouter = Router()
 
@@ -662,7 +663,7 @@ drawsRouter.patch(
       const amount = Number(draw.amount)
       if (Number.isFinite(amount) && amount > 0 && pulled >= amount) {
         draw.status = "Funded"
-        draw.fundedDate = draw.fundedDate || new Date().toISOString().slice(0, 10)
+        draw.fundedDate = draw.fundedDate || teamToday()
       } else if (pulled > 0) {
         draw.status = "Partial"
       } else if (draw.status === "Funded" || draw.status === "Partial") {
@@ -703,8 +704,9 @@ drawsRouter.post(
       return
     }
     draw.status = "Funded"
-    draw.fundedDate = draw.fundedDate || new Date().toISOString().slice(0, 10)
-    if (draw.fundedAmount == null) draw.fundedAmount = draw.amount
+    draw.fundedDate = draw.fundedDate || teamToday()
+    // Nothing pulled yet (blank, or 0 after a funded draw was moved back to pending): the lender funded the full draw.
+    if (!(Number(draw.fundedAmount) > 0)) draw.fundedAmount = draw.amount
     await draw.save()
     const [property, propertyExpenses] = await Promise.all([
       Property.findById(draw.propertyId),

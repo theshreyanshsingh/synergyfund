@@ -342,6 +342,13 @@ export default function PropertyDetailPage({ params }) {
         <FormSheet eyebrow="Property" title="Modify property" hint="Blank numbers stay blank. Existing scope lines keep their costs." onClose={() => setEditing(null)} onSubmit={async (event) => {
           event.preventDefault()
           setEditError("")
+          // A number that can't be read is an error, not a blank (a blank would clear the figure).
+          const numbers = { purchasePrice: "Purchase price", arv: "ARV", sqft: "Square feet", beds: "Beds", baths: "Baths", rehabBudget: "Rehab budget", actualRent: "Actual rent", marketRent: "Market rent", houseBoughtPrice: "HouseBought price" }
+          const unreadable = Object.entries(numbers).find(([key]) => Number.isNaN(blankNumber(editing[key])))
+          if (unreadable) {
+            setEditError(`Enter ${unreadable[1]} as a number, like 55000.`)
+            return
+          }
           const body = {
             address: editing.address,
             city: editing.city,
@@ -598,7 +605,7 @@ function LabelField({ labels, onChange }) {
       <span>Labels</span>
       <div className="label-editor">
         {labels.map((label) => <button key={label} type="button" className="label-chip" onClick={() => onChange(labels.filter((item) => item !== label))}>{label} ×</button>)}
-        <input value={draft} placeholder="Add a label" onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); add(draft) } }} />
+        <input value={draft} placeholder="Add a label" onChange={(event) => setDraft(event.target.value)} onBlur={() => add(draft)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); add(draft) } }} />
       </div>
       <div className="label-suggestions">
         {PROPERTY_LABELS.filter((label) => !labels.some((item) => item.toLowerCase() === label.toLowerCase())).map((label) => (
@@ -609,10 +616,11 @@ function LabelField({ labels, onChange }) {
   )
 }
 
+// Blank stays blank (null); anything else must be a number ("$55,000" is fine), or NaN.
 function blankNumber(value) {
-  if (value === "" || value == null) return null
-  const number = Number(String(value).replace(/[$,]/g, ""))
-  return Number.isFinite(number) ? number : null
+  if (value == null || String(value).trim() === "") return null
+  const number = Number(String(value).replace(/[$,\s]/g, ""))
+  return Number.isFinite(number) ? number : NaN
 }
 
 function FiledPhotos({ photos }) {
@@ -678,15 +686,16 @@ function isOpenDraw(draw) {
 function scopeRows(scopeLines, draws, costs, requests) {
   const rows = []
   const byKey = new Map()
-  const row = (line) => {
+  // Only scope lines carry an id; a line that is only on a draw has none (its draw line id is not a scope line).
+  const row = (line, scoped = false) => {
     const key = lineKey(line.title)
     if (byKey.has(key)) return byKey.get(key)
-    const item = { key, id: String(line._id || line.id || ""), title: line.title, description: line.description || "", status: line.status || "", statusBy: line.statusBy || "", statusAt: line.statusAt || null, statusNote: line.statusNote || "", forecastDate: line.forecastDate || "", forecastNote: line.forecastNote || "", budget: line.budget ?? null, released: 0, requested: 0, draws: [], costs: [], requests: [] }
+    const item = { key, id: scoped ? String(line._id || line.id || "") : "", title: line.title, description: line.description || "", status: line.status || "", statusBy: line.statusBy || "", statusAt: line.statusAt || null, statusNote: line.statusNote || "", forecastDate: line.forecastDate || "", forecastNote: line.forecastNote || "", budget: line.budget ?? null, released: 0, requested: 0, draws: [], costs: [], requests: [] }
     byKey.set(key, item)
     rows.push(item)
     return item
   }
-  for (const line of scopeLines || []) row(line)
+  for (const line of scopeLines || []) row(line, true)
   const ordered = [...(draws || [])].sort((a, b) => String(a.title).localeCompare(String(b.title), undefined, { numeric: true }))
   let loose = 0
   let looseRequested = 0

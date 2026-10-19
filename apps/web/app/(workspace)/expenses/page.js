@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { can, EXPENSE_CATEGORIES, PAYING_ENTITIES } from "@synergifund/shared"
 import { FormSheet, InfoSheet } from "../../../components/ui/FormSheet"
 import { StatusPill } from "../../../components/ui/StatusPill"
@@ -19,6 +19,8 @@ export default function ExpensesPage() {
   const [error, setError] = useState("")
   const [propertyId, setPropertyId] = useState("")
   const [selected, setSelected] = useState(null)
+  const [busyId, setBusyId] = useState("")
+  const deciding = useRef(false)
   const [proofs, setProofs] = useState([])
   const camera = session?.user?.role === "contractor"
   const canSubmit = session?.user && can(session.user, "expenses.submit")
@@ -56,16 +58,25 @@ export default function ExpensesPage() {
     }
   }
 
+  // One decision at a time, so a double click cannot approve twice.
   async function decide(id, action, confirmOverBudget = false) {
+    if (deciding.current && !confirmOverBudget) return
+    deciding.current = true
+    setBusyId(id)
     try {
       await api(`/expenses/${id}/decision`, { method: "POST", body: { action, confirmOverBudget } })
       list.reload()
     } catch (err) {
       if (err.status === 409 && window.confirm(`${err.message}\n\nApprove above the rehab budget?`)) {
-        decide(id, action, true)
+        await decide(id, action, true)
         return
       }
       window.alert(err.message)
+    } finally {
+      if (!confirmOverBudget) {
+        deciding.current = false
+        setBusyId("")
+      }
     }
   }
 
@@ -109,8 +120,8 @@ export default function ExpensesPage() {
               {canReapply(row) && <button type="button" onClick={(event) => { event.stopPropagation(); reapply(row) }}>Reapply</button>}
               {canApprove && row.book === "Request" && !["Approved", "Rejected"].includes(row.status) && (
                 <>
-                  <button type="button" onClick={(event) => { event.stopPropagation(); decide(row.id, "approve") }}>Approve</button>
-                  <button type="button" onClick={(event) => { event.stopPropagation(); decide(row.id, "reject") }}>Reject</button>
+                  <button type="button" disabled={busyId === row.id} onClick={(event) => { event.stopPropagation(); decide(row.id, "approve") }}>Approve</button>
+                  <button type="button" disabled={busyId === row.id} onClick={(event) => { event.stopPropagation(); decide(row.id, "reject") }}>Reject</button>
                 </>
               )}
             </span>
@@ -134,6 +145,7 @@ export default function ExpensesPage() {
             await list.reload()
             setSelected(null)
           }}
+          busy={busyId === selected.id}
           onDecide={async (action) => { await decide(selected.id, action); setSelected(null) }}
           onReapply={() => reapply(selected)}
         />
@@ -169,7 +181,7 @@ function proofIds(item) {
   return ids
 }
 
-function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camera, onClose, onSaved, onDecide, onReapply }) {
+function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camera, busy, onClose, onSaved, onDecide, onReapply }) {
   const [error, setError] = useState("")
   const [pending, setPending] = useState(false)
   const [removed, setRemoved] = useState([])
@@ -227,8 +239,8 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camer
         )}
         {canApprove && (
           <div className="row-actions" style={{ marginTop: 16 }}>
-            <button type="button" onClick={() => onDecide("approve")}>Approve</button>
-            <button type="button" onClick={() => onDecide("reject")}>Reject</button>
+            <button type="button" disabled={busy} onClick={() => onDecide("approve")}>Approve</button>
+            <button type="button" disabled={busy} onClick={() => onDecide("reject")}>Reject</button>
           </div>
         )}
       </InfoSheet>

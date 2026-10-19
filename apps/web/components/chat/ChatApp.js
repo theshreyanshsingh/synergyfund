@@ -301,7 +301,7 @@ export function ChatApp({ mode = "channels" }) {
   }
 
   useChatEvents({
-    "message:new": ({ message, channel }) => {
+    "message:new": ({ message, channel, read }) => {
       upsertChannel(channel)
       if (message.parentId) {
         setThread((current) => (current?.parent?.id === message.parentId ? { ...current, replies: addUnique(current.replies, message) } : current))
@@ -309,7 +309,8 @@ export function ChatApp({ mode = "channels" }) {
         setFeeds((current) => (current[message.channelId]?.loaded ? { ...current, [message.channelId]: { ...current[message.channelId], items: addUnique(current[message.channelId].items, message) } } : current))
       }
       stopTyping(message.parentId || message.channelId, message.userId)
-      if (message.userId === me) return
+      // "read": a call note for someone who was on the call, so it is not new to them.
+      if (message.userId === me || read) return
       const here = message.channelId === activeRef.current && visibleRef.current
       if (here) {
         markRead(message.channelId)
@@ -328,8 +329,15 @@ export function ChatApp({ mode = "channels" }) {
         return { ...current, replies: replaceMessage(current.replies, message) }
       })
     },
-    "channel:new": ({ channel }) => upsertChannel(channel),
-    "channel:update": ({ channel }) => upsertChannel(channel),
+    // Someone else added or removed people: refresh a member list already shown (for @mentions and Add people).
+    "channel:new": ({ channel }) => {
+      upsertChannel(channel)
+      if (members[channel.id]) loadMembers(channel.id)
+    },
+    "channel:update": ({ channel }) => {
+      upsertChannel(channel)
+      if (members[channel.id]) loadMembers(channel.id)
+    },
     "channel:remove": ({ id }) => {
       setChannels((current) => current.filter((channel) => channel.id !== id))
       if (activeRef.current === id) open("", { replace: true })

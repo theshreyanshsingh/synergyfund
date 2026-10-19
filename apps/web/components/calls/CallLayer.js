@@ -299,7 +299,7 @@ function AddPeople({ current, me, onClose }) {
   }, [])
 
   const needle = query.trim().toLowerCase()
-  const choices = (people || []).filter((person) => !inCall.has(person.id) && (!needle || person.name.toLowerCase().includes(needle) || (person.email || "").toLowerCase().includes(needle)))
+  const choices = (people || []).filter((person) => !person.bot && !inCall.has(person.id) && (!needle || person.name.toLowerCase().includes(needle) || (person.email || "").toLowerCase().includes(needle)))
 
   async function ring() {
     if (!picked.length || busy) return

@@ -141,7 +141,8 @@ export default function CompanyPage({ params }) {
       const result = await api(`/companies/${id}/properties`, { method: "POST", body: { propertyIds: assigning } })
       setAssigning(null)
       setNotice(result.assigned ? `${plural(result.assigned, "property", "properties")} assigned to ${company.name}.` : "Those properties were already in this company.")
-      detail.reload()
+      // The Documents tab lists the company's properties' files too.
+      reload()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -155,7 +156,7 @@ export default function CompanyPage({ params }) {
     try {
       await api(`/companies/${id}/properties/${property.id}`, { method: "DELETE" })
       setNotice(`${property.address} is no longer in ${company.name}.`)
-      detail.reload()
+      reload()
     } catch (err) {
       setNotice(err.message)
     }

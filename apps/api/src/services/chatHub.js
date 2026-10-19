@@ -162,9 +162,27 @@ export function isOnline(userId) {
 }
 
 export function refreshChat(userIds) {
-  emitToUsers(userIds.map(String), "chat:refresh", {})
-  // Access changed (role, permissions, assignments): drop anyone from live calls they can no longer see.
-  recheckCalls().catch((error) => console.error("Call access check failed", error))
+  const ids = userIds.map(String)
+  refreshSocketUsers(ids)
+    .catch((error) => console.error("Socket user refresh failed", error))
+    .finally(() => {
+      emitToUsers(ids, "chat:refresh", {})
+      // Access changed (role, permissions, assignments): drop anyone from live calls they can no longer see.
+      recheckCalls().catch((error) => console.error("Call access check failed", error))
+    })
+}
+
+// A socket keeps the person as they were when it connected, and the chat and call handlers hold that copy. After an
+// access change it is updated in place, so a lost role or property stops working at once (not at the next reconnect).
+async function refreshSocketUsers(ids) {
+  if (!io || !ids.length) return
+  const fresh = new Map((await User.find({ _id: { $in: ids } })).map((user) => [String(user._id), user]))
+  for (const socket of await io.in(ids.map((id) => `user:${id}`)).fetchSockets()) {
+    const current = socket.data?.user
+    const next = current && fresh.get(String(current._id))
+    if (!next) continue
+    for (const key of ["name", "role", "title", "extraPermissions", "deniedPermissions", "propertyIds"]) current[key] = next[key]
+  }
 }
 
 export function disconnectChat(userIds) {

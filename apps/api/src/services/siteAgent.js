@@ -279,9 +279,18 @@ export async function reviewProperty(propertyId, { reply = false, force = false 
     }
     let raised = null
     if (result.draw?.needed) raised = await raiseDraw({ property: current, watch, settings, bot, reason: String(result.draw.reason || "").slice(0, 600), items: Array.isArray(result.draw.items) ? result.draw.items.map(String).slice(0, 20) : [], draws, openDrawTasks })
-    const text = String(result.message || "").trim()
+    let text = String(result.message || "").trim().slice(0, 1200)
+    // A reply mentions the person it answers, so they get a notification and their answer back reaches the teammate.
+    const asker = reply ? [...recent].reverse().find((item) => !item.deletedAt && String(item.userId) !== String(bot._id) && item.kind !== "call") : null
+    if (text && asker && !/<@[a-f\d]{24}>/i.test(text)) {
+      // "@Roman, the tile is done" would read "@Roman @Roman, …" once the mention is added.
+      // Only "@Name" or "Name," at the start, so a reply like "Will do" from someone named Will keeps its words.
+      const names = asker.userName ? [asker.userName, firstName(asker.userName)].map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) : []
+      const lead = names.length ? new RegExp(`^(@(${names.join("|")})\\b[,:]?|(${names.join("|")})[,:])\\s*`, "i") : null
+      text = `<@${asker.userId}> ${lead ? text.replace(lead, "") : text}`
+    }
     let posted = null
-    if (channel && text && (reply || changes.length)) posted = await postChatMessage({ channel, property, author: bot, text: text.slice(0, 1200) })
+    if (channel && text && (reply || changes.length)) posted = await postChatMessage({ channel, property, author: bot, text })
     let lastReviewedAt = recent.length ? recent[recent.length - 1].createdAt : new Date()
     if (photoSets[0] && photoSets[0].createdAt > lastReviewedAt) lastReviewedAt = photoSets[0].createdAt
     await SiteWatch.updateOne({ propertyId: property._id }, {

@@ -18,6 +18,8 @@ export const User = register(
       name: { type: String, required: true },
       email: { type: String, required: true, unique: true, lowercase: true, trim: true },
       passwordHash: { type: String, required: true },
+      // Goes up when the password is reset or changed, which signs out every session made before.
+      sessionVersion: { type: Number, default: 0 },
       role: { type: String, required: true },
       title: String,
       company: { type: String, default: "SynergiFund" },

@@ -228,7 +228,7 @@ export function DocumentLibrary({ files, properties = [], companies = [], fixedP
             )}
             <ul className="doc-list">
               {visible.map((file) => (
-                <DocumentRow key={file.id} file={file} showProperty={fixedPlace ? false : !group.title} writable={writable && canEdit(file)} canDelete={canDelete} onEdit={() => setEditing(file)} onDelete={() => remove(file)} />
+                <DocumentRow key={file.id} file={file} showProperty={fixedPlace ? false : !group.title} writable={writable && canEdit(file)} canDelete={canDelete && canEdit(file)} onEdit={() => setEditing(file)} onDelete={() => remove(file)} />
               ))}
             </ul>
             {!open && (

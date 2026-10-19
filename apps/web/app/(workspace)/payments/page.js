@@ -55,7 +55,8 @@ export default function PaymentsPage() {
     .map((item) => ({ id: `posted-${item.id}`, title: item.title, entity: item.entity || "Construction company", due: item.date || "", amount: item.amount, status: "Posted", category: item.category, recurrence: "One time", posted: true }))
   const unpaid = bills.filter((item) => item.status !== "Paid")
   const overdue = unpaid.filter((item) => item.due && item.due < now)
-  const dueSoon = unpaid.filter((item) => item.due && item.due <= soon)
+  // A repeating payment counts each time it falls due in the next 30 days (the API lists those dates).
+  const dueSoon = unpaid.flatMap((item) => (Array.isArray(item.dueNext30) ? item.dueNext30 : item.due && item.due <= soon ? [item.due] : []).map((due) => ({ ...item, due })))
   const rows = [
     ...bills.map((item) => ({ ...item, status: item.status === "Paid" ? "Paid" : item.due && item.due < now ? "Overdue" : "Scheduled" })),
     ...posted,

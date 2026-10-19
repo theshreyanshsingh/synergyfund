@@ -1,6 +1,6 @@
 import { Router } from "express"
 import { z } from "zod"
-import { lineTracking, loanSummary, STAGES } from "@synergifund/shared"
+import { drawPulled, lineTracking, loanSummary, resolveBudget, STAGES } from "@synergifund/shared"
 import { Activity, Bill, CalendarEvent, Company, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
@@ -15,6 +15,7 @@ import { recheckCalls } from "../services/calls.js"
 import { emitToUsers } from "../services/chatHub.js"
 import { changeSummary, notifyPropertyAccess, recordActivity } from "../services/notify.js"
 import { presentContractorDraw, presentDraw } from "./draws.js"
+import { teamToday } from "../lib/dates.js"
 
 export const propertiesRouter = Router()
 
@@ -259,7 +260,7 @@ propertiesRouter.post(
     }
     property.arv = Math.round(prices.reduce((sum, value) => sum + value, 0) / prices.length / 1000) * 1000
     property.arvMethod = `Agent ARV analysis: average of ${prices.length} adjusted comps (team ARV rules)`
-    property.arvDate = new Date().toISOString().slice(0, 10)
+    property.arvDate = teamToday()
     property.compsUpdatedAt = new Date()
     property.updatedBy = req.user.name
     await property.save()
@@ -403,8 +404,9 @@ propertiesRouter.get(
       canDraws ? DrawBudget.find({ propertyId: property._id }) : [],
     ])
     const rehabSpent = spent[0]?.total || 0
-    const received = draws.filter((draw) => draw.status === "Funded").reduce((total, draw) => total + Number(draw.fundedAmount ?? draw.amount ?? 0), 0)
-    const schedule = Number(budgets.find((item) => Number(item.budget) > 0)?.budget) || Number(property.rehabBudget) || 0
+    // Same figures as the Draws page: money pulled on funded and part-funded draws, and the property's own budget first.
+    const received = draws.reduce((total, draw) => total + drawPulled(draw), 0)
+    const schedule = resolveBudget({ rehabBudget: property.rehabBudget, recordBudget: budgets.find((item) => Number(item.budget) > 0)?.budget, scopeLines: property.scopeLines || [], draws }).budget || 0
     const internal = req.user.role !== "contractor"
     if (internal) await ensureLenders()
     const [expenseDocs, requestDocs, photos, people, loans, bills, company] = await Promise.all([
@@ -501,7 +503,7 @@ propertiesRouter.post(
     if (photos.length) {
       await PhotoSet.create({
         propertyId: property._id,
-        weekOf: new Date().toISOString().slice(0, 10),
+        weekOf: teamToday(),
         fileIds: photos.map((file) => file._id),
         uploadedBy: req.user._id,
         note: "Added with the property",
@@ -517,7 +519,7 @@ propertiesRouter.patch(
   requirePermission("properties.write"),
   asyncHandler(async (req, res) => {
     const property = await Property.findById(req.params.id)
-    if (!property) {
+    if (!property || !ownsProperty(req.user, property)) {
       sendError(res, 404, "That property is not available.")
       return
     }
@@ -544,6 +546,11 @@ propertiesRouter.patch(
     }
     const before = property.toObject()
     Object.assign(property, parsed.data, { updatedBy: req.user.name })
+    // An ARV typed over one from comps or the Agent is no longer that analysis.
+    if ("arv" in parsed.data && parsed.data.arv !== before.arv && !("arvMethod" in parsed.data)) {
+      property.arvMethod = parsed.data.arv == null ? undefined : "Entered by hand"
+      property.arvDate = parsed.data.arv == null ? undefined : teamToday()
+    }
     // Removing the rehab budget removes it everywhere: a copy kept on the draw budget record (from a draw sheet
     // import or when lender funding was first set) would otherwise keep showing as the budget. Only when a budget
     // is really being removed (a form that just leaves the field empty does not touch the draw record).
@@ -690,6 +697,7 @@ function parseList(value) {
 
 function numberOrNull(value) {
   if (value === "" || value == null) return null
-  const number = Number(value)
+  // "250,000" and "$400,000" are numbers too.
+  const number = Number(String(value).replace(/[$,\s]/g, ""))
   return Number.isFinite(number) ? number : null
 }

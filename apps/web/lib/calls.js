@@ -119,7 +119,8 @@ export function soundsReady() {
 function refreshTone() {
   const current = state.current
   if (state.incoming.length) playTone("incoming")
-  else if (current && !(current.peers || []).length && !current.call?.answered) playTone("outgoing")
+  // Ringback only while the call is ringing someone: a big room that shows Join to people rings no one.
+  else if (current && !(current.peers || []).length && !current.call?.answered && current.call?.ringing) playTone("outgoing")
   else stopTone()
 }
 

@@ -42,7 +42,7 @@ authRouter.post(
       title: role === "admin" ? "Signed in · Private workspace" : "Member",
     })
     await recordActivity({ user, title: "Workspace created", detail: `${user.name} became the first admin` })
-    setSessionCookie(res, signSession(user._id))
+    setSessionCookie(res, signSession(user))
     res.status(201).json({ user: publicUser(user) })
   }),
 )
@@ -61,7 +61,7 @@ authRouter.post(
       sendError(res, 401, "That email or password is not right.")
       return
     }
-    setSessionCookie(res, signSession(user._id))
+    setSessionCookie(res, signSession(user))
     await recordActivity({ user, title: "Signed in", detail: user.email })
     res.json({ user: publicUser(user) })
   }),
@@ -126,7 +126,10 @@ authRouter.post(
       return
     }
     req.user.passwordHash = await bcrypt.hash(nextPassword, 10)
+    // Other devices signed in with the old password are signed out; this one gets a new session.
+    req.user.sessionVersion = (req.user.sessionVersion || 0) + 1
     await req.user.save()
+    setSessionCookie(res, signSession(req.user))
     await recordActivity({ user: req.user, title: "Password changed", detail: "Changed their own password" })
     res.json({ user: publicUser(req.user) })
   }),

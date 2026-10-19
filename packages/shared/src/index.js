@@ -421,6 +421,8 @@ export function can(user, permission) {
 }
 
 export function assignmentFee(property) {
+  // A blank price is not $0: no fee until both prices are entered.
+  if ([property?.purchasePrice, property?.houseBoughtPrice].some((value) => value == null || value === "")) return null
   const purchase = Number(property?.purchasePrice)
   const house = Number(property?.houseBoughtPrice)
   if (!Number.isFinite(purchase) || !Number.isFinite(house)) return null

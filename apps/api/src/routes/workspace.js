@@ -30,6 +30,7 @@ import { loanFields } from "../services/loans.js"
 import { changeSummary, notify, notifyPropertyAccess, recordActivity } from "../services/notify.js"
 import { unreadSplit, usesChat } from "../services/chat.js"
 import { disconnectChat, refreshChat } from "../services/chatHub.js"
+import { teamToday } from "../lib/dates.js"
 
 export const workspaceRouter = Router()
 
@@ -91,7 +92,9 @@ workspaceRouter.get(
     }, { received: 0, remaining: 0 })
     const received = drawTotals.received
     const rehabCosts = expenses.filter((expense) => expense.costTreatment !== "Exclude from construction margin")
-    const spent = rehabCosts.reduce((total, expense) => total + Number(expense.amount || 0), 0)
+    // Remaining budget only counts costs on properties that have a budget (costs elsewhere have nothing to come out of).
+    const budgeted = new Set(properties.filter((property) => property.rehabBudget != null).map((property) => String(property._id)))
+    const spent = rehabCosts.filter((expense) => budgeted.has(String(expense.propertyId || ""))).reduce((total, expense) => total + Number(expense.amount || 0), 0)
     const stages = countBy(properties, (property) => property.stage || "Stage not set")
     const openTasks = tasks.filter((task) => !task.done)
     const verify = openTasks.filter((task) => (task.labels || []).includes("Verify"))
@@ -112,10 +115,13 @@ workspaceRouter.get(
         series("Received", draws.filter((draw) => drawPulled(draw) > 0).map((draw) => ({ at: draw.fundedDate || draw.createdAt, amount: drawPulled(draw) })), months, days),
       ]))
     }
-    cards.push(lineCard("Rehab", currency(Math.max(0, rehab - spent)), "Rehab budget recorded against costs posted", `${currency(rehab)} budget · ${currency(spent)} posted`, true, [
-      series("Budget", properties.filter((property) => property.rehabBudget != null).map((property) => ({ at: property.createdAt, amount: Number(property.rehabBudget) })), months, days),
-      series("Costs", rehabCosts.map((expense) => ({ at: expense.date || expense.createdAt, amount: Number(expense.amount || 0) })), months, days),
-    ]))
+    // Without access to expenses the costs are unknown, so the whole budget would wrongly show as remaining.
+    if (req.permissions.includes("expenses.read")) {
+      cards.push(lineCard("Rehab", currency(Math.max(0, rehab - spent)), "Rehab budget recorded against costs posted", `${currency(rehab)} budget · ${currency(spent)} posted against it`, true, [
+        series("Budget", properties.filter((property) => property.rehabBudget != null).map((property) => ({ at: property.createdAt, amount: Number(property.rehabBudget) })), months, days),
+        series("Costs", rehabCosts.map((expense) => ({ at: expense.date || expense.createdAt, amount: Number(expense.amount || 0) })), months, days),
+      ]))
+    }
     const periods = days / 30
     const projectedMortgage = monthlyMortgage * periods
     const projectedRent = rent * periods
@@ -353,11 +359,16 @@ async function billScope(user) {
 workspaceRouter.get(
   "/bills",
   requirePermission("expenses.read"),
+  // Mortgage, tax and insurance payments are internal, like on the property page and the calendar.
+  blockContractors,
   asyncHandler(async (req, res) => {
     const items = await Bill.find(await billScope(req.user)).sort({ due: 1 })
     const properties = await Property.find({ _id: { $in: items.map((bill) => bill.propertyId).filter(Boolean) } }).select("address")
     const names = new Map(properties.map((property) => [String(property._id), property.address]))
-    res.json({ items: items.map((bill) => ({ ...presentBill(bill), property: names.get(String(bill.propertyId || "")) || "" })) })
+    const until = shiftKey(todayKey(), 30)
+    // Each date a repeating payment falls due from now (or its overdue date) through the next 30 days: a weekly bill is due about four times.
+    const dueDates = (bill) => (bill.status === "Paid" || !dateKey(bill.due) ? [] : paymentDates(bill, dateKey(bill.due), until))
+    res.json({ items: items.map((bill) => ({ ...presentBill(bill), property: names.get(String(bill.propertyId || "")) || "", dueNext30: dueDates(bill) })) })
   }),
 )
 
@@ -875,9 +886,9 @@ workspaceRouter.patch(
       sendError(res, 403, "Only a super admin can change an admin.")
       return
     }
-    const access = readAccess(req, res)
+    const access = readAccess(req, res, user)
     if (!access) return
-    if (String(user._id) === String(req.user._id) && (access.role !== "admin" || access.deniedPermissions.includes(PERMISSIONS.membersManage))) {
+    if (String(user._id) === String(req.user._id) && !permissionsFor(access).includes(PERMISSIONS.membersManage)) {
       sendError(res, 400, "Keep your own admin access so the workspace still has a manager.")
       return
     }
@@ -924,11 +935,18 @@ workspaceRouter.post(
       sendError(res, 403, "Only a super admin can change an admin.")
       return
     }
+    // Setting someone's password lets you sign in as them, so only for people with no more access than you.
+    if (hasMoreAccess(req, user)) {
+      sendError(res, 403, "Only a super admin can set the password of someone with access you don't have.")
+      return
+    }
     if (password.length < 8) {
       sendError(res, 400, "Use a password of at least 8 characters.")
       return
     }
     user.passwordHash = await bcrypt.default.hash(password, 10)
+    // Sessions signed in with the old password end (for example, to lock out a lost phone).
+    user.sessionVersion = (user.sessionVersion || 0) + 1
     await user.save()
     const mail = await notify({
       userIds: [user._id],
@@ -964,6 +982,10 @@ workspaceRouter.delete(
       sendError(res, 403, "Only a super admin can change an admin.")
       return
     }
+    if (hasMoreAccess(req, user)) {
+      sendError(res, 403, "Only a super admin can remove someone with access you don't have.")
+      return
+    }
     if (user.role === "admin") {
       const others = await User.countDocuments({ role: "admin", _id: { $ne: user._id } })
       if (!others) {
@@ -973,6 +995,8 @@ workspaceRouter.delete(
     }
     await Property.updateMany({ assignedUserIds: user._id }, { $pull: { assignedUserIds: user._id } })
     await CalendarEvent.updateMany({ guestIds: user._id }, { $pull: { guestIds: user._id } })
+    // Their tasks become unassigned (an assignee who no longer exists would stop the task from being saved).
+    await Task.updateMany({ assigneeId: user._id }, { $unset: { assigneeId: 1 }, $set: { owner: "" } })
     await user.deleteOne()
     disconnectChat([user._id])
     await recordActivity({ user: req.user, title: "Member removed", detail: user.name })
@@ -992,7 +1016,14 @@ async function syncAssignments(user, propertyIds) {
   return valid.filter((property) => !before.has(String(property._id)))
 }
 
-function readAccess(req, res) {
+// Someone holding a permission the person acting lacks (a super admin can act on anyone).
+function hasMoreAccess(req, user) {
+  if (req.permissions.includes(PERMISSIONS.superAdmin)) return false
+  const actor = new Set(req.permissions)
+  return permissionsFor(user).some((id) => !actor.has(id))
+}
+
+function readAccess(req, res, target = null) {
   const role = String(req.body.role || "")
   if (!isRole(role)) {
     sendError(res, 400, "Choose a role.")
@@ -1005,7 +1036,9 @@ function readAccess(req, res) {
   if (role === "admin") return { role, extraPermissions: [], deniedPermissions: [] }
   const selected = ensureTaskPermissions(req.body.permissions || permissionsFor({ role }))
   const actorCan = new Set(req.permissions)
-  const blocked = selected.filter((id) => !actorCan.has(id))
+  // Access the person already has can stay; only new access must be access the manager has too.
+  const already = new Set(target ? permissionsFor(target) : [])
+  const blocked = selected.filter((id) => !actorCan.has(id) && !already.has(id))
   if (blocked.length) {
     sendError(res, 403, "You can only grant access you already have.")
     return null
@@ -1433,9 +1466,8 @@ workspaceRouter.get(
 )
 
 // Today's date where the team works (the server may run on UTC).
-const TEAM_TIMEZONE = process.env.TEAM_TIMEZONE || "America/New_York"
 function todayKey() {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: TEAM_TIMEZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())
+  return teamToday()
 }
 
 function dateKey(value) {
@@ -1885,17 +1917,6 @@ function inPastWindow(value, days) {
   return at >= start && at <= end
 }
 
-function inNextWindow(value, days) {
-  const at = asDay(value)
-  if (!at) return false
-  const start = new Date()
-  start.setHours(0, 0, 0, 0)
-  const end = new Date()
-  end.setHours(23, 59, 59, 999)
-  end.setDate(end.getDate() + days)
-  return at >= start && at <= end
-}
-
 function expenseProjection(expenses, bills, days) {
   const totals = new Map()
   for (const expense of expenses) {
@@ -1906,9 +1927,12 @@ function expenseProjection(expenses, bills, days) {
   const categories = [...totals.entries()]
     .map(([category, amount]) => ({ category, amount }))
     .sort((left, right) => right.amount - left.amount)
+  const today = todayKey()
+  const until = shiftKey(today, days)
+  // Every time a repeating payment falls due in the window, not only its next date.
   const scheduled = bills
-    .filter((bill) => bill.status !== "Paid" && inNextWindow(bill.due, days))
-    .map((bill) => ({ title: bill.title, amount: Number(bill.amount) || 0, due: bill.due || "", category: bill.category || "" }))
+    .filter((bill) => bill.status !== "Paid")
+    .flatMap((bill) => paymentDates(bill, today, until).map((due) => ({ title: bill.title, amount: Number(bill.amount) || 0, due, category: bill.category || "" })))
     .sort((left, right) => String(left.due).localeCompare(String(right.due)))
   return {
     days,
