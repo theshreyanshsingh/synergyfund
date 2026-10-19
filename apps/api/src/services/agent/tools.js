@@ -1,4 +1,4 @@
-import { COMPANY_FOLDERS, PERMISSIONS, PROPERTY_FOLDERS, documentType, drawFigures, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
+import { COMPANY_FOLDERS, EXPENSE_CATEGORIES, LOAN_STATUSES, PERMISSIONS, PROPERTY_FOLDERS, TASK_LABELS, documentType, drawFigures, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
 import { Bill, Company, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, Property, Task, User } from "../../models/index.js"
 import { presentProperty } from "../../lib/serialize.js"
 import { propertyFilter } from "../access.js"
@@ -8,7 +8,7 @@ import { insuranceDates, loanPaymentDates, paymentDates } from "../schedule.js"
 import { geocode, nearbyZips } from "../geocode.js"
 import { analyzeArv, milesBetween } from "./arv.js"
 
-const MODEL_RESULT_LIMIT = 12000
+const MODEL_RESULT_LIMIT = 32000
 const OPEN_REQUEST_STATUSES = ["Submitted", "Needs information", "Needs second approval"]
 const PAYMENT_TASK_LABELS = ["EMD", "Mortgage payment", "Insurance", "Taxes", "Closing", "Draw"]
 const FIRECRAWL_URL = "https://api.firecrawl.dev/v2"
@@ -34,8 +34,18 @@ function shiftKey(key, days) {
 }
 
 function dateKey(value) {
-  const text = String(value || "")
-  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : ""
+  const text = String(value || "").trim()
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10)
+  // Dates typed or imported as 3/15/2024 or 3/15/24.
+  const typed = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})$/)
+  if (!typed) return ""
+  const year = typed[3].length === 2 ? `20${typed[3]}` : typed[3]
+  return `${year}-${typed[1].padStart(2, "0")}-${typed[2].padStart(2, "0")}`
+}
+
+// For loose name matches: "Lowe's" finds "Lowes", "home depot" finds "The Home Depot".
+function squash(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "")
 }
 
 function clampLimit(value, fallback, max) {
@@ -57,6 +67,15 @@ function plural(count, word, many = `${word}s`) {
 
 function sum(items, read) {
   return items.reduce((total, item) => total + (Number(read(item)) || 0), 0)
+}
+
+function countBy(items, read) {
+  const counts = {}
+  for (const item of items) {
+    const key = read(item) || "Not set"
+    counts[key] = (counts[key] || 0) + 1
+  }
+  return Object.fromEntries(Object.entries(counts).sort((a, b) => b[1] - a[1]))
 }
 
 async function scopedProperties(context) {
@@ -94,6 +113,26 @@ async function findProperty(context, reference) {
   const fuzzy = rank(properties, text, (property) => `${property.address} ${property.city || ""}`, PROPERTY_MATCH)
   if (fuzzy.length === 1 || (fuzzy.length > 1 && fuzzy[0].score - fuzzy[1].score >= 0.05)) return { property: fuzzy[0].item, corrected: true }
   return { matches: fuzzy.map((entry) => entry.item) }
+}
+
+// "Revive Jax" finds "Revive Jax LLC" (suffixes like LLC, Inc and Trust are ignored).
+function companyCore(text) {
+  return String(text || "").toLowerCase().replace(/\b(l\.?l\.?c|inc|corp|corporation|co|company|trust|lp|ltd|llp)\b\.?/g, " ").replace(/[^a-z0-9]+/g, " ").trim()
+}
+
+// The properties a company owns: by the company record on the property, or the owner written on it.
+async function propertiesOfCompany(context, properties, name) {
+  if (!context.cache.companies) context.cache.companies = await Company.find().select("name")
+  const companies = context.cache.companies
+  const needle = companyCore(name)
+  const company = companies.find((item) => companyCore(item.name) === needle)
+    || rank(companies, name, (item) => item.name, PROPERTY_MATCH)[0]?.item
+    || companies.find((item) => needle && companyCore(item.name).includes(needle))
+    || null
+  const wanted = companyCore(company?.name || name)
+  const owned = properties.filter((property) => (company && String(property.companyId || "") === String(company._id)) || (wanted && companyCore(property.ownerEntity).includes(wanted)))
+  if (!company && !owned.length) return { success: false, error: `No company matches "${name}".`, companies: companies.slice(0, 25).map((item) => item.name) }
+  return { success: true, company: company?.name || `${name} (by the owner written on the property)`, properties: owned }
 }
 
 function notFound(reference, matches) {
@@ -390,27 +429,26 @@ export const TOOLS = [
     run: async (args, context) => {
       const properties = await scopedProperties(context)
       const ids = properties.map((property) => property._id)
-      const countBy = (read) => properties.reduce((map, property) => {
-        const key = read(property) || "Not set"
-        map[key] = (map[key] || 0) + 1
-        return map
-      }, {})
       const result = {
         success: true,
         properties: properties.length,
-        byStatus: countBy((property) => property.stage),
-        byGoal: context.user.role === "contractor" ? undefined : countBy((property) => property.strategy),
+        byStatus: countBy(properties, (property) => property.stage),
+        byGoal: context.user.role === "contractor" ? undefined : countBy(properties, (property) => property.strategy),
       }
       if (context.user.role !== "contractor") {
         const loans = await Loan.find({ propertyId: { $in: ids } })
+        const open = loans.filter((loan) => (loan.status || "Current") !== "Paid off")
         Object.assign(result, {
           purchaseTotal: sum(properties, (property) => property.purchasePrice),
           arvTotal: sum(properties, (property) => property.arv),
           rehabBudgetTotal: sum(properties, (property) => property.rehabBudget),
           actualRentMonthly: sum(properties, (property) => property.actualRent),
           marketRentMonthly: sum(properties, (property) => property.marketRent),
-          loanBalanceTotal: sum(loans, (loan) => loan.balance),
-          monthlyMortgageTotal: sum(loans, (loan) => loan.payment),
+          // Open loans only, like Overview and the Loans page.
+          loanBalanceTotal: sum(open, (loan) => loan.balance),
+          monthlyMortgageTotal: sum(open, (loan) => loan.payment),
+          openLoans: open.length,
+          paidOffLoans: loans.length - open.length,
           missingPurchasePrice: properties.filter((property) => property.purchasePrice == null).map((property) => property.address),
           missingArv: properties.filter((property) => property.arv == null).map((property) => property.address),
         })
@@ -428,7 +466,7 @@ export const TOOLS = [
     name: "list_properties",
     label: "Reading properties",
     permission: PERMISSIONS.propertiesRead,
-    description: "List properties the person can see, optionally filtered. Returns address, city, status, goal, purchase price, ARV, rehab budget and remaining, rent figures and next step.",
+    description: "List properties the person can see, filtered by words, status, goal, city, owning company, price, purchase date and missing figures. Totals cover every match. Each row has address, city, status, goal, owning company, purchase price and date, ARV, rehab budget, rents, health and next step. For \"under 200 grand\" pass maxPrice 200000 (purchase price unless the person means ARV, rehab or rent); for \"under Revive Jax\" pass company \"Revive Jax\".",
     parameters: {
       type: "object",
       properties: {
@@ -436,7 +474,15 @@ export const TOOLS = [
         status: { type: "string", description: "Status such as Renovation, For rent, Rented, For sale, Sold, Under contract." },
         goal: { type: "string", description: "Goal or strategy such as Fix & flip, Buy & hold, Refinance." },
         city: { type: "string" },
-        limit: { type: "number", description: "Most rows to return, up to 100." },
+        company: { type: "string", description: "Only properties owned by this company (an LLC, corporation or trust), by name. Also matches the owner written on the property." },
+        minPrice: { type: "number", description: "Only properties at or above this amount, in dollars." },
+        maxPrice: { type: "number", description: "Only properties at or under this amount, in dollars." },
+        priceField: { type: "string", enum: ["purchase", "arv", "rehab", "rent"], description: "Which figure minPrice and maxPrice use: purchase price (default), ARV, rehab budget or monthly rent." },
+        purchasedFrom: { type: "string", description: "Only properties bought on or after this day, YYYY-MM-DD." },
+        purchasedTo: { type: "string", description: "Only properties bought on or before this day, YYYY-MM-DD." },
+        missing: { type: "string", enum: ["purchase", "arv", "rehab", "rent", "purchaseDate", "company"], description: "Only properties with this not on file, such as \"arv\" for properties with no ARV." },
+        sort: { type: "string", enum: ["address", "price", "price-desc", "bought", "bought-desc"], description: "Order of the rows. Default: by price when filtering by price, by purchase date when filtering by it, otherwise as on the Properties page." },
+        limit: { type: "number", description: "Most rows to return, up to 200." },
       },
     },
     run: async (args, context) => {
@@ -446,20 +492,113 @@ export const TOOLS = [
       if (args.status) properties = properties.filter((property) => fits(property.stage, args.status))
       if (args.goal) properties = properties.filter((property) => fits(property.strategy, args.goal))
       if (args.city) properties = properties.filter((property) => fits(property.city, args.city))
-      const limit = clampLimit(args.limit, 50, 100)
+      const contractor = context.user.role === "contractor"
+      const companies = contractor ? [] : await Company.find().select("name")
+      const companyNames = new Map(companies.map((company) => [String(company._id), company.name]))
+      let company = ""
+      if (args.company && !contractor) {
+        const owned = await propertiesOfCompany(context, properties, args.company)
+        if (!owned.success) return owned
+        properties = owned.properties
+        company = owned.company
+      }
+      const from = dateKey(args.purchasedFrom)
+      const to = dateKey(args.purchasedTo)
+      let undated = []
+      if (from || to) {
+        undated = properties.filter((property) => !dateKey(property.purchaseDate)).map((property) => property.address)
+        properties = properties.filter((property) => {
+          const day = dateKey(property.purchaseDate)
+          return day && (!from || day >= from) && (!to || day <= to)
+        })
+      }
+      const empty = {
+        purchase: (property) => property.purchasePrice == null,
+        arv: (property) => property.arv == null,
+        rehab: (property) => property.rehabBudget == null,
+        rent: (property) => property.actualRent == null && property.marketRent == null,
+        purchaseDate: (property) => !property.purchaseDate,
+        company: (property) => !property.companyId && !property.ownerEntity,
+      }[args.missing]
+      if (empty && !contractor) properties = properties.filter(empty)
+      const field = { purchase: "purchasePrice", arv: "arv", rehab: "rehabBudget", rent: "rent" }[args.priceField] || "purchasePrice"
+      const figure = (property) => (field === "rent" ? property.actualRent ?? property.marketRent ?? null : property[field] ?? null)
+      const priced = args.minPrice != null || args.maxPrice != null
+      let missingFigure = []
+      if (priced) {
+        missingFigure = properties.filter((property) => figure(property) == null).map((property) => property.address)
+        properties = properties.filter((property) => {
+          const value = figure(property)
+          return value != null && (args.minPrice == null || value >= Number(args.minPrice)) && (args.maxPrice == null || value <= Number(args.maxPrice))
+        })
+      }
+      const sort = args.sort || (priced ? "price" : from || to ? "bought" : "")
+      if (sort === "bought" || sort === "bought-desc") properties = [...properties].sort((a, b) => (dateKey(a.purchaseDate) || "9999").localeCompare(dateKey(b.purchaseDate) || "9999") * (sort === "bought-desc" ? -1 : 1))
+      if (sort === "address") properties = [...properties].sort((a, b) => a.address.localeCompare(b.address, undefined, { numeric: true }))
+      if (sort === "price" || sort === "price-desc") properties = [...properties].sort((a, b) => ((figure(a) ?? Infinity) - (figure(b) ?? Infinity)) * (sort === "price-desc" ? -1 : 1))
+      const limit = clampLimit(args.limit, 100, 200)
+      // One short row per property (no comps, scope or notes), so long lists are never cut off.
+      const row = (property) => (contractor
+        ? { address: property.address, city: property.city || "", status: property.stage }
+        : {
+          address: property.address,
+          city: property.city || "",
+          status: property.stage,
+          goal: property.strategy || "",
+          company: companyNames.get(String(property.companyId || "")) || "",
+          owner: property.ownerEntity || "",
+          purchasePrice: property.purchasePrice ?? null,
+          purchaseDate: property.purchaseDate || "",
+          arv: property.arv ?? null,
+          rehabBudget: property.rehabBudget ?? null,
+          actualRent: property.actualRent ?? null,
+          marketRent: property.marketRent ?? null,
+          health: property.health || "",
+          nextStep: property.nextAction || "",
+        })
       return {
         success: true,
         total: properties.length,
         returned: Math.min(limit, properties.length),
-        properties: properties.slice(0, limit).map((property) => {
-          const view = compactProperty(property, context.user)
-          delete view.scopeLines
-          delete view.accessInfo
-          return view
+        ...(company ? { company } : {}),
+        ...(priced ? { priceFilter: { figure: { purchasePrice: "purchase price", arv: "ARV", rehabBudget: "rehab budget", rent: "monthly rent" }[field], min: args.minPrice ?? null, max: args.maxPrice ?? null }, leftOutWithoutThatFigure: missingFigure } : {}),
+        ...(priced && properties.length ? { sumOfThatFigure: properties.reduce((sum, property) => sum + (Number(figure(property)) || 0), 0) } : {}),
+        ...(from || to ? { purchaseDates: { from: from || "", to: to || "" }, leftOutWithoutPurchaseDate: undated } : {}),
+        ...(contractor ? {} : {
+          totals: {
+            purchasePrice: sum(properties, (property) => property.purchasePrice),
+            arv: sum(properties, (property) => property.arv),
+            rehabBudget: sum(properties, (property) => property.rehabBudget),
+            withoutPurchasePrice: properties.filter((property) => property.purchasePrice == null).length,
+            withoutArv: properties.filter((property) => property.arv == null).length,
+          },
         }),
+        properties: properties.slice(0, limit).map(row),
       }
     },
-    summarize: (result) => ({ title: `${result.total} ${result.total === 1 ? "property" : "properties"}` }),
+    summarize: (result) => ({ title: `${result.total} ${result.total === 1 ? "property" : "properties"}${result.company ? ` · ${result.company}` : ""}${result.priceFilter?.max != null ? ` · up to $${Number(result.priceFilter.max).toLocaleString("en-US")}` : ""}` }),
+  },
+  {
+    name: "list_companies",
+    label: "Reading companies",
+    permission: PERMISSIONS.propertiesRead,
+    staffOnly: true,
+    description: "The companies (LLCs, corporations, trusts) that own the properties, with how many properties each owns and their total purchase price. Use it to find a company's exact name.",
+    parameters: { type: "object", properties: {} },
+    run: async (args, context) => {
+      const properties = await scopedProperties(context)
+      const companies = await Company.find().select("name entityType stateOfFormation")
+      return {
+        success: true,
+        total: companies.length,
+        companies: companies.map((company) => {
+          const owned = properties.filter((property) => String(property.companyId || "") === String(company._id))
+          return { name: company.name, type: company.entityType || "", state: company.stateOfFormation || "", properties: owned.length, purchaseTotal: sum(owned, (property) => property.purchasePrice) }
+        }),
+        ownersNotYetCompanies: [...new Set(properties.filter((property) => !property.companyId && property.ownerEntity).map((property) => property.ownerEntity))].slice(0, 30),
+      }
+    },
+    summarize: (result) => ({ title: `${result.total} ${result.total === 1 ? "company" : "companies"}` }),
   },
   {
     name: "get_property",
@@ -504,8 +643,10 @@ export const TOOLS = [
       const tasks = await Task.find({ propertyId: property._id, done: false }).sort({ due: 1 })
       result.openTasks = tasks.map((task) => ({ title: task.title, due: task.due || "", priority: task.priority, labels: task.labels || [] }))
       if (allowed(PERMISSIONS.documentsRead)) {
-        const files = await DocumentFile.find({ propertyId: property._id }).sort({ createdAt: -1 }).limit(20)
+        const [files, count] = await Promise.all([DocumentFile.find({ propertyId: property._id }).sort({ createdAt: -1 }).limit(20), DocumentFile.countDocuments({ propertyId: property._id })])
+        result.documentsTotal = count
         result.documents = files.map((file) => ({ name: file.name, kind: file.kind, added: dateKey(file.createdAt?.toISOString?.()) }))
+        if (count > files.length) result.documentsNote = `The ${files.length} newest of ${count} files. find_documents lists the rest.`
       }
       return result
     },
@@ -516,58 +657,122 @@ export const TOOLS = [
     label: "Reading loans",
     permission: PERMISSIONS.propertiesRead,
     staffOnly: true,
-    description: "Loans on the properties the person can see: lender, balance, monthly payment, maturity, terms and whether the terms are verified.",
+    description: "Loans on the properties the person can see: lender, status, balance, monthly payment, maturity, terms and whether the terms are verified. Filter by lender, property, owning company, status and maturity date (for \"loans maturing in the next 90 days\" pass maturesBy as today plus 90 days). The balance and monthly payment totals count open loans only, like the Loans page; paid-off loans are listed but not counted.",
     parameters: {
       type: "object",
       properties: {
         lender: { type: "string", description: "Only loans from a lender whose name contains this." },
-        property: { type: "string", description: "Only loans on a property whose address contains this." },
+        property: { type: "string", description: "Only loans on this property (address)." },
+        company: { type: "string", description: "Only loans on properties owned by this company." },
+        status: { type: "string", enum: LOAN_STATUSES, description: "Only loans with this status." },
+        maturesFrom: { type: "string", description: "Only open loans that mature on or after this day, YYYY-MM-DD." },
+        maturesBy: { type: "string", description: "Only open loans that mature on or before this day, YYYY-MM-DD." },
+        sort: { type: "string", enum: ["maturity", "balance-desc", "payment-desc", "property"], description: "Order of the rows. Default: by maturity when filtering by maturity, otherwise by property." },
       },
     },
     run: async (args, context) => {
-      const properties = await scopedProperties(context)
+      let properties = await scopedProperties(context)
+      let company = ""
+      if (args.company) {
+        const owned = await propertiesOfCompany(context, properties, args.company)
+        if (!owned.success) return owned
+        properties = owned.properties
+        company = owned.company
+      }
       const names = new Map(properties.map((property) => [String(property._id), property.address]))
       const loans = await Loan.find({ propertyId: { $in: properties.map((property) => property._id) } })
       const lenders = await Lender.find({ _id: { $in: loans.map((loan) => loan.lenderId).filter(Boolean) } })
       let rows = loans.map((loan) => presentLoanRow(loan, names, lenders))
-      if (args.lender) rows = rows.filter((row) => row.lender.toLowerCase().includes(String(args.lender).toLowerCase()))
-      if (args.property) rows = rows.filter((row) => row.property.toLowerCase().includes(String(args.property).toLowerCase()))
+      if (args.lender) rows = rows.filter((row) => squash(row.lender).includes(squash(args.lender)))
+      if (args.property) {
+        const needle = String(args.property).trim().toLowerCase()
+        let matched = rows.filter((row) => row.property.toLowerCase().includes(needle))
+        if (!matched.length) {
+          const found = await findProperty(context, args.property)
+          if (!found.property) return notFound(args.property, found.matches)
+          matched = rows.filter((row) => row.property === found.property.address)
+        }
+        rows = matched
+      }
+      if (args.status) rows = rows.filter((row) => row.status.toLowerCase() === String(args.status).trim().toLowerCase())
+      const from = dateKey(args.maturesFrom)
+      const to = dateKey(args.maturesBy)
+      let noMaturity = []
+      if (from || to) {
+        const open = rows.filter((row) => row.status !== "Paid off")
+        noMaturity = open.filter((row) => !dateKey(row.maturity)).map((row) => row.property)
+        rows = open.filter((row) => {
+          const day = dateKey(row.maturity)
+          return day && (!from || day >= from) && (!to || day <= to)
+        })
+      }
+      const sort = args.sort || (from || to ? "maturity" : "property")
+      const order = {
+        maturity: (a, b) => (dateKey(a.maturity) || "9999").localeCompare(dateKey(b.maturity) || "9999"),
+        "balance-desc": (a, b) => (b.balance ?? -1) - (a.balance ?? -1),
+        "payment-desc": (a, b) => (b.monthlyPayment ?? -1) - (a.monthlyPayment ?? -1),
+        property: (a, b) => a.property.localeCompare(b.property, undefined, { numeric: true }),
+      }[sort]
+      if (order) rows = [...rows].sort(order)
+      // Each lender's terms once, not repeated on every loan.
+      const lenderTerms = {}
+      rows = rows.map(({ lenderTerms: terms, ...row }) => {
+        if (terms) lenderTerms[row.lender] = terms
+        return row
+      })
+      const open = rows.filter((row) => row.status !== "Paid off")
       return {
         success: true,
         total: rows.length,
-        balanceTotal: sum(rows, (row) => row.balance),
-        monthlyPaymentTotal: sum(rows, (row) => row.monthlyPayment),
+        open: open.length,
+        paidOff: rows.length - open.length,
+        ...(company ? { company } : {}),
+        openBalanceTotal: sum(open, (row) => row.balance),
+        openMonthlyPaymentTotal: sum(open, (row) => row.monthlyPayment),
+        withoutBalance: open.filter((row) => row.balance == null).map((row) => row.property),
+        byStatus: countBy(rows, (row) => row.status),
+        ...(from || to ? { maturing: { from: from || "", to: to || "" }, leftOutWithoutMaturity: noMaturity } : {}),
         loans: rows,
+        ...(Object.keys(lenderTerms).length ? { lenderTerms } : {}),
       }
     },
-    summarize: (result) => ({ title: `${result.total} ${result.total === 1 ? "loan" : "loans"}` }),
+    summarize: (result) => ({ title: `${result.total} ${result.total === 1 ? "loan" : "loans"}${result.company ? ` · ${result.company}` : ""}` }),
   },
   {
     name: "list_lenders",
     label: "Reading lenders",
     permission: PERMISSIONS.propertiesRead,
     staffOnly: true,
-    description: "Lenders that finance the properties the person can see, with each lender's terms, number of properties, total balance and monthly payments.",
+    description: "Lenders that finance the properties the person can see, with each lender's terms, properties, open balance and monthly payments (paid-off loans are not counted in the totals).",
     parameters: { type: "object", properties: {} },
     run: async (args, context) => {
       const properties = await scopedProperties(context)
       const names = new Map(properties.map((property) => [String(property._id), property.address]))
       const loans = await Loan.find({ propertyId: { $in: properties.map((property) => property._id) } })
       const lenders = await Lender.find({ _id: { $in: loans.map((loan) => loan.lenderId).filter(Boolean) } })
-      return {
-        success: true,
-        total: lenders.length,
-        lenders: lenders.map((lender) => {
-          const own = loans.filter((loan) => String(loan.lenderId) === String(lender._id))
-          return {
-            name: lender.name,
-            terms: lender.terms || "",
-            properties: own.map((loan) => names.get(String(loan.propertyId)) || ""),
-            balanceTotal: sum(own, (loan) => loan.balance),
-            monthlyPaymentTotal: sum(own, (loan) => loan.payment),
-          }
-        }),
+      const row = (name, terms, own) => {
+        const open = own.filter((loan) => (loan.status || "Current") !== "Paid off")
+        return {
+          name,
+          terms,
+          loans: own.length,
+          openLoans: open.length,
+          properties: open.map((loan) => names.get(String(loan.propertyId)) || ""),
+          paidOffProperties: own.filter((loan) => loan.status === "Paid off").map((loan) => names.get(String(loan.propertyId)) || ""),
+          openBalanceTotal: sum(open, (loan) => loan.balance),
+          openMonthlyPaymentTotal: sum(open, (loan) => loan.payment),
+        }
       }
+      const rows = lenders.map((lender) => row(lender.name, lender.terms || "", loans.filter((loan) => String(loan.lenderId) === String(lender._id))))
+      // Loans whose lender is only typed on the loan (no lender record yet) still count, grouped by that name.
+      const typed = new Map()
+      for (const loan of loans.filter((item) => !item.lenderId || !lenders.some((lender) => String(lender._id) === String(item.lenderId)))) {
+        const name = lenderName(loan.lender)
+        typed.set(name, [...(typed.get(name) || []), loan])
+      }
+      for (const [name, own] of typed) rows.push({ ...row(name, "", own), note: name === "No lender" ? "Loans with no lender on file" : "Typed on the loans, no lender record" })
+      rows.sort((a, b) => b.openBalanceTotal - a.openBalanceTotal)
+      return { success: true, total: rows.length, lenders: rows }
     },
     summarize: (result) => ({ title: `${result.total} ${result.total === 1 ? "lender" : "lenders"}` }),
   },
@@ -580,7 +785,9 @@ export const TOOLS = [
       type: "object",
       properties: {
         property: { type: "string", description: "Only this property (id or address)." },
+        company: { type: "string", description: "Only properties owned by this company." },
         status: { type: "string", description: "Only draws with this status, such as Funded or Requested." },
+        detail: { type: "boolean", description: "Include budget line items and per-line draw amounts for every property (they are included automatically for up to 3 properties)." },
       },
     },
     run: async (args, context) => {
@@ -590,17 +797,31 @@ export const TOOLS = [
         if (!found.property) return notFound(args.property, found.matches)
         properties = [found.property]
       }
+      let company = ""
+      if (args.company && context.user.role !== "contractor") {
+        const owned = await propertiesOfCompany(context, properties, args.company)
+        if (!owned.success) return owned
+        properties = owned.properties
+        company = owned.company
+      }
       const ids = properties.map((property) => property._id)
       const [budgets, draws] = await Promise.all([DrawBudget.find({ propertyId: { $in: ids } }), Draw.find({ propertyId: { $in: ids } }).sort({ createdAt: 1 })])
       let rows = properties.map((property) => drawSummary(context, property, budgets, draws.filter((draw) => String(draw.propertyId) === String(property._id))))
       if (args.status) {
-        const wanted = String(args.status).toLowerCase()
-        rows = rows.map((row) => ({ ...row, draws: row.draws.filter((draw) => String(draw.status).toLowerCase() === wanted) }))
+        const wanted = String(args.status).trim().toLowerCase()
+        rows = rows
+          .map((row) => ({ ...row, draws: row.draws.filter((draw) => String(draw.status).toLowerCase() === wanted) }))
+          .filter((row) => row.draws.length)
       }
       rows = rows.filter((row) => row.draws.length || row.rehabBudget != null)
+      // Line-by-line detail only for a few properties, so a list of every schedule is never cut off.
+      const detailed = args.detail === true || rows.length <= 3
+      if (!detailed) rows = rows.map(({ lineItems, ...row }) => ({ ...row, draws: row.draws.map(({ lines, ...draw }) => draw) }))
       return {
         success: true,
+        ...(company ? { company } : {}),
         properties: rows.length,
+        ...(detailed ? {} : { note: "Budget line items and per-line draw amounts are left out for this many properties. Ask about one property (or pass detail) for them." }),
         totals: {
           budget: sum(rows, (row) => row.rehabBudget),
           drawn: sum(rows, (row) => row.drawnGross),
@@ -693,37 +914,75 @@ export const TOOLS = [
     name: "list_expenses",
     label: "Reading expenses",
     permission: PERMISSIONS.expensesRead,
-    description: "Posted costs and expense requests waiting for a decision, optionally for one property. Includes totals by category.",
+    description: "Posted costs and expense requests waiting for a decision. Filter by property, owning company, vendor, category, words in the title, date range and amount. The totals (overall, by category, vendor, property and month) cover every matching cost, not only the rows listed. For \"what did we spend at Home Depot this year\" pass vendor \"Home Depot\" and from the first day of the year.",
     parameters: {
       type: "object",
       properties: {
         property: { type: "string", description: "Only this property (id or address)." },
-        limit: { type: "number", description: "Most recent rows to return, up to 100." },
+        company: { type: "string", description: "Only properties owned by this company." },
+        vendor: { type: "string", description: "Only costs from a vendor whose name contains this, such as Home Depot." },
+        category: { type: "string", description: `Only this category: ${EXPENSE_CATEGORIES.join(", ")}.` },
+        query: { type: "string", description: "Words in the cost's title." },
+        from: { type: "string", description: "Only costs dated on or after this day, YYYY-MM-DD." },
+        to: { type: "string", description: "Only costs dated on or before this day, YYYY-MM-DD." },
+        minAmount: { type: "number" },
+        maxAmount: { type: "number" },
+        limit: { type: "number", description: "Most recent matching rows to list, up to 200 (totals always cover every match)." },
       },
     },
     run: async (args, context) => {
       let properties = await scopedProperties(context)
+      let only = false
       if (args.property) {
         const found = await findProperty(context, args.property)
         if (!found.property) return notFound(args.property, found.matches)
         properties = [found.property]
+        only = true
+      }
+      const contractor = context.user.role === "contractor"
+      if (args.company && !contractor) {
+        const owned = await propertiesOfCompany(context, properties, args.company)
+        if (!owned.success) return owned
+        properties = owned.properties
+        only = true
       }
       const names = new Map(properties.map((property) => [String(property._id), property.address]))
-      const contractor = context.user.role === "contractor"
-      const scope = contractor || args.property ? { propertyId: { $in: properties.map((property) => property._id) } } : {}
+      const ids = properties.map((property) => property._id)
+      // Everything for the team (company-wide costs too), unless one property or company was asked for.
+      const scope = contractor || only ? { propertyId: { $in: ids } } : {}
       const requestScope = contractor ? { ...scope, requestedBy: context.user._id } : scope
       const requests = await ExpenseRequest.find(requestScope).sort({ createdAt: -1 })
-      const expenses = await Expense.find(contractor ? { ...scope, requestId: { $in: requests.map((item) => item._id) } } : scope).sort({ date: -1 })
-      const limit = clampLimit(args.limit, 40, 100)
-      const byCategory = expenses.reduce((map, item) => {
-        map[item.category || "Other"] = (map[item.category || "Other"] || 0) + (Number(item.amount) || 0)
-        return map
-      }, {})
+      let expenses = await Expense.find(contractor ? { ...scope, requestId: { $in: requests.map((item) => item._id) } } : scope).sort({ date: -1 })
+      const has = (value, needle) => String(value || "").toLowerCase().includes(String(needle).trim().toLowerCase())
+      const from = dateKey(args.from)
+      const to = dateKey(args.to)
+      if (args.vendor) expenses = expenses.filter((item) => squash(item.vendor).includes(squash(args.vendor)) || squash(item.title).includes(squash(args.vendor)))
+      if (args.category) expenses = expenses.filter((item) => has(item.category, args.category))
+      if (args.query) expenses = expenses.filter((item) => String(args.query).toLowerCase().split(/\s+/).filter(Boolean).every((word) => has(`${item.title} ${item.vendor || ""} ${item.category || ""}`, word)))
+      if (from) expenses = expenses.filter((item) => dateKey(item.date) && dateKey(item.date) >= from)
+      if (to) expenses = expenses.filter((item) => dateKey(item.date) && dateKey(item.date) <= to)
+      if (args.minAmount != null) expenses = expenses.filter((item) => Number(item.amount) >= Number(args.minAmount))
+      if (args.maxAmount != null) expenses = expenses.filter((item) => Number(item.amount) <= Number(args.maxAmount))
+      const limit = clampLimit(args.limit, 60, 200)
+      const totalBy = (key, top = 0) => {
+        const map = {}
+        for (const item of expenses) {
+          const label = key(item) || "Other"
+          map[label] = Math.round(((map[label] || 0) + (Number(item.amount) || 0)) * 100) / 100
+        }
+        const entries = Object.entries(map).sort((a, b) => b[1] - a[1])
+        return Object.fromEntries(top ? entries.slice(0, top) : entries)
+      }
       return {
         success: true,
-        postedTotal: sum(expenses, (item) => item.amount),
+        postedTotal: Math.round(sum(expenses, (item) => item.amount) * 100) / 100,
         postedCount: expenses.length,
-        byCategory,
+        listed: Math.min(limit, expenses.length),
+        ...(from || to ? { dates: { from: from || "", to: to || "" } } : {}),
+        byCategory: totalBy((item) => item.category),
+        byVendor: totalBy((item) => item.vendor, 15),
+        byProperty: totalBy((item) => names.get(String(item.propertyId || "")) || "Company-wide", 15),
+        byMonth: totalBy((item) => dateKey(item.date).slice(0, 7) || "No date"),
         posted: expenses.slice(0, limit).map((item) => ({ title: item.title, amount: item.amount, category: item.category, vendor: item.vendor || "", date: item.date || "", property: names.get(String(item.propertyId || "")) || "Company-wide", entity: item.entity || "" })),
         waitingForDecision: requests
           .filter((item) => OPEN_REQUEST_STATUSES.includes(item.status))
@@ -737,44 +996,100 @@ export const TOOLS = [
     label: "Reading the task list",
     permission: PERMISSIONS.propertiesRead,
     staffOnly: true,
-    description: "Open tasks on the task list with due date, priority, labels, property and assignee.",
+    description: `Tasks on the task list with due date, priority, labels, property and assignee. Open tasks unless done is true. Filter by property, owning company, label (${TASK_LABELS.join(", ")}), assignee ("me" for the person asking), priority, words in the title, due dates and overdue. Counts (overdue, due today, by label and assignee) cover every matching task.`,
     parameters: {
       type: "object",
       properties: {
         property: { type: "string", description: "Only tasks on this property (id or address)." },
+        company: { type: "string", description: "Only tasks on properties owned by this company." },
         label: { type: "string", description: "Only tasks with this label, such as EMD, Draw, Verify, Inspection." },
+        assignee: { type: "string", description: "Only tasks for this person (name), or \"me\" for the person asking." },
+        priority: { type: "string", description: "Only this priority: High, Medium or Low." },
+        query: { type: "string", description: "Words in the task's title or notes." },
+        dueFrom: { type: "string", description: "Only tasks due on or after this day, YYYY-MM-DD." },
+        dueTo: { type: "string", description: "Only tasks due on or before this day, YYYY-MM-DD." },
+        overdue: { type: "boolean", description: "Only open tasks whose due date has passed." },
+        done: { type: "boolean", description: "Completed tasks instead of open ones, most recently completed first." },
       },
     },
     run: async (args, context) => {
       let properties = await scopedProperties(context)
+      let only = false
       if (args.property) {
         const found = await findProperty(context, args.property)
         if (!found.property) return notFound(args.property, found.matches)
         properties = [found.property]
+        only = true
+      }
+      let company = ""
+      if (args.company) {
+        const owned = await propertiesOfCompany(context, properties, args.company)
+        if (!owned.success) return owned
+        properties = owned.properties
+        company = owned.company
+        only = true
       }
       const names = new Map(properties.map((property) => [String(property._id), property.address]))
-      const filter = { done: false, $or: [{ propertyId: { $in: properties.map((property) => property._id) } }, ...(args.property ? [] : [{ propertyId: null }])] }
-      if (args.label) filter.labels = String(args.label)
-      const tasks = await Task.find(filter).sort({ due: 1 })
+      const done = args.done === true
+      const filter = { done, $or: [{ propertyId: { $in: properties.map((property) => property._id) } }, ...(only ? [] : [{ propertyId: null }])] }
+      let tasks = await Task.find(filter).sort(done ? { updatedAt: -1 } : { due: 1 })
       const people = await User.find({ _id: { $in: tasks.map((task) => task.assigneeId).filter(Boolean) } }).select("name email")
+      const personOf = (task) => people.find((item) => String(item._id) === String(task.assigneeId || ""))
+      const today = todayKey()
+      if (args.label) {
+        const wanted = String(args.label).trim().toLowerCase()
+        tasks = tasks.filter((task) => (task.labels || []).some((label) => label.toLowerCase().includes(wanted)))
+      }
+      if (args.assignee) {
+        const me = /^(me|my|mine|myself|i)$/i.test(String(args.assignee).trim())
+        tasks = tasks.filter((task) => {
+          if (me) return String(task.assigneeId || "") === String(context.user._id)
+          const person = personOf(task)
+          return squash(`${person?.name || ""} ${task.owner || ""}`).includes(squash(args.assignee))
+        })
+      }
+      if (args.priority) tasks = tasks.filter((task) => String(task.priority || "Medium").toLowerCase() === String(args.priority).trim().toLowerCase())
+      if (args.query) {
+        const words = String(args.query).toLowerCase().split(/\s+/).filter(Boolean)
+        tasks = tasks.filter((task) => words.every((word) => `${task.title} ${task.notes || ""}`.toLowerCase().includes(word)))
+      }
+      const from = dateKey(args.dueFrom)
+      const to = dateKey(args.dueTo)
+      if (from) tasks = tasks.filter((task) => dateKey(task.due) && dateKey(task.due) >= from)
+      if (to) tasks = tasks.filter((task) => dateKey(task.due) && dateKey(task.due) <= to)
+      const late = (task) => !task.done && dateKey(task.due) && dateKey(task.due) < today
+      if (args.overdue) tasks = tasks.filter(late)
+      // Tasks with a due date first (soonest first), then the ones without.
+      if (!done) tasks = [...tasks].sort((a, b) => (dateKey(a.due) || "9999").localeCompare(dateKey(b.due) || "9999"))
       const showEmail = context.permissions.includes(PERMISSIONS.tasksAssign)
+      const assigneeOf = (task) => {
+        const person = personOf(task)
+        return person ? person.name : task.owner || "Unassigned"
+      }
       return {
         success: true,
+        today,
+        ...(company ? { company } : {}),
         total: tasks.length,
-        tasks: tasks.map((task) => {
-          const person = people.find((item) => String(item._id) === String(task.assigneeId || ""))
+        ...(done ? {} : { overdue: tasks.filter(late).length, dueToday: tasks.filter((task) => dateKey(task.due) === today).length, noDueDate: tasks.filter((task) => !dateKey(task.due)).length }),
+        byLabel: countBy(tasks.flatMap((task) => (task.labels?.length ? task.labels : ["No label"])), (label) => label),
+        byAssignee: countBy(tasks, assigneeOf),
+        tasks: tasks.slice(0, 300).map((task) => {
+          const person = personOf(task)
           return {
             title: task.title,
             due: task.due || "",
+            ...(late(task) ? { overdue: true } : {}),
             priority: task.priority,
             labels: task.labels || [],
             property: names.get(String(task.propertyId || "")) || "Company-wide",
             assignee: person ? (showEmail ? `${person.name} <${person.email}>` : person.name) : task.owner || "Unassigned",
+            ...(done ? { completed: dateKey(task.updatedAt?.toISOString?.()) } : {}),
           }
         }),
       }
     },
-    summarize: (result) => ({ title: `${result.total} open ${result.total === 1 ? "task" : "tasks"}` }),
+    summarize: (result, args) => ({ title: `${result.total} ${args?.done ? "completed" : "open"} ${result.total === 1 ? "task" : "tasks"}` }),
   },
   {
     name: "list_team",
@@ -1206,11 +1521,11 @@ export const TOOLS = [
         add("task", tasks, (task) => [task.title, ...(task.labels || []), names.get(String(task.propertyId || ""))].filter(Boolean).join(" "), (task) => ({ label: task.title, detail: [task.due, names.get(String(task.propertyId || ""))].filter(Boolean).join(" · ") }))
       }
       if (allowed(PERMISSIONS.documentsRead)) {
-        const files = await DocumentFile.find(staff ? { kind: { $ne: "chat" } } : { propertyId: { $in: ids }, kind: { $ne: "chat" } }).sort({ createdAt: -1 }).limit(500)
+        const files = await DocumentFile.find(staff ? { kind: { $ne: "chat" } } : { propertyId: { $in: ids }, kind: { $ne: "chat" } }).select("name propertyId kind").sort({ createdAt: -1 }).limit(20000)
         add("document", files, (file) => file.name, (file) => ({ label: file.name, detail: names.get(String(file.propertyId || "")) || file.kind }))
       }
       if (staff && allowed(PERMISSIONS.expensesRead)) {
-        const expenses = await Expense.find({}).sort({ createdAt: -1 }).limit(500)
+        const expenses = await Expense.find({}).select("title vendor category amount propertyId").sort({ createdAt: -1 }).limit(20000)
         add("expense", expenses, (item) => [item.title, item.vendor, item.category].filter(Boolean).join(" "), (item) => ({ label: item.title, detail: [item.vendor, item.amount != null ? `$${item.amount}` : "", names.get(String(item.propertyId || ""))].filter(Boolean).join(" · ") }))
       }
       found.sort((left, right) => right.score - left.score)
@@ -1266,9 +1581,42 @@ export async function executeTool(call, tools, context) {
   }
 }
 
+// A result too long for the model loses whole rows from its longest lists (never half a row), with a note saying how
+// many were left out, so a long list is never shortened without the model knowing. Totals still count every row.
+export function fitForModel(result, limit = MODEL_RESULT_LIMIT) {
+  let text = JSON.stringify(result)
+  if (text.length <= limit) return text
+  const copy = { ...result }
+  const lists = []
+  for (const [key, value] of Object.entries(copy)) {
+    if (Array.isArray(value)) lists.push([copy, key])
+    else if (value && typeof value === "object") {
+      const inner = { ...value }
+      copy[key] = inner
+      for (const [innerKey, innerValue] of Object.entries(inner)) if (Array.isArray(innerValue)) lists.push([inner, innerKey])
+    }
+  }
+  lists.sort(([left, leftKey], [right, rightKey]) => JSON.stringify(right[rightKey]).length - JSON.stringify(left[leftKey]).length)
+  for (const [holder, key] of lists) {
+    const rows = holder[key]
+    if (rows.length < 2) continue
+    const over = text.length - limit + 260
+    let removed = 0
+    let kept = rows.length
+    while (kept > 1 && removed < over) {
+      kept -= 1
+      removed += JSON.stringify(rows[kept]).length + 1
+    }
+    holder[key] = rows.slice(0, kept)
+    holder[`${key}NotShown`] = `Only the first ${kept} of ${rows.length} are shown here, for length. Totals and counts in this result include all ${rows.length}. To read the rest, ask again with a filter.`
+    text = JSON.stringify(copy)
+    if (text.length <= limit) return text
+  }
+  return `${text.slice(0, limit)}… [cut off for length, ask a narrower question for the rest]`
+}
+
 export function toolContent(name, result) {
-  const text = JSON.stringify(result.success === false ? { error: result.error, candidates: result.candidates, message: `Tool ${name} failed: ${result.error}. Try different approach.`, tool: name } : result)
-  return text.length > MODEL_RESULT_LIMIT ? `${text.slice(0, MODEL_RESULT_LIMIT)}… [truncated, ask a narrower question for the rest]` : text
+  return fitForModel(result.success === false ? { error: result.error, candidates: result.candidates, companies: result.companies, message: `Tool ${name} failed: ${result.error}. Try different approach.`, tool: name } : result)
 }
 
 export function clientResult(tool, args, result) {

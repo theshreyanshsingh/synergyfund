@@ -16,6 +16,7 @@ const STATUS_LABELS = {
   arv_analysis: "Working out the ARV",
   portfolio_summary: "Reading the portfolio",
   list_properties: "Reading properties",
+  list_companies: "Reading companies",
   get_property: "Opening the property",
   list_loans: "Reading loans",
   list_lenders: "Reading lenders",

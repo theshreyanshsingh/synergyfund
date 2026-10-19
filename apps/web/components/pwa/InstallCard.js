@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { enablePush, installApp, usePwa } from "../../lib/pwa"
+import { enablePush, inNativeApp, installApp, usePwa } from "../../lib/pwa"
 import { InstallGuide } from "./InstallGuide"
 
 // Step one: install the app. Step two: turn on notifications. Then it disappears.
@@ -11,7 +11,8 @@ export function InstallCard({ className = "" }) {
   const [error, setError] = useState("")
   const [guide, setGuide] = useState(false)
 
-  if (!pwa.ready || pwa.pushOn) return null
+  // The phone app is already installed and brings its own notifications.
+  if (!pwa.ready || pwa.pushOn || inNativeApp()) return null
 
   if (!pwa.installed && pwa.installable) {
     // Chrome and Edge (Android and computers) show their own install prompt; iPhone, iPad and Safari need a short guide.

@@ -110,8 +110,33 @@ export async function shareReady({ tapped = true } = {}) {
   }
 }
 
+// In the phone app, the page asks for a short-lived download link and hands it to the app, which saves the file and
+// opens the share sheet (Save to Files, AirDrop, Mail…). The page's own sign-in cookie does not reach the app.
+async function saveInNativeApp(url, name) {
+  set({ name, status: "loading", progress: null, url })
+  try {
+    const target = new URL(url, location.href)
+    const response = await fetch("/api/documents/download-link", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: `${target.pathname.replace(/^\/api/, "")}${target.search}` }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || !data.path) throw new Error(data.error || "The file could not be downloaded.")
+    window.ReactNativeWebView?.postMessage(JSON.stringify({ type: "download", url: new URL(`/api${data.path}`, location.origin).href, name }))
+    set(null)
+  } catch (error) {
+    set({ name, status: "error", progress: null, url, message: error.message })
+  }
+}
+
 // Downloads a file the way that works here. Returns false when the normal browser download should go ahead.
 export function saveFile(url, { name = "", size = 0 } = {}) {
+  if (typeof window !== "undefined" && window.SynergiFundNative && window.ReactNativeWebView) {
+    saveInNativeApp(url, name)
+    return true
+  }
   if (!inInstalledIosApp()) return false
   if (!canShareFiles() || size > MAX_IN_PAGE) {
     window.open(url, "_blank", "noopener")

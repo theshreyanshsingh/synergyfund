@@ -34,8 +34,13 @@ function rememberedInstall() {
   }
 }
 
+// Inside the SynergiFund phone app (React Native), which sets window.SynergiFundNative before the page loads.
+export function inNativeApp() {
+  return typeof window !== "undefined" && Boolean(window.SynergiFundNative)
+}
+
 function read() {
-  const standalone = standaloneMedia().matches || window.navigator.standalone === true
+  const standalone = standaloneMedia().matches || window.navigator.standalone === true || inNativeApp()
   if (standalone) {
     try {
       localStorage.setItem(INSTALLED_KEY, "1")

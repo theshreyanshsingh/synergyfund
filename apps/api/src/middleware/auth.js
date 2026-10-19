@@ -18,7 +18,43 @@ export function setSessionCookie(res, token) {
   })
 }
 
+// A download link for the phone app: it saves files outside the page, so it has no sign-in cookie. The link works for
+// one address, for the person who asked for it, for GET only and for five minutes.
+const DOWNLOAD_LINK_MINUTES = 5
+
+export function canonicalTarget(target) {
+  const [path, query = ""] = String(target || "").split("?")
+  const params = new URLSearchParams(query)
+  params.delete("dl")
+  const sorted = [...params.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  const search = new URLSearchParams(sorted).toString()
+  return search ? `${path}?${search}` : path
+}
+
+export function signDownloadLink(userId, target) {
+  return jwt.sign({ sub: String(userId), purpose: "download", target: canonicalTarget(target) }, process.env.JWT_SECRET, { expiresIn: `${DOWNLOAD_LINK_MINUTES}m` })
+}
+
+async function downloadLinkUser(req) {
+  const token = req.method === "GET" && typeof req.query?.dl === "string" ? req.query.dl : ""
+  if (!token) return null
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET)
+    if (payload.purpose !== "download" || payload.target !== canonicalTarget(req.originalUrl)) return null
+    return await User.findById(payload.sub)
+  } catch {
+    return null
+  }
+}
+
 export async function requireAuth(req, res, next) {
+  const linked = await downloadLinkUser(req)
+  if (linked) {
+    req.user = linked
+    req.permissions = permissionsFor(publicUser(linked))
+    next()
+    return
+  }
   try {
     const header = req.headers.authorization || ""
     const token = header.startsWith("Bearer ") ? header.slice(7) : req.cookies?.sf_session

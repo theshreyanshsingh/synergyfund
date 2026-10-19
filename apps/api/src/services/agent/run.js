@@ -7,7 +7,7 @@ const HISTORY_MESSAGES = 10
 const MAX_GATHER_STEPS = 12
 const MAX_TODO_NUDGES = 2
 const MAX_FOLLOW_UPS = 1
-const EVIDENCE_LIMIT = 80000
+const EVIDENCE_LIMIT = 120000
 // An ARV reads several listing pages, so a run may take a few minutes.
 const RUN_DEADLINE_MS = 6 * 60 * 1000
 const TITLE_UNTIL_PROMPTS = 3
@@ -108,6 +108,9 @@ Working out an ARV (after repair value):
 Searching company records:
 - When you are not sure where something lives or a name may be misspelled, start with search_records, then open the match with get_property or the specific list tool.
 - Use get_property for one house and list_* tools for many. If a tool says a name matches several properties, pick the closest candidate.
+- For properties by owning company or by price (for example "properties under 200 grand under Revive Jax"), call list_properties once with company and maxPrice (minPrice for "over"), and priceField when the person means ARV, rehab budget or rent rather than purchase price. Do not open the properties one by one. list_companies gives the companies' exact names.
+- Put the person's conditions into the list tool's filters in one call instead of reading everything and picking by hand: list_properties (company, price, purchase dates, missing figures), list_expenses (vendor, category, property, company, dates, amount), list_loans (lender, company, status, maturity dates), list_tasks (label, assignee, priority, due dates, overdue, done), list_draws (property, company, status). Turn "this year", "last month" or "next 90 days" into YYYY-MM-DD dates from today's date.
+- Use the totals and counts the tool returns rather than adding up rows yourself. If a result says rows were not shown for length, narrow it with filters instead of guessing the rest.
 ${webAllowed
     ? `Searching the web (Firecrawl):
 - Write specific queries with the city, state and ZIP code. Fix spelling in place names first.
@@ -131,6 +134,8 @@ Write the answer to the person's question using only the evidence below. Rules:
 - Use a short markdown table when comparing three or more properties, listings, loans or payments. Use bullets for short lists. Keep it tight.
 - Facts from web_search or read_webpage are public information, not company records. Say they are from the web and link each source inline as a markdown link.
 - When the person asks what to do, give a clear recommendation and the reason, based on the evidence.
+- When properties were filtered by price, say which figure was used (purchase price unless the person said otherwise) and name any properties left out because that figure is not on file.
+- For totals and counts, use the figures the lookup returned (postedTotal, openBalanceTotal, totals, overdue and so on), never a sum of the rows shown. Say the period or filter they cover. If a list says some rows were not shown for length, say the list is partial and how many there are in all.
 - Never show JSON, tool names or ids. You cannot change records; if asked to, say which page in SynergiFund does it.
 - When zip_documents made a download, give its link exactly as written in its instructions (a markdown link) on a line of its own, and list what is in it briefly. The page shows the link as a download button at the very end of the answer, so never say "above" or "below" about it. Never make up a link.
 - When the person asked for an email, message, letter or note, the draft is the answer: follow the writing rules below.

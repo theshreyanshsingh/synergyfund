@@ -6,6 +6,7 @@ import { allowedDocument, cleanDocumentLabels, documentType, folderName, folderO
 import { Company, DocumentFile, ImportJob, Loan, Property, Task, User } from "../models/index.js"
 import { lenderForName } from "../services/lenders.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
+import { signDownloadLink } from "../middleware/auth.js"
 import { propertyFilter } from "../services/access.js"
 import { readWorkbook } from "../services/drawImport.js"
 import { deleteStoredFile, materializeStoredFile, publicFileUrl, readStoredFile, receiveDocument, receiveFile, saveUploadedFile, sendStoredFile } from "../services/files.js"
@@ -448,6 +449,18 @@ documentsRouter.get(
       ...companies.map((company) => [`c${company._id}`, company.name]),
     ])
     await writeZip(res, files, placeNames, { flat: req.query.flat === "1" })
+  }),
+)
+
+// The phone app asks for a short-lived link to save a file outside the page (Save to Files, AirDrop, Mail). Any
+// download the person can open: a document, a zip, a chat file, an export.
+documentsRouter.post(
+  "/download-link",
+  asyncHandler(async (req, res) => {
+    const target = String(req.body?.path || "")
+    if (!target.startsWith("/") || target.startsWith("//") || target.length > 4000) return sendError(res, 400, "That is not a download in this app.")
+    const token = signDownloadLink(req.user._id, target)
+    res.json({ path: `${target}${target.includes("?") ? "&" : "?"}dl=${encodeURIComponent(token)}` })
   }),
 )
 
