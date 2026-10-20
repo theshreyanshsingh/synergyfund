@@ -1729,7 +1729,8 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
       property: names.get(String(loan.propertyId || "")) || "",
       date: nextDue,
       amount: loan.payment,
-      tone: nextDue && nextDue <= week ? "bad" : "warn",
+      // The next payment is today or later, so never "bad": Overview shows "bad" as Overdue and counts it as late.
+      tone: "warn",
       detail: nextDue ? (nextDue <= week ? "Due this week" : "Due within 30 days") : "Due within 30 days · payment date not recorded",
       href: "/loans",
     })

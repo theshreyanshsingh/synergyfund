@@ -6,15 +6,16 @@ import { SortableList, useSortableRow } from "./Sortable"
 
 const PHONE = "(max-width: 760px)"
 
-// `collapsible`: on phones each row shows only its name (and any `peek` columns). The first tap opens up its details
-// with an Open button, the second tap opens it, like a tap on a computer does straight away.
+// `collapsible`: on phones each row shows only its name (and any `peek` columns). A tap opens up its details with an
+// Open button; only that button opens it, and a tap anywhere else on the row folds it again. On a computer a click
+// opens it straight away.
 export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loading, selectable = true, compact = false, onMove, collapsible = false, openLabel = "Open" }) {
   const [expanded, setExpanded] = useState("")
   // Only a row that opens something can fold; otherwise its details would be out of reach.
   const folding = collapsible && Boolean(onRow)
   function tap(row) {
-    if (folding && expanded !== row.id && window.matchMedia(PHONE).matches) {
-      setExpanded(row.id)
+    if (folding && window.matchMedia(PHONE).matches) {
+      setExpanded((current) => (current === row.id ? "" : row.id))
       return
     }
     onRow?.(row)

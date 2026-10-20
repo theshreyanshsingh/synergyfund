@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { api } from "../../lib/api"
 import { landingFor, useSession } from "../../components/shell/Providers"
@@ -47,6 +48,7 @@ export default function LoginPage() {
           </label>
           <button className="primary" type="submit" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</button>
         </div>
+        <div className="auth-links"><Link href="/privacy">Privacy Policy</Link></div>
       </form>
     </main>
   )

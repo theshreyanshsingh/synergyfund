@@ -322,6 +322,35 @@ drawsRouter.post(
   }),
 )
 
+// The total rehab budget from the Draws page (Budget). It is kept on the property; a copy on the draw budget record
+// (from a draw sheet import) follows it, so clearing the total clears both and nothing old shows through.
+drawsRouter.put(
+  "/budget-total/:propertyId",
+  requirePermission("draws.write"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const property = /^[a-f0-9]{24}$/.test(String(req.params.propertyId)) ? await Property.findOne({ ...propertyFilter(req.user), _id: req.params.propertyId }) : null
+    if (!property) {
+      sendError(res, 404, "That property was not found.")
+      return
+    }
+    const raw = req.body.budget
+    const budget = raw === "" || raw == null ? null : Number(String(raw).replace(/[$,\s]/g, ""))
+    if (budget != null && (!Number.isFinite(budget) || budget < 0)) {
+      sendError(res, 400, "Enter the total budget as an amount, or leave it empty to remove it.")
+      return
+    }
+    const before = property.rehabBudget ?? null
+    property.rehabBudget = budget
+    await property.save()
+    await DrawBudget.updateMany({ propertyId: property._id, budget: { $ne: null } }, budget == null ? { $unset: { budget: 1 } } : { $set: { budget } })
+    await refreshRehabRemaining(property._id)
+    const money = (value) => (value == null ? "none" : `$${Number(value).toLocaleString("en-US")}`)
+    await recordActivity({ user: req.user, title: budget == null ? "Rehab budget removed" : "Rehab budget updated", detail: `${property.address}: ${money(before)} → ${money(budget)}`, propertyId: property._id })
+    res.json({ ok: true, budget })
+  }),
+)
+
 drawsRouter.put(
   "/scope/:propertyId",
   requirePermission("draws.write"),

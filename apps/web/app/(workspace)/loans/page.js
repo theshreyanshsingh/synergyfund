@@ -91,7 +91,7 @@ export default function LoansPage() {
           rows={items}
           important={(row) => row.termsStatus === "Needs verification"}
           onRow={(row) => router.push(row.lenderId ? `/loans/lenders/${row.lenderId}` : `/properties/${row.propertyId}`)}
-          // Phones: one line per loan (lender and balance); a tap shows the rest, a second tap opens it.
+          // Phones: one line per loan (lender and balance); a tap shows or folds the rest, and Open opens it.
           collapsible
           openLabel={(row) => (row.lenderId ? "Open lender" : "Open property")}
           empty="No loans yet. Add a lender, then attach a property."

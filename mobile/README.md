@@ -7,7 +7,7 @@ and WhatsApp-style calls come next.
 
 ## Try it on your phone today (no Xcode needed)
 
-1. Install **Expo Go** from the App Store (or Google Play).
+1. Install **Expo Go** from the App Store or Google Play.
 2. On this Mac: `npm run dev:mobile` (from the repo root), or `cd mobile && npx expo start`.
 3. Scan the QR code with the iPhone camera. The phone and the Mac need to be on the same Wi-Fi
    (or run `npx expo start --tunnel`).
@@ -24,7 +24,17 @@ the Wi-Fi: `EXPO_PUBLIC_APP_URL=http://192.168.1.18:3000 npx expo start` (with `
   (`POST /api/documents/download-link`, five minutes, one address, GET only) and hands it to the app, which
   downloads it and opens the share sheet. The website knows it is inside the app from `window.SynergiFundNative`.
 - `src/config.js`: which website the app shows.
-- `app.json`: name, icons, bundle id `com.synergifund.app`, and the camera, microphone and photo permissions.
+- `app.json`: name, icons, app id `com.synergifund.app` (iPhone and Android), and the camera, microphone and photo
+  permissions. On Android the permissions the app does not need are removed (`blockedPermissions`), and the
+  keyboard makes room for the field being typed in (Android apps draw edge to edge, so it would cover it otherwise).
+- `eas.json`: cloud builds. `preview` makes an Android `.apk` to install directly; `production` makes the Play Store
+  `.aab` (the version code goes up by itself).
+- `store/android/`: the Play Store icon, feature graphic and phone screenshots (invented demo data).
+
+## Google Play
+
+See `PLAY_STORE.md`: what is set up, the steps (accounts, test build, store build, upload), the store listing text
+and suggested answers for the Play Console forms.
 
 ## Next steps
 
@@ -32,6 +42,7 @@ the Wi-Fi: `EXPO_PUBLIC_APP_URL=http://192.168.1.18:3000 npx expo start` (with `
 - **Calls like WhatsApp**: `react-native-webrtc` for the call audio and video, CallKit (`react-native-callkeep`) for the
   incoming-call screen and VoIP push to ring a locked phone. Needs a real iPhone (the simulator cannot ring) and the
   Apple Developer account.
-- **Builds**: `npx eas-cli@latest build` makes iPhone builds in the cloud (no Xcode on the Mac); TestFlight for the team.
+- **Builds**: `npx eas-cli@latest build` makes iPhone and Android builds in the cloud (no Xcode or Android Studio on
+  the Mac); TestFlight and Google Play internal testing for the team.
 
 Follow `AGENTS.md`: Expo changes every SDK release, so check the docs for this SDK (58) before using an Expo API.

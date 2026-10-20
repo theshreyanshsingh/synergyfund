@@ -449,6 +449,8 @@ propertiesRouter.get(
       })),
       draws: canDraws ? {
         received,
+        // A total kept on the draw budget record (from a draw sheet import) when the property has none of its own.
+        recordBudget: Number(budgets.find((item) => Number(item.budget) > 0)?.budget) || null,
         undrawn: schedule ? Math.max(0, schedule - received) : null,
         items: draws.map(presentDraw),
       } : null,

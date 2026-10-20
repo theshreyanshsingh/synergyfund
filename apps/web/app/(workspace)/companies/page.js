@@ -160,7 +160,7 @@ function CompaniesScreen() {
         filters={[{ key: "exposure", label: "Exposure", options: EXPOSURE_LEVELS.map((level) => level.label), value: (row) => companyExposure(row.properties)?.label || "" }]}
         rows={items}
         onRow={(row) => router.push(`/companies/${row.id}`)}
-        // Phones: one line per company; a tap shows its details, a second tap (or Open) opens it.
+        // Phones: one line per company; a tap shows or folds its details, and Open company opens it.
         collapsible
         openLabel="Open company"
         empty={list.error || "No companies yet. Add one, then assign the properties it owns."}

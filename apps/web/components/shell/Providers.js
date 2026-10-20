@@ -7,6 +7,7 @@ import { api, SIGNED_OUT } from "../../lib/api"
 import { disablePush } from "../../lib/pwa"
 
 const SessionContext = createContext(null)
+const PUBLIC_PAGES = ["/privacy"]
 
 export function useSession() {
   return useContext(SessionContext)
@@ -64,6 +65,8 @@ export function Providers({ children }) {
   useEffect(() => {
     if (!ready) return
     if (user) leaving.current = false
+    // Pages anyone can read, signed in or not (the app stores link to the privacy policy).
+    if (PUBLIC_PAGES.includes(pathname)) return
     const open = pathname === "/login" || pathname === "/register"
     if (!user && !open) {
       // Keep the page that was asked for, to come back to it once signed in (not after logging out).

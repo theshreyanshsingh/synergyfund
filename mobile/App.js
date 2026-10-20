@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, BackHandler, Linking, Platform, Pressable, StyleSheet, Text, View, useColorScheme } from "react-native"
+import { ActivityIndicator, BackHandler, KeyboardAvoidingView, Linking, Platform, Pressable, StyleSheet, Text, View, useColorScheme } from "react-native"
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context"
 import { StatusBar } from "expo-status-bar"
 import * as SplashScreen from "expo-splash-screen"
@@ -109,50 +109,55 @@ function Shell() {
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: theme.background }]} edges={["top", "left", "right", "bottom"]}>
       <StatusBar style={theme.dark ? "light" : "dark"} />
-      {failed ? (
-        <Offline message={failed} dark={theme.dark} onRetry={() => { setFailed(""); setAttempt((value) => value + 1) }} />
-      ) : (
-        <WebView
-          key={attempt}
-          ref={web}
-          source={{ uri: APP_URL }}
-          style={{ backgroundColor: theme.background }}
-          originWhitelist={["*"]}
-          injectedJavaScriptBeforeContentLoaded={BEFORE_LOAD}
-          injectedJavaScript={AFTER_LOAD}
-          onMessage={onMessage}
-          onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
-          onOpenWindow={onOpenWindow}
-          onNavigationStateChange={(state) => { canGoBack.current = state.canGoBack }}
-          onFileDownload={(event) => {
-            const url = event.nativeEvent.downloadUrl || ""
-            if (url.toLowerCase().startsWith(`${APP_ORIGIN}/api/`)) web.current?.injectJavaScript(linkRequest(url))
-          }}
-          onLoadEnd={() => SplashScreen.hide()}
-          onError={(event) => {
-            SplashScreen.hide()
-            setFailed(event.nativeEvent.description || "SynergiFund could not be reached.")
-          }}
-          // iOS can close a page that sits in the background for a long time; open it again when that happens.
-          onContentProcessDidTerminate={() => web.current?.reload()}
-          onRenderProcessGone={() => web.current?.reload()}
-          sharedCookiesEnabled
-          thirdPartyCookiesEnabled
-          domStorageEnabled
-          javaScriptEnabled
-          allowsBackForwardNavigationGestures
-          pullToRefreshEnabled
-          allowsInlineMediaPlayback
-          mediaPlaybackRequiresUserAction={false}
-          mediaCapturePermissionGrantType="grantIfSameHostElsePrompt"
-          allowsLinkPreview={false}
-          applicationNameForUserAgent={`SynergiFundApp/${VERSION}`}
-          decelerationRate="normal"
-          webviewDebuggingEnabled={__DEV__}
-          startInLoadingState
-          renderLoading={() => <Loading background={theme.background} dark={theme.dark} />}
-        />
-      )}
+      {/* Android draws edge to edge, so the keyboard covers the page instead of shrinking it: make room for it, or the
+          chat box and other fields at the bottom would sit under the keyboard. The iPhone's web view does this itself. */}
+      <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === "android" ? "padding" : undefined} enabled={Platform.OS === "android"}>
+        {failed ? (
+          <Offline message={failed} dark={theme.dark} onRetry={() => { setFailed(""); setAttempt((value) => value + 1) }} />
+        ) : (
+          <WebView
+            key={attempt}
+            ref={web}
+            source={{ uri: APP_URL }}
+            style={{ backgroundColor: theme.background }}
+            originWhitelist={["*"]}
+            injectedJavaScriptBeforeContentLoaded={BEFORE_LOAD}
+            injectedJavaScript={AFTER_LOAD}
+            onMessage={onMessage}
+            onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
+            onOpenWindow={onOpenWindow}
+            onNavigationStateChange={(state) => { canGoBack.current = state.canGoBack }}
+            onFileDownload={(event) => {
+              const url = event.nativeEvent.downloadUrl || ""
+              if (url.toLowerCase().startsWith(`${APP_ORIGIN}/api/`)) web.current?.injectJavaScript(linkRequest(url))
+            }}
+            onLoadEnd={() => SplashScreen.hide()}
+            onError={(event) => {
+              SplashScreen.hide()
+              setFailed(event.nativeEvent.description || "SynergiFund could not be reached.")
+            }}
+            // iOS can close a page that sits in the background for a long time; open it again when that happens.
+            onContentProcessDidTerminate={() => web.current?.reload()}
+            onRenderProcessGone={() => web.current?.reload()}
+            sharedCookiesEnabled
+            thirdPartyCookiesEnabled
+            domStorageEnabled
+            javaScriptEnabled
+            allowsBackForwardNavigationGestures
+            pullToRefreshEnabled
+            allowsInlineMediaPlayback
+            mediaPlaybackRequiresUserAction={false}
+            mediaCapturePermissionGrantType="grantIfSameHostElsePrompt"
+            allowsLinkPreview={false}
+            applicationNameForUserAgent={`SynergiFundApp/${VERSION}`}
+            decelerationRate="normal"
+            webviewDebuggingEnabled={__DEV__}
+            startInLoadingState
+            renderLoading={() => <Loading background={theme.background} dark={theme.dark} />}
+            allowsFullscreenVideo
+          />
+        )}
+      </KeyboardAvoidingView>
       {download && <DownloadBar download={download} dark={theme.dark} onClose={() => setDownload(null)} />}
     </SafeAreaView>
   )

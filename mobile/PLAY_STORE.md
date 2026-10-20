@@ -1,0 +1,123 @@
+# Publishing SynergiFund on Google Play
+
+Everything in this repository is ready for an Android build. What is left needs your accounts: a Google Play developer
+account, an Expo account, and filling in the Play Console forms below.
+
+## What is already set up
+
+- **App**: `com.synergifund.app`, targets Android 16 (API 36), which Google Play requires for new apps since
+  August 31, 2026. The Android version code goes up by itself with each store build.
+- **Permissions**: only camera, microphone (site photos, receipts, calls) and the standard internet ones. The
+  template's "display over other apps" and shared-storage permissions are removed, so there is no special
+  permission form to fill in. Backups of app data to Google Drive are off (the sign-in stays on the phone).
+- **Android behaviour**: the back button goes back a page; the keyboard no longer covers the chat box and other
+  fields at the bottom; dark mode follows the phone; videos can go full screen; downloads open the share sheet.
+- **Icons**: adaptive icon plus a one-colour version for Android 13+ themed icons.
+- **Builds** (`eas.json`):
+  - `preview`: an `.apk` to install straight on any Android phone, for testing.
+  - `production`: an `.aab` for the Play Store, submitted to the internal testing track as a draft.
+- **Privacy policy**: https://admin.synergifund.com/privacy (public, also linked from the sign-in page and Settings,
+  which Google requires). It goes live with the next website deploy. Set `PRIVACY_CONTACT_EMAIL` on the web server
+  to show a contact address on it.
+- **Store images** in `store/android/`: the 512 × 512 icon, the 1024 × 500 feature graphic and six 1080 × 1920
+  phone screenshots, made with invented demo data (no real properties or people).
+
+## Steps
+
+1. **Google Play developer account** at https://play.google.com/console ($25 once). Choose an **organization**
+   account (needs the company's D-U-N-S number). New *personal* accounts must first run a closed test with at least
+   12 testers for 14 days before they can publish to production; organization accounts skip that.
+2. **Expo account** (free) at https://expo.dev, then from this folder:
+   ```bash
+   cd mobile
+   npx eas-cli@latest login
+   npx eas-cli@latest init
+   ```
+   `init` links the project and adds its id to `app.json`; commit that change.
+3. **Try it on an Android phone**:
+   ```bash
+   npx eas-cli@latest build --platform android --profile preview
+   ```
+   EAS gives a link and QR code to install the `.apk`. Check sign-in, a site photo, a call, a download, the chat
+   box with the keyboard open, and the back button.
+4. **Store build**:
+   ```bash
+   npx eas-cli@latest build --platform android --profile production
+   ```
+   EAS creates and keeps the app's signing key (Google Play then manages the final signing). Never delete it.
+5. **Create the app in Play Console**: Create app → name `SynergiFund`, default language English (US), App, Free.
+   Fill in the forms below and the store listing.
+6. **Upload**: the first time, the easiest is to download the `.aab` from the EAS build page and upload it in
+   Play Console → Testing → Internal testing → Create new release. After that, `eas submit` can do it:
+   ```bash
+   npx eas-cli@latest submit --platform android --profile production
+   ```
+   (`eas submit` needs a Google service account key, set up once with `npx eas-cli@latest credentials`.)
+7. **Internal testing**: add the team's Google account emails as testers (up to 100). They get a Play Store link
+   and the app updates through Play like any other.
+8. **Production** (only if the app should be listed publicly): promote the release and send it for review.
+   Private team apps can stay on internal testing for good.
+
+## Store listing
+
+- **App name**: SynergiFund
+- **Short description** (74 of 80 characters):
+  Run your real estate portfolio: properties, draws, payments and team chat.
+- **Full description**:
+
+  SynergiFund is the private workspace for real estate investment teams. Everything about each house, from the
+  purchase to the last draw, is in one place your partners, staff and contractors can open from their phone.
+
+  • Properties: purchase price, ARV, rehab budget, loans and next steps for every house.
+  • Rehab draws: budgets by line item, what was drawn, what is pending and what is left to withdraw.
+  • Payments: mortgage payments, insurance, taxes and other bills, with what is due this week.
+  • Expenses: contractors send costs with receipt photos; the team approves them.
+  • Documents: contracts, closing statements and photos filed by property and company, with downloads to your phone.
+  • Team chat and calls: a room for every property, channels, direct messages, and voice and video calls.
+  • Tasks and calendar: who does what, and when.
+  • The SynergiFund Agent: ask about your portfolio in plain words, work out an ARV from sold comps, or draft an email.
+
+  Accounts are created by your workspace administrator.
+
+- **App category**: Business
+- **Contact email**: the address people may write to about the app (shown publicly on the listing).
+- **Website**: https://admin.synergifund.com
+- **Privacy policy**: https://admin.synergifund.com/privacy
+- **Graphics**: `store/android/icon-512.png`, `store/android/feature-graphic.png`,
+  `store/android/screenshots/*.png` (phone screenshots).
+
+## App content forms (Play Console → Policy → App content)
+
+These are suggested answers based on what the app does; check them before you submit.
+
+- **Privacy policy**: https://admin.synergifund.com/privacy
+- **App access**: "All or some functionality is restricted". Give Google a reviewer sign-in. Use a dedicated
+  account that cannot see real business data, for example a Contractor assigned only to a demo property, and write
+  in the instructions that it is a test account.
+- **Ads**: No ads.
+- **Content rating**: questionnaire category "Utility, Productivity, Communication or Other". Answer yes to "users
+  can interact or exchange content" (chat and calls) and no to the rest. It usually comes out as Everyone / 3+ with
+  "Users interact".
+- **Target audience**: 18 and over only.
+- **Government apps**: No. **Financial features**: none (the app tracks your own records; it does not offer
+  banking, loans or payments to the public). **Health**: No. **News**: No.
+- **Data safety**:
+  - Collects data: Yes. Shares data: No (the service providers in the privacy policy work on our behalf, which Google
+    does not count as sharing). Encrypted in transit: Yes. Way to request deletion: Yes (through the workspace
+    administrator, as the privacy policy says).
+  - Data types, all "collected", for **App functionality** (name and email also for **Account management**), none
+    for advertising or analytics:
+    - Personal info: Name, Email address, User IDs (required)
+    - Financial info: Other financial info (purchase prices, loans, expenses; optional)
+    - Photos and videos: Photos, Videos (optional)
+    - Audio: Voice or sound recordings (only for AI call notes, processed ephemerally; optional)
+    - Files and docs (optional)
+    - Messages: Other in-app messages (chat; optional)
+    - App activity: Other user-generated content, App interactions (the team activity log)
+  - Not collected: location, contacts, calendar from the phone, health, web browsing, device IDs.
+
+## Later
+
+- **Notifications on Android** (`expo-notifications` with Firebase) and **calls that ring a locked phone** need a
+  development build and a Firebase project; the steps are in `README.md`.
+- Each year Google raises the required Android version. Upgrading the Expo SDK once a year keeps the app current.

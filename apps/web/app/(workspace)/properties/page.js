@@ -143,7 +143,7 @@ function PropertiesScreen() {
         reorder={writable && !contractor ? { onMove: moveProperties } : undefined}
         important={contractor ? undefined : (row) => row.health === "Needs attention" || !row.purchasePrice}
         onRow={(row) => router.push(`/properties/${row.id}`)}
-        // Phones: one line per property; a tap shows its details, a second tap (or Open) opens it.
+        // Phones: one line per property; a tap shows or folds its details, and Open property opens it.
         collapsible={!contractor}
         openLabel="Open property"
         empty={list.error || "No properties yet."}

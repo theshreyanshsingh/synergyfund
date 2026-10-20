@@ -48,9 +48,9 @@ export default function PropertyDetailPage({ params }) {
     if (editOpened.current || !property || search.get("edit") !== "1") return
     if (session?.user && can(session.user, "properties.write")) {
       editOpened.current = true
-      setEditing(propertyForm(property))
+      setEditing(propertyForm(property, detail.data?.draws?.recordBudget))
     }
-  }, [property, search, session])
+  }, [property, search, session, detail.data])
   if (!property) return detail.error ? <div className="boot"><p className="banner">{detail.error}</p></div> : <PageSpinner />
 
   const internal = session?.user?.role !== "contractor"
@@ -60,14 +60,16 @@ export default function PropertyDetailPage({ params }) {
   const canDraws = session?.user && can(session.user, "draws.write")
   const spent = detail.data.rehabSpent || 0
   const postedCosts = (detail.data.expenses || []).filter((item) => item.costTreatment !== "Exclude from construction margin")
-  const left = property.rehabBudget == null ? null : Math.max(0, Number(property.rehabBudget) - spent)
   const draws = detail.data.draws
+  // The budget the Draws page uses: the property's own, or the one on its draw budget record.
+  const budget = property.rehabBudget ?? draws?.recordBudget ?? null
+  const left = budget == null ? null : Math.max(0, Number(budget) - spent)
   const drawProject = property ? {
     id,
     address: property.address,
     scopeLines: (property.scopeLines || []).map((line) => ({ id: String(line._id || line.id || ""), title: line.title, description: line.description || "", budget: line.budget ?? null })),
     draws: draws?.items || [],
-    figures: { budget: property.rehabBudget ?? null },
+    figures: { budget },
   } : null
   const loans = detail.data.loans || []
   const company = detail.data.company || null
@@ -172,7 +174,7 @@ export default function PropertyDetailPage({ params }) {
       actions={[
         canWrite && <button key="delete" type="button" className="danger" onClick={() => removeProperty(id, property.address, router)}>Delete</button>,
         <button key="report" type="button" className="import-button" onClick={() => setReporting(true)}>Make report</button>,
-        canWrite && <button key="modify" type="button" className="primary" onClick={() => { setEditError(""); setEditing(propertyForm(property)) }}>Modify</button>,
+        canWrite && <button key="modify" type="button" className="primary" onClick={() => { setEditError(""); setEditing(propertyForm(property, draws?.recordBudget)) }}>Modify</button>,
       ].filter(Boolean)}
     >
       <div className="property-switch" role="tablist" aria-label="Property sections">
@@ -186,8 +188,8 @@ export default function PropertyDetailPage({ params }) {
           <section className="property-figures">
             <Figure label="Purchase" value={money(property.purchasePrice)} />
             <Figure label="ARV" value={money(property.arv)} />
-            <Figure label="Rehab budget" value={money(property.rehabBudget)} />
-            <Figure label="Rehab left" value={left == null ? "Not entered" : money(left)} hint={property.rehabBudget == null ? "" : `${money(spent)} posted`} />
+            <Figure label="Rehab budget" value={money(budget)} hint={property.rehabBudget == null && budget != null ? "From the draw budget" : ""} />
+            <Figure label="Rehab left" value={left == null ? "Not entered" : money(left)} hint={budget == null ? "" : `${money(spent)} posted`} />
           </section>
 
           {internal && (
@@ -371,6 +373,8 @@ export default function PropertyDetailPage({ params }) {
             labels: editing.labels,
           }
           if ("houseBoughtPrice" in property) body.houseBoughtPrice = blankNumber(editing.houseBoughtPrice)
+          // Emptying a budget that was shown removes it everywhere, including a copy on the draw budget record.
+          if (body.rehabBudget == null && editing.rehabBudgetShown !== "") body.clearDrawBudget = true
           try {
             await api(`/properties/${id}`, { method: "PATCH", body })
             setEditing(null)
@@ -567,7 +571,7 @@ function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, proje
   )
 }
 
-function propertyForm(property) {
+function propertyForm(property, recordBudget = null) {
   return {
     address: property.address || "",
     city: property.city || "",
@@ -578,7 +582,8 @@ function propertyForm(property) {
     sqft: property.sqft ?? "",
     beds: property.beds ?? "",
     baths: property.baths ?? "",
-    rehabBudget: property.rehabBudget ?? "",
+    rehabBudget: property.rehabBudget ?? recordBudget ?? "",
+    rehabBudgetShown: property.rehabBudget ?? recordBudget ?? "",
     actualRent: property.actualRent ?? "",
     marketRent: property.marketRent ?? "",
     rentStatus: property.rentStatus || "",

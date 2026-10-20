@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { can, drawFigures, drawHealth, drawPulled, isPendingDraw, resolveBudget } from "@synergifund/shared"
-import { DrawEditor, ScopeEditor } from "../../../components/draws/DrawEditor"
+import { BudgetEditor, DrawEditor, ScopeEditor } from "../../../components/draws/DrawEditor"
 import { DrawImport } from "../../../components/draws/DrawImport"
 import { FormSheet, InfoSheet } from "../../../components/ui/FormSheet"
 import { HeaderActions } from "../../../components/ui/HeaderActions"
@@ -158,8 +158,8 @@ export default function DrawsPage() {
   async function saveSheetValue({ project, column, draw, value, confirmed = false }) {
     const text = String(value ?? "").trim()
     if (!text) {
-      // The sheet shows the budget from the property or its draw budget record: clearing it clears both.
-      if (column === "budget") await api(`/properties/${project.id}`, { method: "PATCH", body: { rehabBudget: null, clearDrawBudget: true } })
+      // The budget can sit on the property or its draw budget record: clearing it clears both.
+      if (column === "budget") await api(`/draws/budget-total/${project.id}`, { method: "PUT", body: { budget: "" } })
       else if (column === "funding" && project.budgetId) await api(`/draws/budgets/${project.budgetId}`, { method: "PATCH", body: { fundingLimit: null } })
       else if (draw) {
         if (!confirmed && !window.confirm(`Delete ${draw.title} from ${project.address}?`)) return
@@ -171,7 +171,7 @@ export default function DrawsPage() {
     const amount = Number(text.replace(/[$,\s]/g, ""))
     if (!Number.isFinite(amount) || amount < 0) throw new Error("Enter a valid amount.")
     if (column === "budget") {
-      await api(`/properties/${project.id}`, { method: "PATCH", body: { rehabBudget: amount } })
+      await api(`/draws/budget-total/${project.id}`, { method: "PUT", body: { budget: amount } })
     } else if (column === "funding") {
       if (project.budgetId) {
         await api(`/draws/budgets/${project.budgetId}`, { method: "PATCH", body: { fundingLimit: amount } })
@@ -479,6 +479,9 @@ function DrawPropertyBody({ project, writable, canDelete, onSave, onRemove, onFo
             </button>
           )}
           {writable && (
+            <button type="button" className="draw-step-add" onClick={() => setEditor({ kind: "budget" })}>Budget</button>
+          )}
+          {writable && (
             <button type="button" className="draw-step-add" onClick={editScope}>Line items</button>
           )}
           {writable && project.draws.length > 0 && (
@@ -511,6 +514,7 @@ function DrawPropertyBody({ project, writable, canDelete, onSave, onRemove, onFo
       <LineCards sheet={sheet} onDraw={openDraw} onScope={editScope} />
       {editor?.kind === "draw" && <DrawEditor project={project} draw={editor.draw} onClose={() => setEditor(null)} onSaved={saved} />}
       {editor?.kind === "scope" && <ScopeEditor project={project} onClose={() => setEditor(null)} onSaved={saved} />}
+      {editor?.kind === "budget" && <BudgetEditor project={project} onSave={onSave} onClose={() => setEditor(null)} onSaved={saved} />}
     </div>
   )
 }
@@ -986,6 +990,9 @@ function buildProjects(payload) {
       figures,
       health: drawHealth(figures),
       budgetId: budget?.id || "",
+      // Where the total budget lives, for the Budget editor: on the property, on its draw budget record, or neither.
+      recordBudget: budget?.budget ?? null,
+      fundingLimit: firstNumber(budget?.fundingLimit) ?? null,
       totalBudget: figures.budget,
       lenderFunding: figures.lenderFunding,
       received: figures.received,

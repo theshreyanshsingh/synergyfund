@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useEffect, useState } from "react"
 import { ROLES, initials } from "@synergifund/shared"
 import { StatusPill } from "../../../components/ui/StatusPill"
@@ -97,6 +98,7 @@ export default function SettingsPage() {
               <label className="field"><span>Confirm</span><PasswordInput autoComplete="new-password" value={form.confirmPassword} onChange={(event) => setForm({ ...form, confirmPassword: event.target.value })} minLength={8} required /></label>
               <div className="settings-actions"><button className="primary" type="submit" disabled={pending}>{pending ? "Saving…" : "Update password"}</button></div>
             </form>
+            <p className="settings-note">How SynergiFund handles your information: <Link href="/privacy">Privacy Policy</Link></p>
           </section>
         )}
         {tab === "app" && <AppOptions />}

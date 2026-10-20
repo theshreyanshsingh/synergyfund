@@ -254,3 +254,74 @@ export function ScopeEditor({ project, onClose, onSaved }) {
     </FormSheet>
   )
 }
+
+// The property's total rehab budget and lender funding. The total can live on the property or on its draw budget
+// record (from a draw sheet import), or be worked out from the line items; this sets or clears it wherever it is.
+export function BudgetEditor({ project, onSave, onClose, onSaved }) {
+  const set = positive(project.rehabBudget) ?? positive(project.recordBudget)
+  const lineTotal = (project.scopeLines || []).reduce((sum, line) => sum + (Number(line.budget) || 0), 0)
+  const [total, setTotal] = useState(set == null ? "" : String(set))
+  const [funding, setFunding] = useState(project.fundingLimit == null ? "" : String(project.fundingLimit))
+  const [clearLines, setClearLines] = useState(false)
+  const [error, setError] = useState("")
+  const [pending, setPending] = useState(false)
+  const typed = parseMoney(total)
+  // With no total, the line items' budgets become the budget.
+  const fromLines = typed == null && lineTotal > 0 && !clearLines
+
+  async function submit(event) {
+    event.preventDefault()
+    setError("")
+    if (Number.isNaN(typed) || (typed != null && typed < 0)) return setError("Enter the total budget as an amount, like 30000, or leave it empty.")
+    const lender = parseMoney(funding)
+    if (Number.isNaN(lender) || (lender != null && lender < 0)) return setError("Enter the lender funding as an amount, or leave it empty.")
+    setPending(true)
+    try {
+      if (typed !== set) await onSave({ project, column: "budget", value: typed == null ? "" : String(typed) })
+      if (lender !== (project.fundingLimit ?? null)) await onSave({ project, column: "funding", value: lender == null ? "" : String(lender) })
+      if (clearLines && lineTotal > 0) await saveScope(project, project.scopeLines.map((line) => ({ id: line.id, title: line.title, description: line.description || "", budget: "" })))
+      onSaved()
+    } catch (err) {
+      setError(err.message)
+      setPending(false)
+    }
+  }
+
+  return (
+    <FormSheet
+      eyebrow={project.address}
+      title="Budget"
+      hint="Leave the total empty to remove it."
+      onClose={onClose}
+      onSubmit={submit}
+      submitLabel="Save budget"
+      pending={pending}
+      error={error}
+    >
+      <div className="form-grid">
+        <label className="field"><span>Total rehab budget</span><input value={total} inputMode="decimal" placeholder="Not set" onChange={(event) => setTotal(event.target.value)} /></label>
+        <label className="field"><span>Lender funding</span><input value={funding} inputMode="decimal" placeholder="Same as the budget" onChange={(event) => setFunding(event.target.value)} /></label>
+        {lineTotal > 0 && (
+          <label className="field-check wide">
+            <input type="checkbox" checked={clearLines} onChange={(event) => setClearLines(event.target.checked)} />
+            <span className="keep-case">Also clear the line item budgets ({money(lineTotal)}). The line items and their progress stay.</span>
+          </label>
+        )}
+        <p className="chat-form-hint wide">
+          {typed != null
+            ? `The budget will be ${money(typed)}.`
+            : fromLines
+              ? `With no total, the budget is the line items' ${money(lineTotal)}.`
+              : project.draws.length
+                ? "With no total, the budget is worked out from what was drawn."
+                : "This property will have no rehab budget."}
+        </p>
+      </div>
+    </FormSheet>
+  )
+}
+
+function positive(value) {
+  const number = Number(value)
+  return value == null || value === "" || !Number.isFinite(number) || number <= 0 ? null : number
+}
