@@ -343,6 +343,7 @@ async function pushRing(state, userIds, invitedBy, startedAt) {
     kind: "call",
     callId: state.id,
     media: state.media,
+    caller: added ? invitedBy : state.startedByName,
     tag: `call-${state.id}`,
     title: added ? `${invitedBy} is adding you to a ${kind} call` : `${state.startedByName} is calling you`,
     body: `${kind === "video" ? "Video" : "Voice"} call${added ? ` with ${state.startedByName}` : ""}${place ? ` · ${place}` : ""}`,

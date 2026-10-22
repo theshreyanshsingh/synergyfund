@@ -1145,7 +1145,7 @@ export const TOOLS = [
       },
     },
     run: async (args, context) => {
-      const filter = { kind: { $nin: ["chat", "comp"] } }
+      const filter = { kind: { $nin: ["chat", "comp", "agent"] } }
       const properties = await scopedProperties(context)
       const contractor = context.user.role === "contractor"
       const and = []
@@ -1230,7 +1230,7 @@ export const TOOLS = [
       const wanted = [...new Set((Array.isArray(args.ids) ? args.ids : []).map(String).filter((id) => /^[a-f0-9]{24}$/i.test(id)))]
       if (!wanted.length) return { success: false, error: "Pass the ids of the documents to zip, from find_documents." }
       if (wanted.length > 150) return { success: false, error: "A zip can hold up to 150 files. Narrow the search or make more than one zip." }
-      const filter = { _id: { $in: wanted }, kind: { $nin: ["chat", "comp"] } }
+      const filter = { _id: { $in: wanted }, kind: { $nin: ["chat", "comp", "agent"] } }
       if (context.user.role === "contractor") {
         const properties = await scopedProperties(context)
         filter.propertyId = { $in: properties.map((property) => property._id) }
@@ -1521,7 +1521,7 @@ export const TOOLS = [
         add("task", tasks, (task) => [task.title, ...(task.labels || []), names.get(String(task.propertyId || ""))].filter(Boolean).join(" "), (task) => ({ label: task.title, detail: [task.due, names.get(String(task.propertyId || ""))].filter(Boolean).join(" · ") }))
       }
       if (allowed(PERMISSIONS.documentsRead)) {
-        const files = await DocumentFile.find(staff ? { kind: { $ne: "chat" } } : { propertyId: { $in: ids }, kind: { $ne: "chat" } }).select("name propertyId kind").sort({ createdAt: -1 }).limit(20000)
+        const files = await DocumentFile.find(staff ? { kind: { $nin: ["chat", "agent"] } } : { propertyId: { $in: ids }, kind: { $nin: ["chat", "agent"] } }).select("name propertyId kind").sort({ createdAt: -1 }).limit(20000)
         add("document", files, (file) => file.name, (file) => ({ label: file.name, detail: names.get(String(file.propertyId || "")) || file.kind }))
       }
       if (staff && allowed(PERMISSIONS.expensesRead)) {

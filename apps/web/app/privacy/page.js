@@ -5,7 +5,7 @@ export const metadata = {
   description: "How SynergiFund and its phone app handle your information.",
 }
 
-const UPDATED = "October 20, 2026"
+const UPDATED = "October 22, 2026"
 
 // Public: the Play Store and App Store listings link here, and it opens without signing in.
 export default function PrivacyPage() {
@@ -52,7 +52,8 @@ export default function PrivacyPage() {
         <ul>
           <li>To run the workspace: show records to the people allowed to see them, keep budgets and payments up to date, and connect calls.</li>
           <li>To send the notifications and emails you or your team set off, such as an assigned task, an expense decision or an invitation.</li>
-          <li>To answer questions you ask the SynergiFund Agent, and for the AI teammate in property chats to keep renovation progress up to date.</li>
+          <li>To answer questions you ask the SynergiFund Agent, for the AI teammate in property chats to keep renovation progress up to date, and to read the receipts you photograph so you don't have to type the items in.</li>
+          <li>To keep a daily backup of the workspace, so it can be restored after a mistake or an outage.</li>
           <li>To keep accounts secure, for example signing out old sessions when a password is changed.</li>
         </ul>
 
@@ -60,7 +61,7 @@ export default function PrivacyPage() {
         <p>We do not sell personal information or share it for advertising. We use service providers who process it for us:</p>
         <ul>
           <li><b>Hosting and file storage</b> for the workspace and its files.</li>
-          <li><b>AI model providers</b> (through OpenRouter) when you ask the Agent a question, when the AI teammate reviews a property chat and its photos, and for AI call notes. Only what is needed for that request is sent.</li>
+          <li><b>AI model providers</b> (through OpenRouter) when you ask the Agent a question, when the AI teammate reviews a property chat and its photos, when a receipt photo is read, and for AI call notes. Only what is needed for that request is sent.</li>
           <li><b>Web search</b> (Firecrawl) when the Agent looks up public information such as listings or comparable sales. Searches use public terms like addresses, not your private figures.</li>
           <li><b>Email delivery</b> (Resend) for notification and invitation emails.</li>
           <li><b>Push notification services</b> run by Google, Apple and browser makers, which deliver notifications to your device.</li>
@@ -79,7 +80,9 @@ export default function PrivacyPage() {
           Workspace records are kept while the workspace uses SynergiFund, because they are the team's business records.
           Temporary Agent chats are deleted after a day. When an administrator removes your account, you can no longer sign
           in and your sign-in details are deleted; records you added for the business, such as costs or documents, stay
-          with the workspace. To have your account deleted, ask your workspace administrator
+          with the workspace. Daily backups are kept for 7 to 90 days (30 unless your administrator changes it), so
+          something deleted can stay in a backup until that backup is removed. To have your account deleted, ask your
+          workspace administrator
           {contact ? <> or write to <a href={`mailto:${contact}`}>{contact}</a></> : null}.
         </p>
 

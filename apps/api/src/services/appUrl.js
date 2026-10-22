@@ -1,3 +1,11 @@
+// The live web app. Used when the server's own settings (APP_URL, WEB_ORIGIN) do not say; local development falls
+// back to the local web app instead.
+export const LIVE_ORIGIN = "https://admin.synergifund.com"
+
+export function defaultOrigin() {
+  return process.env.NODE_ENV === "production" ? LIVE_ORIGIN : "http://localhost:3000"
+}
+
 function isLocal(hostname) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || /^(10|192\.168|172\.(1[6-9]|2\d|3[01]))\./.test(hostname)
 }
@@ -55,5 +63,5 @@ export function appOrigin() {
   if (seen) return seen
   const listed = listedOrigins()
   const pick = listed.find((url) => !isLocal(url.hostname)) || listed[0]
-  return pick ? pick.origin : "http://localhost:3000"
+  return pick ? pick.origin : defaultOrigin()
 }

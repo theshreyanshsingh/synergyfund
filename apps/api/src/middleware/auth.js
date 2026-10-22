@@ -3,6 +3,7 @@ import { permissionsFor } from "@synergifund/shared"
 import { User } from "../models/index.js"
 import { sendError } from "../lib/http.js"
 import { publicUser } from "../lib/serialize.js"
+import { restoreRunning } from "../services/backup.js"
 
 // Takes the user (or just an id, for a user who never reset their password).
 export function signSession(user) {
@@ -72,6 +73,11 @@ export async function requireAuth(req, res, next) {
     const user = await User.findById(payload.sub)
     // A session from before a password reset or change no longer works.
     if (!user || (payload.sv || 0) !== (user.sessionVersion || 0)) {
+      // Mid-restore the people are being put back: not signed out yet, just not ready.
+      if (restoreRunning()) {
+        sendError(res, 503, "SynergiFund is restoring a backup. Try again in a minute.")
+        return
+      }
       sendError(res, 401, "Sign in to continue.")
       return
     }

@@ -83,6 +83,10 @@ export function Providers({ children }) {
     if ("serviceWorker" in navigator) {
       await Promise.race([disablePush(), new Promise((resolve) => setTimeout(resolve, 4000))]).catch(() => {})
     }
+    // In the phone app: this phone stops getting their calls and messages.
+    const phoneToken = window.SynergiFundNative?.pushToken
+    if (phoneToken) await api("/push/native", { method: "DELETE", body: { token: phoneToken } }).catch(() => {})
+    if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({ type: "signed-out" }))
     await api("/auth/logout", { method: "POST" }).catch(() => {})
     leaving.current = true
     setUser(null)

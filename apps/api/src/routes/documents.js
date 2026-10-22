@@ -30,7 +30,9 @@ export function safeDocumentHtml(html) {
 
 export const documentsRouter = Router()
 
-const HIDDEN_KINDS = ["chat", "comp"]
+// Receipt photos belong to their receipt (one receipt can be filed on several properties) and open from its expenses.
+// Files attached to an Agent question belong to that person's chat.
+const HIDDEN_KINDS = ["chat", "comp", "receipt-scan", "agent"]
 // Receipts and weekly photos are referenced by expenses and photo sets, and draw workbooks hold draw money,
 // so they stay where they were filed.
 const PINNED_KINDS = ["receipt", "photo", "import"]
@@ -89,6 +91,7 @@ async function presentMany(files, user = null) {
 async function visibleFile(req, id) {
   const file = await DocumentFile.findById(id).catch(() => null)
   if (!file || file.kind === "chat") return null
+  if (file.kind === "agent") return String(file.uploadedBy || "") === String(req.user._id) ? file : null
   if (req.user.role !== "contractor") return file
   if (file.uploadedBy && String(file.uploadedBy) === String(req.user._id)) return file
   if (!file.propertyId) return null
@@ -348,6 +351,20 @@ function zipEntryName(file, used, { withPlace, withFolder, placeNames, placeInNa
   return name
 }
 
+function uniqueZipName(base, used) {
+  let name = base
+  if (used.has(name.toLowerCase())) {
+    const dot = base.lastIndexOf(".")
+    const stem = dot > 0 ? base.slice(0, dot) : base
+    const ext = dot > 0 ? base.slice(dot) : ""
+    let count = 2
+    while (used.has(`${stem} (${count})${ext}`.toLowerCase())) count += 1
+    name = `${stem} (${count})${ext}`
+  }
+  used.add(name.toLowerCase())
+  return name
+}
+
 function dosTime(value) {
   const date = new Date(value || Date.now())
   const year = Math.min(2107, Math.max(1980, date.getFullYear()))
@@ -360,7 +377,8 @@ function dosTime(value) {
 // Writes a zip (files stored as they are; PDFs, Office files, photos and videos are already compressed).
 // flat: every file sits directly in the zip (the Agent's bundles); otherwise files from several places or folders
 // are grouped into folders named after them.
-async function writeZip(res, files, placeNames = new Map(), { flat = false } = {}) {
+// names: a chosen name per file id (receipts), in place of where it is filed.
+export async function writeZip(res, files, placeNames = new Map(), { flat = false, names = null } = {}) {
   let closed = false
   res.on("close", () => { closed = true })
   const write = (buffer) => new Promise((resolve) => {
@@ -386,7 +404,8 @@ async function writeZip(res, files, placeNames = new Map(), { flat = false } = {
     } catch {
       continue
     }
-    const name = Buffer.from(zipEntryName(file, used, { withPlace, withFolder, placeNames, placeInName }), "utf8")
+    const chosen = names?.get(String(file._id))
+    const name = Buffer.from(chosen ? uniqueZipName(zipSafe(chosen) || "file", used) : zipEntryName(file, used, { withPlace, withFolder, placeNames, placeInName }), "utf8")
     const crc = zlib.crc32(data) >>> 0
     const { time, day } = dosTime(file.createdAt)
     const header = Buffer.alloc(30)

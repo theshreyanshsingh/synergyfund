@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ActivityIndicator, BackHandler, KeyboardAvoidingView, Linking, Platform, Pressable, StyleSheet, Text, View, useColorScheme } from "react-native"
+import { ActivityIndicator, Alert, AppState, BackHandler, KeyboardAvoidingView, Linking, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View, useColorScheme } from "react-native"
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context"
 import { StatusBar } from "expo-status-bar"
 import * as SplashScreen from "expo-splash-screen"
@@ -7,6 +7,7 @@ import Constants from "expo-constants"
 import { WebView } from "react-native-webview"
 import { APP_ORIGIN, APP_URL, isAppPage } from "./src/config"
 import { downloadAndShare } from "./src/downloads"
+import { pathFromLink, phone, registerScript, signedOutPage, visibilityScript } from "./src/phone"
 
 SplashScreen.preventAutoHideAsync()
 SplashScreen.setOptions({ duration: 250, fade: true })
@@ -54,6 +55,75 @@ function Shell() {
   const [attempt, setAttempt] = useState(0)
   const [download, setDownload] = useState(null)
   const canGoBack = useRef(false)
+  // The first page: the app's start page, or the page a notification or Answer opened the app on.
+  const [start, setStart] = useState("")
+  // The phone registers for calls and messages once per page load, when someone is signed in.
+  const needsRegister = useRef(true)
+  const asked = useRef(false)
+
+  useEffect(() => {
+    let done = false
+    const open = (url) => {
+      if (done) return
+      done = true
+      const path = pathFromLink(url)
+      setStart(path ? `${APP_ORIGIN}${path}` : APP_URL)
+    }
+    Linking.getInitialURL().then(open).catch(() => open(""))
+    const timer = setTimeout(() => open(""), 1500)
+    // A notification or Answer while the app is already open: go to that page.
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      const path = pathFromLink(url)
+      if (path) web.current?.injectJavaScript(`location.href = ${JSON.stringify(`${APP_ORIGIN}${path}`)}; true;`)
+    })
+    return () => {
+      clearTimeout(timer)
+      subscription.remove()
+    }
+  }, [])
+
+  // Background and back: the page counts as away while the app is in the background.
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (next) => {
+      web.current?.injectJavaScript(visibilityScript(next !== "active"))
+    })
+    return () => subscription.remove()
+  }, [])
+
+  // A new push address registers again. (Hang up and Decline reach the page from the native side directly.)
+  useEffect(() => {
+    if (!phone) return undefined
+    const token = phone.addListener("onToken", () => {
+      needsRegister.current = true
+      register()
+    })
+    return () => token.remove()
+    // register reads refs only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function register(url) {
+    if (!phone || !phone.isPushReady() || !needsRegister.current || signedOutPage(url)) return
+    needsRegister.current = false
+    const token = await phone.getPushToken().catch(() => null)
+    if (token) web.current?.injectJavaScript(registerScript(token))
+    else needsRegister.current = true
+  }
+
+  // After the first registration: notifications allowed (Android 13+), and calls allowed over the lock screen (14+).
+  async function askOnce() {
+    if (asked.current || !phone) return
+    asked.current = true
+    if (Platform.OS === "android" && Platform.Version >= 33) {
+      await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS).catch(() => {})
+    }
+    if (!phone.canUseFullScreen()) {
+      Alert.alert("Show calls on the lock screen", "Allow SynergiFund to show incoming calls over the lock screen, like a phone call.", [
+        { text: "Not now", style: "cancel" },
+        { text: "Allow", onPress: () => phone.openFullScreenSettings() },
+      ])
+    }
+  }
 
   // Android's back button goes back a page, like a browser, before leaving the app.
   useEffect(() => {
@@ -94,6 +164,26 @@ function Shell() {
       return
     }
     if (data.type === "theme" && data.background) setTheme({ background: data.background, dark: Boolean(data.dark) })
+    if (data.type === "push-registered" && phone && data.deviceKey) {
+      phone.configure(APP_ORIGIN, data.deviceKey)
+      askOnce()
+    }
+    // A call started or ended on the page: keep it going with the screen off, with Hang up in the notification.
+    if (data.type === "call-state" && phone) {
+      if (data.active) phone.startCall(String(data.title || "SynergiFund call"), String(data.body || "Ongoing call"), Boolean(data.video))
+      else phone.endCall()
+    }
+    // The page heard a ring (or its end) over its open connection: ring the phone now, before the push arrives.
+    if (data.type === "call-ring" && phone && data.callId) {
+      phone.showPush({ type: "call", callId: String(data.callId), title: String(data.title || "Incoming call"), body: String(data.body || ""), media: String(data.media || "audio"), caller: String(data.caller || ""), sentAt: String(Date.now()), ringFor: "45000" })
+    }
+    if (data.type === "call-ring-stop" && phone && data.callId) phone.showPush({ type: "call-over", callId: String(data.callId), quiet: "true" })
+    if (data.type === "signed-out" && phone) {
+      phone.forget()
+      phone.endCall()
+      needsRegister.current = true
+    }
+    if (data.type === "open-settings") Linking.openSettings().catch(() => {})
     if (data.type === "download" && isAppPage(data.url)) {
       const name = data.name || ""
       setDownload({ name, progress: null, error: "" })
@@ -112,13 +202,15 @@ function Shell() {
       {/* Android draws edge to edge, so the keyboard covers the page instead of shrinking it: make room for it, or the
           chat box and other fields at the bottom would sit under the keyboard. The iPhone's web view does this itself. */}
       <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === "android" ? "padding" : undefined} enabled={Platform.OS === "android"}>
-        {failed ? (
+        {!start ? (
+          <Loading background={theme.background} dark={theme.dark} />
+        ) : failed ? (
           <Offline message={failed} dark={theme.dark} onRetry={() => { setFailed(""); setAttempt((value) => value + 1) }} />
         ) : (
           <WebView
             key={attempt}
             ref={web}
-            source={{ uri: APP_URL }}
+            source={{ uri: start }}
             style={{ backgroundColor: theme.background }}
             originWhitelist={["*"]}
             injectedJavaScriptBeforeContentLoaded={BEFORE_LOAD}
@@ -126,7 +218,12 @@ function Shell() {
             onMessage={onMessage}
             onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
             onOpenWindow={onOpenWindow}
-            onNavigationStateChange={(state) => { canGoBack.current = state.canGoBack }}
+            onLoadStart={() => { needsRegister.current = true }}
+          onNavigationStateChange={(state) => {
+            canGoBack.current = state.canGoBack
+            if (signedOutPage(state.url)) needsRegister.current = true
+            else register(state.url)
+          }}
             onFileDownload={(event) => {
               const url = event.nativeEvent.downloadUrl || ""
               if (url.toLowerCase().startsWith(`${APP_ORIGIN}/api/`)) web.current?.injectJavaScript(linkRequest(url))
@@ -150,7 +247,6 @@ function Shell() {
             mediaCapturePermissionGrantType="grantIfSameHostElsePrompt"
             allowsLinkPreview={false}
             applicationNameForUserAgent={`SynergiFundApp/${VERSION}`}
-            decelerationRate="normal"
             webviewDebuggingEnabled={__DEV__}
             startInLoadingState
             renderLoading={() => <Loading background={theme.background} dark={theme.dark} />}

@@ -16,6 +16,7 @@ import { emitToUsers } from "../services/chatHub.js"
 import { changeSummary, notifyPropertyAccess, recordActivity } from "../services/notify.js"
 import { presentContractorDraw, presentDraw } from "./draws.js"
 import { teamToday } from "../lib/dates.js"
+import { forgetPropertyOnReceipts } from "../services/receiptCleanup.js"
 
 export const propertiesRouter = Router()
 
@@ -614,6 +615,7 @@ propertiesRouter.delete(
       ConstructionProject.deleteMany({ propertyId: property._id }),
       CalendarEvent.updateMany({ propertyId: property._id }, { $unset: { propertyId: 1 } }),
     ])
+    await forgetPropertyOnReceipts(property._id)
     await property.deleteOne()
     await recordActivity({ user: req.user, title: "Property deleted", detail: property.address })
     res.json({ ok: true })

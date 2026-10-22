@@ -2,7 +2,7 @@ import { Router } from "express"
 import bcrypt from "bcryptjs"
 import { z } from "zod"
 import { CHIMES, RINGTONES, cleanSounds } from "@synergifund/shared"
-import { User } from "../models/index.js"
+import { NativeDevice, User } from "../models/index.js"
 import jwt from "jsonwebtoken"
 import { recordActivity } from "../services/notify.js"
 import { asyncHandler, sendError } from "../lib/http.js"
@@ -129,6 +129,8 @@ authRouter.post(
     // Other devices signed in with the old password are signed out; this one gets a new session.
     req.user.sessionVersion = (req.user.sessionVersion || 0) + 1
     await req.user.save()
+    // Phones register again when the app is next opened with the new password.
+    await NativeDevice.deleteMany({ userId: req.user._id })
     setSessionCookie(res, signSession(req.user))
     await recordActivity({ user: req.user, title: "Password changed", detail: "Changed their own password" })
     res.json({ user: publicUser(req.user) })

@@ -31,8 +31,63 @@ let cameraPending = false
 let screenPending = false
 
 function set(patch) {
+  const before = state.current
+  const ringing = state.incoming
   state = { ...state, ...patch }
+  if (Boolean(before) !== Boolean(state.current)) tellPhoneApp()
+  if (ringing !== state.incoming) tellPhoneRings(ringing, state.incoming)
   for (const listener of listeners) listener()
+}
+
+// Inside the phone app: while you are on a call, the app keeps it going with the screen off ("Ongoing call"
+// notification with Hang up). Hang up from that notification leaves the call here.
+function inPhoneApp() {
+  return typeof window !== "undefined" && Boolean(window.SynergiFundNative && window.ReactNativeWebView)
+}
+
+function tellPhoneApp() {
+  if (!inPhoneApp()) return
+  const current = state.current
+  const message = current
+    ? { type: "call-state", active: true, title: callTitle(current.call, state.me), body: current.media === "video" ? "Video call" : "Voice call", video: current.media === "video" }
+    : { type: "call-state", active: false }
+  try {
+    window.ReactNativeWebView.postMessage(JSON.stringify(message))
+  } catch {}
+}
+
+// Inside the phone app this page hears a ring at once (its connection stays open in the background); the app shows it
+// as a phone call, and stops it when the ring stops here (answered elsewhere, declined, ended).
+function tellPhoneRings(before, after) {
+  if (!inPhoneApp()) return
+  const post = (message) => {
+    try {
+      window.ReactNativeWebView.postMessage(JSON.stringify(message))
+    } catch {}
+  }
+  for (const call of after) {
+    if (before.some((item) => item.id === call.id)) continue
+    const added = call.invitedBy && call.invitedBy !== call.startedByName
+    const kind = call.media === "video" ? "video" : "voice"
+    const place = call.channel && call.channel.kind !== "direct" ? callTitle(call, state.me) : ""
+    post({
+      type: "call-ring",
+      callId: call.id,
+      media: call.media,
+      caller: added ? call.invitedBy : call.startedByName,
+      title: added ? `${call.invitedBy} is adding you to a ${kind} call` : `${call.startedByName} is calling you`,
+      body: `${kind === "video" ? "Video" : "Voice"} call${place ? ` · ${place}` : ""}`,
+    })
+  }
+  for (const call of before) if (!after.some((item) => item.id === call.id)) post({ type: "call-ring-stop", callId: call.id })
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("synergifund:hangup", () => leaveCall())
+  // Decline on the phone's call screen (lock screen): declined here too, over the open connection.
+  window.addEventListener("synergifund:decline", (event) => { if (event.detail) declineCall(String(event.detail)) })
+  // The phone app going to the background (or coming back) changes who rings: the phone or the page.
+  document.addEventListener("visibilitychange", () => refreshTone())
 }
 
 function setCurrent(patch) {
@@ -118,7 +173,9 @@ export function soundsReady() {
 // One place decides what should be heard: an incoming ring, the ringback of our own unanswered call, or nothing.
 function refreshTone() {
   const current = state.current
-  if (state.incoming.length) playTone("incoming")
+  // The phone app in the background rings natively (lock screen, ringtone); the page stays quiet.
+  const phoneRings = inPhoneApp() && document.visibilityState === "hidden"
+  if (state.incoming.length && !phoneRings) playTone("incoming")
   // Ringback only while the call is ringing someone: a big room that shows Join to people rings no one.
   else if (current && !(current.peers || []).length && !current.call?.answered && current.call?.ringing) playTone("outgoing")
   else stopTone()

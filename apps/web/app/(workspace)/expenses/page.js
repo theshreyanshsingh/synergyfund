@@ -1,15 +1,18 @@
 "use client"
 
-import { useRef, useState } from "react"
-import { can, EXPENSE_CATEGORIES, PAYING_ENTITIES } from "@synergifund/shared"
+import { useEffect, useRef, useState } from "react"
+import { useSearchParams } from "next/navigation"
+import { can, EXPENSE_CATEGORIES, PAYING_ENTITIES, RECEIPT_CATEGORIES, SALES_TAX, fromCents, toCents } from "@synergifund/shared"
 import { FormSheet, InfoSheet } from "../../../components/ui/FormSheet"
 import { StatusPill } from "../../../components/ui/StatusPill"
 import { WorkspacePage } from "../../../components/ui/WorkspacePage"
 import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
-import { money } from "../../../lib/format"
+import { dollars, money } from "../../../lib/format"
 import { useApi } from "../../../lib/useApi"
 import { CameraCapture } from "../../../components/photos/CameraCapture"
+import { ReceiptSheet } from "../../../components/receipts/ReceiptSheet"
+import { ExpenseTracking } from "../../../components/expenses/ExpenseTracking"
 
 export default function ExpensesPage() {
   const session = useSession()
@@ -26,6 +29,39 @@ export default function ExpensesPage() {
   const canSubmit = session?.user && can(session.user, "expenses.submit")
   const canApprove = session?.user && can(session.user, "expenses.approve")
   const canReapply = (row) => row.book === "Request" && row.status === "Rejected" && session?.user?.role === "contractor" && row.requestedBy === session?.user?.id
+  const canFile = Boolean(canSubmit || canApprove)
+  const receipts = useApi(canFile ? "/receipts" : null)
+  const [receipt, setReceipt] = useState(null)
+  const [filed, setFiled] = useState("")
+  const [trackingVersion, setTrackingVersion] = useState(0)
+  const search = useSearchParams()
+  const staff = Boolean(session?.user && session.user.role !== "contractor")
+  const [tab, setTab] = useState("requests")
+  useEffect(() => {
+    if (search.get("tab") === "tracking" && staff) setTab("tracking")
+    if (search.get("receipt") === "new" && canFile) setReceipt({ draft: null })
+  }, [staff, canFile])
+  function chooseTab(next) {
+    setTab(next)
+    const url = new URL(window.location.href)
+    url.searchParams.set("tab", next)
+    window.history.replaceState(null, "", url)
+  }
+  const drafts = receipts.data?.drafts || []
+  const receiptProps = {
+    properties: (properties.data?.items || []).map((property) => ({ id: property.id, address: property.address })),
+    buyers: receipts.data?.buyers || [],
+    posts: Boolean(receipts.data?.posts),
+    readingAvailable: receipts.data?.readingAvailable !== false,
+  }
+  function onFiled(result) {
+    setReceipt(null)
+    const parts = result.filed.map((part) => `${part.address} (${dollars(part.totalCents / 100)})`)
+    setFiled(`${result.posted ? "Posted to" : "Sent for approval on"} ${parts.join(" and ")}.`)
+    list.reload()
+    receipts.reload()
+    setTrackingVersion((value) => value + 1)
+  }
   const requests = list.data?.requests || []
   const posted = list.data?.expenses || []
   const postedRequestIds = new Set(posted.map((item) => item.requestId).filter(Boolean))
@@ -96,8 +132,37 @@ export default function ExpensesPage() {
         views={false}
         loading={!list.data && !list.error}
         title="Expenses"
-        action={canSubmit ? { label: "Add expense", onClick: () => setOpen(true) } : null}
-        stats={camera ? [
+        underTitle={staff ? (
+          <div className="property-switch expenses-tabs" role="tablist" aria-label="Expenses views">
+            <button type="button" role="tab" aria-selected={tab === "requests"} className={tab === "requests" ? "is-on" : ""} onClick={() => chooseTab("requests")}>Requests and costs</button>
+            <button type="button" role="tab" aria-selected={tab === "tracking"} className={tab === "tracking" ? "is-on" : ""} onClick={() => chooseTab("tracking")}>Expense tracking</button>
+          </div>
+        ) : null}
+        action={canFile ? { label: canApprove ? "Add receipt" : "Scan receipt", onClick: () => { setFiled(""); setReceipt({ draft: null }) } } : null}
+        secondary={canSubmit && !camera ? { label: "Add expense", onClick: () => setOpen(true) } : null}
+        lead={(filed || drafts.length > 0 || camera) ? (
+          <div className="receipt-lead">
+            {filed && <p className="settings-note receipt-filed">{filed}</p>}
+            {drafts.length > 0 && (
+              <div className="panel receipt-drafts">
+                <h3>Receipts you started</h3>
+                <ul>
+                  {drafts.map((draft) => (
+                    <li key={draft.id}>
+                      <span>
+                        <strong>{draft.vendor || "Receipt"}{draft.date ? ` · ${new Date(`${draft.date}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}</strong>
+                        <small>{draft.read.status === "reading" ? "Reading…" : `${draft.items.length} ${draft.items.length === 1 ? "item" : "items"} · not filed yet`}</small>
+                      </span>
+                      <button type="button" className="tool" onClick={() => { setFiled(""); setReceipt({ draft }) }}>Continue</button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {camera && canSubmit && <p className="receipt-manual">No receipt? <button type="button" className="keep-case" onClick={() => setOpen(true)}>Add an expense by hand</button></p>}
+          </div>
+        ) : null}
+        stats={tab === "tracking" && staff ? [] : camera ? [
           { label: "Your requests", value: String(visibleRequests.length), hint: "Waiting for a decision" },
           { label: "Posted", value: String(posted.length), hint: "Approved costs you filed" },
         ] : [
@@ -112,7 +177,7 @@ export default function ExpensesPage() {
           { key: "book", label: "Book" },
           { key: "vendor", label: "Vendor" },
           { key: "property", label: "Property", render: (row) => names.get(row.propertyId) || "Company" },
-          { key: "amount", label: "Amount", render: (row) => money(row.amount) },
+          { key: "amount", label: "Amount", render: (row) => dollars(row.amount) },
           { key: "status", label: "Status", render: (row) => <StatusPill>{row.status}</StatusPill> },
           { key: "actions", label: "", pin: "right", render: (row) => (
             <span className="row-actions">
@@ -130,7 +195,18 @@ export default function ExpensesPage() {
         rows={rows}
         onRow={setSelected}
         important={(row) => ["Submitted", "Needs information", "Needs second approval"].includes(row.status)}
-      />
+      >
+        {tab === "tracking" && staff ? <ExpenseTracking version={trackingVersion} /> : null}
+      </WorkspacePage>
+      {receipt && (
+        <ReceiptSheet
+          draft={receipt.draft}
+          {...receiptProps}
+          onClose={() => { setReceipt(null); receipts.reload() }}
+          onChanged={() => receipts.reload()}
+          onFiled={onFiled}
+        />
+      )}
       {selected && (
         <ExpenseSheet
           item={selected}
@@ -186,9 +262,23 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camer
   const [pending, setPending] = useState(false)
   const [removed, setRemoved] = useState([])
   const [proofs, setProofs] = useState([])
+  const itemized = (item.lines || []).length > 0
+  const [lines, setLines] = useState(() => (item.lines || []).map((entry) => ({ ...entry, amount: Number(entry.amount).toFixed(2) })))
   const photos = proofIds(item).filter((id) => !removed.includes(id))
   const property = properties.find((entry) => entry.id === item.propertyId)
   const line = (property?.scopeLines || []).find((entry) => String(entry._id) === item.scopeLineId)
+  const linesCents = lines.reduce((total, entry) => total + (toCents(entry.amount) || 0), 0)
+  const linesTable = itemized && (
+    <table className="sow-table receipt-lines">
+      <thead><tr><th>Item</th><th>Category</th><th>Amount</th></tr></thead>
+      <tbody>
+        {item.lines.map((entry, index) => (
+          <tr key={index}><td>{entry.description}</td><td>{entry.category}</td><td>{dollars(entry.amount)}</td></tr>
+        ))}
+      </tbody>
+      <tfoot><tr><td colSpan="2">Total</td><td>{dollars(item.amount)}</td></tr></tfoot>
+    </table>
+  )
 
   async function save(event) {
     event.preventDefault()
@@ -196,6 +286,7 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camer
     setError("")
     try {
       const body = new FormData(event.currentTarget)
+      if (itemized) body.set("lines", JSON.stringify(lines))
       for (const shot of proofs) body.append("proof", shot.file, shot.file.name)
       const result = await api(`/expenses/${item.id}`, { method: "PATCH", body })
       await onSaved(result.request)
@@ -213,10 +304,11 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camer
           <a href={item.proofUrls?.[id] || `/api/documents/${id}/raw`} target="_blank" rel="noreferrer">
             <img src={item.proofUrls?.[id] || `/api/documents/${id}/raw`} alt="Proof" />
           </a>
-          {canEdit && <button type="button" onClick={() => setRemoved((current) => [...current, id])}>Remove</button>}
+          {canEdit && !item.receiptId && <button type="button" onClick={() => setRemoved((current) => [...current, id])}>Remove</button>}
         </div>
       ))}
       {photos.length === 0 && <p className="property-missing">No proof photo was attached.</p>}
+      {item.receiptId && <p className="property-missing receipt-kept">The original receipt stays with this expense.</p>}
     </div>
   )
 
@@ -224,8 +316,10 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camer
     return (
       <InfoSheet eyebrow="Expenses" title={<span className="keep-case">{item.title}</span>} hint={`${item.book} · ${property?.address || "Company"}`} onClose={onClose}>
         {photosBlock}
+        {linesTable}
         <dl className="property-facts">
-          <div><dt>Amount</dt><dd>{money(item.amount)}</dd></div>
+          <div><dt>Amount</dt><dd>{dollars(item.amount)}</dd></div>
+          {item.receiptId && item.book === "Posted" && <div><dt>Category</dt><dd>{item.category}</dd></div>}
           <div><dt>Status</dt><dd>{item.status}</dd></div>
           <div><dt>Vendor</dt><dd>{item.vendor || "Not entered"}</dd></div>
           <div><dt>Part of the house</dt><dd>{line?.title || "Whole property"}</dd></div>
@@ -253,7 +347,26 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camer
       <div className="form-grid">
         {removed.map((id) => <input key={id} type="hidden" name="removeProof" value={id} />)}
         <label className="field wide"><span>Description</span><input name="title" defaultValue={item.title} required /></label>
-        <label className="field"><span>Amount</span><input name="amount" type="number" min="0.01" step="0.01" defaultValue={item.amount} required /></label>
+        {itemized ? (
+          <div className="field wide receipt-line-editor">
+            <span>Items on this receipt</span>
+            {lines.map((entry, index) => (
+              <div key={index} className="receipt-line-edit">
+                <input value={entry.description} onChange={(event) => setLines(lines.map((other, at) => (at === index ? { ...other, description: event.target.value } : other)))} aria-label={`Item ${index + 1}`} disabled={entry.kind === "tax"} />
+                {entry.kind === "tax" ? <span className="receipt-line-tax">{SALES_TAX}</span> : (
+                  <select value={entry.category} onChange={(event) => setLines(lines.map((other, at) => (at === index ? { ...other, category: event.target.value } : other)))} aria-label={`Category of item ${index + 1}`}>
+                    {RECEIPT_CATEGORIES.map((category) => <option key={category}>{category}</option>)}
+                  </select>
+                )}
+                <input inputMode="decimal" value={entry.amount} onChange={(event) => setLines(lines.map((other, at) => (at === index ? { ...other, amount: event.target.value } : other)))} aria-label={`Amount of item ${index + 1}`} />
+                {lines.length > 1 ? <button type="button" onClick={() => setLines(lines.filter((_, at) => at !== index))} aria-label={`Remove item ${index + 1}`}>×</button> : <span />}
+              </div>
+            ))}
+            <em>Total {dollars(fromCents(linesCents))}</em>
+          </div>
+        ) : (
+          <label className="field"><span>Amount</span><input name="amount" type="number" min="0.01" step="0.01" defaultValue={item.amount} required /></label>
+        )}
         <label className="field"><span>Vendor</span><input name="vendor" defaultValue={item.vendor || ""} /></label>
         <label className="field wide"><span>Note</span><input name="note" defaultValue={item.note || ""} /></label>
         <label className="field wide"><span>Add or replace proof photos</span>{camera ? <CameraCapture shots={proofs} onChange={setProofs} max={12} /> : <input name="proof" type="file" accept="image/*" multiple />}</label>

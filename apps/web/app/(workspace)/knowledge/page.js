@@ -18,7 +18,7 @@ function rowId() {
 
 function threadRows(messages) {
   return messages.flatMap((message) => {
-    if (message.role === "user") return [{ id: message.id, role: "user", content: message.content }]
+    if (message.role === "user") return [{ id: message.id, role: "user", content: message.content, attachments: (message.attachments || []).map((file) => ({ ...file, url: `/api/documents/${file.id}/raw` })) }]
     const tools = (message.toolCalls || []).map((call, index) => ({
       id: `${message.id}-tool-${index}`,
       role: "assistant",
@@ -186,18 +186,18 @@ export default function AgentPage() {
     }
   }
 
-  async function send(prompt) {
+  async function send(prompt, files = []) {
     if (streamingRef.current) return
     streamingRef.current = true
     setStreaming(true)
     setError("")
     const startedAt = Date.now()
-    if (!threadId) setTitle(chatTitleFromPrompt(prompt))
-    setRows((current) => [...current, { id: rowId(), role: "user", content: prompt }])
+    if (!threadId) setTitle(chatTitleFromPrompt(prompt || `About ${files.map((file) => file.name).join(", ")}`))
+    setRows((current) => [...current, { id: rowId(), role: "user", content: prompt, attachments: files.map((file, index) => ({ id: `local-${index}`, name: file.name, mime: file.mime, url: file.url })) }])
     const add = (row) => setRows((current) => [...current, row])
     try {
       await streamAgent(
-        { prompt, threadId, temporary },
+        { prompt, threadId, temporary, files: files.map((file) => file.file) },
         {
           onChatId: (id) => {
             setThreadId(id)

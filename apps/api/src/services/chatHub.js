@@ -3,7 +3,7 @@ import { Server } from "socket.io"
 import { User } from "../models/index.js"
 import { audience, loadChannel, usesChat } from "./chat.js"
 import { leaveCallsFor, recheckCalls, registerCallHandlers } from "./calls.js"
-import { trustedOrigin } from "./appUrl.js"
+import { defaultOrigin, trustedOrigin } from "./appUrl.js"
 
 const SOCKET_PURPOSE = "chat-socket"
 const online = new Map()
@@ -21,7 +21,7 @@ export function socketToken(user) {
 }
 
 export function allowedOrigins() {
-  return String(process.env.WEB_ORIGIN || "http://localhost:3000").split(",").map((origin) => origin.trim().replace(/\/+$/, "")).filter(Boolean)
+  return String(process.env.WEB_ORIGIN || defaultOrigin()).split(",").map((origin) => origin.trim().replace(/\/+$/, "")).filter(Boolean)
 }
 
 function originAllowed(origin) {

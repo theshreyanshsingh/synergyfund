@@ -7,9 +7,13 @@ account, an Expo account, and filling in the Play Console forms below.
 
 - **App**: `com.synergifund.app`, targets Android 16 (API 36), which Google Play requires for new apps since
   August 31, 2026. The Android version code goes up by itself with each store build.
-- **Permissions**: only camera, microphone (site photos, receipts, calls) and the standard internet ones. The
-  template's "display over other apps" and shared-storage permissions are removed, so there is no special
-  permission form to fill in. Backups of app data to Google Drive are off (the sign-in stays on the phone).
+- **Permissions**: camera and microphone (site photos, receipts, calls), notifications, full-screen incoming calls
+  and a foreground service while you are on a call. The template's "display over other apps" and shared-storage
+  permissions are removed. Backups of app data to Google Drive are off (the sign-in stays on the phone).
+- **Calls and notifications** (native, through Firebase Cloud Messaging): calls ring like a phone call, over the lock
+  screen, with Answer and Decline, even when the app is closed; an ongoing call keeps going with the screen off and
+  has Hang up in its notification; messages, mentions, tasks and the rest arrive as notifications that open the right
+  page. Needs the Firebase project below.
 - **Android behaviour**: the back button goes back a page; the keyboard no longer covers the chat box and other
   fields at the bottom; dark mode follows the phone; videos can go full screen; downloads open the share sheet.
 - **Icons**: adaptive icon plus a one-colour version for Android 13+ themed icons.
@@ -21,6 +25,22 @@ account, an Expo account, and filling in the Play Console forms below.
   to show a contact address on it.
 - **Store images** in `store/android/`: the 512 × 512 icon, the 1024 × 500 feature graphic and six 1080 × 1920
   phone screenshots, made with invented demo data (no real properties or people).
+
+## Firebase (calls and notifications on Android)
+
+Android only lets apps ring and notify a closed or locked phone through Firebase Cloud Messaging (free).
+
+1. Go to https://console.firebase.google.com, **Add project** (for example "SynergiFund"); Google Analytics is not
+   needed.
+2. In the project: **Add app → Android**, package name `com.synergifund.app`. Download **google-services.json** and
+   put it in the `mobile/` folder (next to `app.json`). The next build has push switched on. It is kept out of git;
+   for Expo's cloud builds (`eas build`), add it once in the Expo dashboard: project → Environment variables → Add,
+   name `GOOGLE_SERVICES_JSON`, type file, upload the file, visibility Secret, for the preview and production
+   environments.
+3. **Project settings → Service accounts → Generate new private key.** This file is a secret: never commit it or send
+   it in chat. On the server, set `FIREBASE_SERVICE_ACCOUNT` to its contents (or `FIREBASE_SERVICE_ACCOUNT_FILE` to
+   its path) in the API's environment, then restart the API.
+4. Open the app, sign in: the phone registers itself. Settings → Send a notification (admins) reaches phones too.
 
 ## Steps
 
@@ -57,6 +77,24 @@ account, an Expo account, and filling in the Play Console forms below.
    and the app updates through Play like any other.
 8. **Production** (only if the app should be listed publicly): promote the release and send it for review.
    Private team apps can stay on internal testing for good.
+
+## Building the store file on this Mac (without Expo's cloud)
+
+Release builds are signed with SynergiFund's **upload key**, kept outside the project:
+`~/secrets/synergifund-upload.jks` and `~/secrets/synergifund-upload.properties` (its password). **Back both up
+somewhere safe** (a password manager): every future Play Store update must be signed with this same key. If it is
+ever lost, Play Console → Setup → App signing lets you request a new upload key. (Google Play keeps the final app
+signing key itself.) To use Expo's cloud builds later, upload this same key with `npx eas-cli@latest credentials`.
+
+From the `mobile` folder:
+```bash
+npx expo prebuild --platform android
+```
+```bash
+cd android && ./gradlew :app:bundleRelease :app:assembleRelease
+```
+The store file is `android/app/build/outputs/bundle/release/app-release.aab`; the `.apk` next to it in
+`outputs/apk/release/` installs directly on a phone. Raise `android.versionCode` in `app.json` for every upload.
 
 ## Store listing
 
@@ -99,6 +137,10 @@ These are suggested answers based on what the app does; check them before you su
   can interact or exchange content" (chat and calls) and no to the rest. It usually comes out as Everyone / 3+ with
   "Users interact".
 - **Target audience**: 18 and over only.
+- **Foreground service permissions**: the app uses a microphone (and camera, on video) foreground service only while
+  you are on a call, so the call keeps going when the phone locks. Choose "Phone calls / VoIP" style use and attach a
+  short screen recording of a call continuing with the screen off.
+- **Full-screen intent**: SynergiFund is a calling app (incoming voice and video calls ring over the lock screen).
 - **Government apps**: No. **Financial features**: none (the app tracks your own records; it does not offer
   banking, loans or payments to the public). **Health**: No. **News**: No.
 - **Data safety**:
@@ -114,10 +156,10 @@ These are suggested answers based on what the app does; check them before you su
     - Files and docs (optional)
     - Messages: Other in-app messages (chat; optional)
     - App activity: Other user-generated content, App interactions (the team activity log)
-  - Not collected: location, contacts, calendar from the phone, health, web browsing, device IDs.
+    - Device or other IDs: the phone's push address, to deliver calls and notifications (App functionality)
+  - Not collected: location, contacts, calendar from the phone, health, web browsing.
 
 ## Later
 
-- **Notifications on Android** (`expo-notifications` with Firebase) and **calls that ring a locked phone** need a
-  development build and a Firebase project; the steps are in `README.md`.
+- **iPhone**: the same native calls and notifications (CallKit and Apple push) are the next step for the iOS app.
 - Each year Google raises the required Android version. Upgrading the Expo SDK once a year keeps the app current.

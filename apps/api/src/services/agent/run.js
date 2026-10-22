@@ -2,6 +2,7 @@ import { chatTitleFromPrompt } from "@synergifund/shared"
 import { chat, createUsageTracker } from "./llm.js"
 import { StreamProcessor, createRun } from "./stream.js"
 import { clientResult, executeTool, toolContent, toolSpecs, toolsFor } from "./tools.js"
+import { readAttachments } from "./attachments.js"
 
 const HISTORY_MESSAGES = 10
 const MAX_GATHER_STEPS = 12
@@ -79,6 +80,7 @@ ${webAllowed
 - If the person wants an ARV (after repair value), comps, what a house would sell for once renovated, or a maximum offer, plan two steps: get the subject's square footage, bedrooms, bathrooms, ZIP and rehab budget (get_property when it is in the records, otherwise its listing on the web); then run arv_analysis, which finds and checks the sold comps itself.${webAllowed ? "" : " Without web search, say comps cannot be looked up yet and offer to run arv_analysis on comps the person pastes in."}
 - If the person wants documents gathered, collected, bundled, zipped or downloaded (for example "zip the closing docs for 3318 Nolan"), plan two steps: find the documents, then zip them.
 - If the person wants an email, message, letter or note written (or a reply, or a change to an earlier draft) and it is about a property, loan, lender, draw, payment, task, document or a person on the team, plan steps to look up those facts first, plus a step to find the recipient's email address with list_team when they are on the team. If it needs no records, write it now by the writing rules below and do not call a tool.
+- If the person attached files, what is in them follows their message as notes. Use them. When the question is only about the files (what does this say, sum it up, is this right, draft a reply to it), answer from the notes without a tool; when it needs company records too (for example checking an invoice against a property's budget, or a statement against a loan), plan those lookups.
 - If the message is a greeting, a thank you, or something you can answer without any data, reply in one or two plain sentences and do not call a tool.
 - If the question is too vague to look anything up, ask one short clarifying question and do not call a tool.
 
@@ -133,6 +135,7 @@ Write the answer to the person's question using only the evidence below. Rules:
 - Use US dollars with thousands separators, and dates like Oct 8, 2026.
 - Use a short markdown table when comparing three or more properties, listings, loans or payments. Use bullets for short lists. Keep it tight.
 - Facts from web_search or read_webpage are public information, not company records. Say they are from the web and link each source inline as a markdown link.
+- Facts from files the person attached come from those files, not the company records. Say so when it matters, and point out where a file and the records disagree.
 - When the person asks what to do, give a clear recommendation and the reason, based on the evidence.
 - When properties were filtered by price, say which figure was used (purchase price unless the person said otherwise) and name any properties left out because that figure is not on file.
 - For totals and counts, use the figures the lookup returned (postedTotal, openBalanceTotal, totals, overdue and so on), never a sum of the rows shown. Say the period or filter they cover. If a list says some rows were not shown for length, say the list is partial and how many there are in all.
@@ -144,12 +147,24 @@ Write the answer to the person's question using only the evidence below. Rules:
 ${writingRules(user)}`
 }
 
+// The question with what was read from its attached files, as every step sees it.
+function withFiles(prompt, files, notes) {
+  if (!files.length) return prompt
+  return `${prompt || "(No message, only the attached files.)"}
+
+Attached ${files.length === 1 ? "file" : `${files.length} files`}: ${files.map((file) => file.name).join(", ")}. What is in ${files.length === 1 ? "it" : "them"}:
+${notes || "(could not be read)"}`
+}
+
 function historyMessages(thread) {
   return thread.messages
     .slice(0, -1)
     .slice(-HISTORY_MESSAGES)
-    .filter((message) => message.content && !message.error)
-    .map((message) => ({ role: message.role === "user" ? "user" : "assistant", content: message.content }))
+    .filter((message) => (message.content || message.attachments?.length) && !message.error)
+    .map((message) => ({
+      role: message.role === "user" ? "user" : "assistant",
+      content: message.role === "user" && message.attachments?.length ? withFiles(message.content, message.attachments, String(message.attachmentNotes || "").slice(0, 6000)) : message.content,
+    }))
 }
 
 function compactOlderResults(messages) {
@@ -202,7 +217,7 @@ async function chatTitle({ prompts, model, tracker }) {
   }
 }
 
-export async function runAgent({ user, permissions, thread, prompt, res, settings }) {
+export async function runAgent({ user, permissions, thread, prompt, attachments = [], res, settings }) {
   const run = createRun({ ownerId: user._id })
   const stream = new StreamProcessor(res, run.runId)
   stream.start()
@@ -293,12 +308,20 @@ export async function runAgent({ user, permissions, thread, prompt, res, setting
   let failed = false
 
   try {
+    let question = prompt
+    if (attachments.length) {
+      status(attachments.length === 1 ? "Reading the attached file" : `Reading the ${attachments.length} attached files`)
+      const notes = await readAttachments({ files: attachments, question: prompt, settings, tracker })
+      const asked = thread.messages[thread.messages.length - 1]
+      if (asked?.role === "user") asked.attachmentNotes = notes
+      question = withFiles(prompt, attachments, notes)
+    }
     status("Understanding the question")
     const plan = await chat({
       model: settings.decisionModel,
       tracker,
       maxTokens: 1500,
-      messages: [{ role: "system", content: planPrompt(user, tools, webAllowed) }, ...history, { role: "user", content: prompt }],
+      messages: [{ role: "system", content: planPrompt(user, tools, webAllowed) }, ...history, { role: "user", content: question }],
       tools: toolSpecs(plannerTools),
     })
     const planCall = plan.toolCalls.find((call) => call.name === "todo_write")
@@ -306,7 +329,7 @@ export async function runAgent({ user, permissions, thread, prompt, res, setting
       answer = plan.content.trim() || "Could you tell me a little more about what you want to know?"
     } else {
       await runTool(planCall)
-      const notes = [await gather(`Current user request - ${prompt}\nPlan - ${JSON.stringify(context.todos)}`)]
+      const notes = [await gather(`Current user request - ${question}\nPlan - ${JSON.stringify(context.todos)}`)]
 
       for (let round = 0; round <= MAX_FOLLOW_UPS; round += 1) {
         const canFollowUp = round < MAX_FOLLOW_UPS && Date.now() < deadline
@@ -322,7 +345,7 @@ export async function runAgent({ user, permissions, thread, prompt, res, setting
             ...history,
             {
               role: "user",
-              content: `Question - ${prompt}\n\nPlan - ${JSON.stringify(context.todos)}\n\nNotes from the data step - ${notes.filter(Boolean).join("\n") || "none"}\n\nEvidence:\n${evidenceText(evidence)}`,
+              content: `Question - ${question}\n\nPlan - ${JSON.stringify(context.todos)}\n\nNotes from the data step - ${notes.filter(Boolean).join("\n") || "none"}\n\nEvidence:\n${evidenceText(evidence)}`,
             },
           ],
         })
@@ -369,7 +392,7 @@ export async function runAgent({ user, permissions, thread, prompt, res, setting
   }
   stream.end()
 
-  const prompts = thread.messages.filter((message) => message.role === "user").map((message) => message.content)
+  const prompts = thread.messages.filter((message) => message.role === "user").map((message) => message.content || `About ${(message.attachments || []).map((file) => file.name).join(", ")}`)
   if (!failed && prompts.length <= TITLE_UNTIL_PROMPTS) {
     try {
       thread.title = await chatTitle({ prompts, model: settings.taskModel, tracker: createUsageTracker() })

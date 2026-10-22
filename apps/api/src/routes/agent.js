@@ -6,6 +6,8 @@ import { modelKey } from "../services/agent/llm.js"
 import { runAgent } from "../services/agent/run.js"
 import { resumeRun } from "../services/agent/stream.js"
 import { recordActivity } from "../services/notify.js"
+import { upload } from "../services/files.js"
+import { MAX_ATTACHMENTS, attachmentProblem, removeAttachments, saveAttachments, sweepAttachments, threadFileIds } from "../services/agent/attachments.js"
 
 export const agentRouter = Router()
 
@@ -99,6 +101,7 @@ function presentMessage(message) {
     todos: (message.todos || []).map((todo) => ({ id: todo.id, content: todo.content, status: todo.status })),
     agentRunDurationMs: message.agentRunDurationMs ?? null,
     error: Boolean(message.error),
+    attachments: (message.attachments || []).map((item) => ({ id: String(item.fileId), name: item.name || "File", mime: item.mime || "", size: item.size || 0 })),
     createdAt: message.at,
   }
 }
@@ -170,6 +173,7 @@ agentRouter.get(
   "/threads",
   asyncHandler(async (req, res) => {
     const threads = await AgentThread.find({ userId: req.user._id, temporary: { $ne: true } }).select("title updatedAt").sort({ updatedAt: -1 }).limit(100)
+    sweepAttachments(req.user._id).catch((error) => console.error("Agent attachment clean-up failed", error))
     res.json({ items: threads.map(presentThread) })
   }),
 )
@@ -189,23 +193,45 @@ agentRouter.get(
 agentRouter.delete(
   "/threads/:id",
   asyncHandler(async (req, res) => {
-    const thread = await AgentThread.findOne({ _id: req.params.id, userId: req.user._id }).select("title temporary").catch(() => null)
+    const thread = await AgentThread.findOne({ _id: req.params.id, userId: req.user._id }).select("title temporary messages.attachments").catch(() => null)
     const result = thread ? await AgentThread.deleteOne({ _id: thread._id }) : null
     if (!result?.deletedCount) {
       sendError(res, 404, "That conversation was not found.")
       return
     }
+    await removeAttachments(threadFileIds([thread])).catch((error) => console.error("Agent attachment removal failed", error))
     if (!thread.temporary) await recordActivity({ user: req.user, title: "Agent chat deleted", detail: thread.title || "" })
     res.json({ ok: true })
   }),
 )
 
+// A question can come with files (sent as a form); a plain question is JSON.
+function receiveAttachments(req, res, next) {
+  if (!req.is("multipart/form-data")) return next()
+  upload.array("files", MAX_ATTACHMENTS)(req, res, (error) => {
+    if (!error) return next()
+    const message = error.code === "LIMIT_FILE_SIZE"
+      ? "Each file can be up to 20 MB."
+      : error.code === "LIMIT_UNEXPECTED_FILE" || error.code === "LIMIT_FILE_COUNT"
+        ? `Attach up to ${MAX_ATTACHMENTS} files at a time.`
+        : "The files could not be read."
+    sendError(res, 400, message)
+  })
+}
+
 agentRouter.post(
   "/run",
+  receiveAttachments,
   asyncHandler(async (req, res) => {
     const prompt = String(req.body.prompt || "").trim()
-    if (!prompt) {
+    const files = req.files || []
+    if (!prompt && !files.length) {
       sendError(res, 400, "Ask a question about the records you can see.")
+      return
+    }
+    const problem = files.map(attachmentProblem).find(Boolean)
+    if (problem) {
+      sendError(res, 400, problem)
       return
     }
     if (prompt.length > MAX_PROMPT) {
@@ -220,18 +246,20 @@ agentRouter.post(
         return
       }
     }
+    const attachments = files.length ? await saveAttachments(files, req.user) : []
+    const asked = prompt || `About ${attachments.map((file) => file.name).join(", ")}`
     if (!thread) {
-      thread = new AgentThread({ userId: req.user._id, title: chatTitleFromPrompt(prompt), messages: [], temporary: req.body.temporary === true })
+      thread = new AgentThread({ userId: req.user._id, title: chatTitleFromPrompt(asked), messages: [], temporary: req.body.temporary === true || req.body.temporary === "true" })
     }
     // A temporary chat lives for a day after its last message and leaves no trace in Team Activity.
     if (thread.temporary) thread.expiresAt = new Date(Date.now() + TEMPORARY_CHAT_TTL_MS)
-    thread.messages.push({ role: "user", content: prompt })
+    thread.messages.push({ role: "user", content: prompt, attachments: attachments.map((file) => ({ fileId: file._id, name: file.name, mime: file.mime, size: file.size })) })
     await thread.save()
-    if (!thread.temporary) await recordActivity({ user: req.user, title: "Asked the agent", detail: chatTitleFromPrompt(prompt) })
+    if (!thread.temporary) await recordActivity({ user: req.user, title: "Asked the agent", detail: `${chatTitleFromPrompt(asked)}${attachments.length ? ` (${attachments.length} ${attachments.length === 1 ? "file" : "files"})` : ""}` })
     const settings = await agentSettings()
     res.setHeader("X-Chat-Id", String(thread._id))
     res.setHeader("Access-Control-Expose-Headers", "X-Chat-Id, X-Run-Id")
-    await runAgent({ user: req.user, permissions: req.permissions, thread, prompt, res, settings })
+    await runAgent({ user: req.user, permissions: req.permissions, thread, prompt, attachments, res, settings })
   }),
 )
 

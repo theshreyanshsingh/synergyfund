@@ -1,14 +1,18 @@
 import { Router } from "express"
-import { APPROVAL_THRESHOLD, EXPENSE_CATEGORIES } from "@synergifund/shared"
-import { Draw, Expense, ExpenseRequest, Property } from "../models/index.js"
-import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
+import { APPROVAL_THRESHOLD, EXPENSE_CATEGORIES, RECEIPT_CATEGORIES, RECEIPT_MAX_ITEMS, SALES_TAX, fromCents, toCents } from "@synergifund/shared"
+import { DocumentFile, Draw, Expense, ExpenseRequest, Property, Receipt, User } from "../models/index.js"
+import { writeZip } from "./documents.js"
+import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { ownsProperty, propertyFilter } from "../services/access.js"
 import { saveUploadedFile, upload, withProofUrls } from "../services/files.js"
 import { notify, recordActivity } from "../services/notify.js"
 import { refreshRehabRemaining } from "./draws.js"
 import { teamToday } from "../lib/dates.js"
+import { expensesCsv, expensesWorkbook, exportName, quickbooksCsv, readFilters, trackingData } from "../services/expenseTracking.js"
 
 export const expensesRouter = Router()
+
+const RECEIPT_ZIP_MAX = 1000
 
 function presentRequest(item) {
   return {
@@ -30,6 +34,8 @@ function presentRequest(item) {
     requestedBy: item.requestedBy ? String(item.requestedBy) : "",
     reapplied: Boolean(item.reapplied),
     drawId: item.drawId ? String(item.drawId) : "",
+    receiptId: item.receiptId ? String(item.receiptId) : "",
+    lines: (item.lines || []).map((line) => ({ description: line.description || "", category: line.category || "", amount: line.amount ?? 0, kind: line.kind || "item" })),
     createdAt: item.createdAt,
   }
 }
@@ -51,6 +57,9 @@ function presentExpense(item, request) {
     scopeLineId: item.scopeLineId || "",
     reapplied: Boolean(item.reapplied || request?.reapplied),
     drawId: item.drawId ? String(item.drawId) : "",
+    receiptId: item.receiptId ? String(item.receiptId) : "",
+    submittedByName: item.submittedByName || "",
+    lineKind: item.lineKind || "",
     createdAt: item.createdAt,
   }
 }
@@ -72,6 +81,97 @@ expensesRouter.get(
       requests: await withProofUrls(requests.map(presentRequest)),
       expenses: await withProofUrls(expenses.map((expense) => presentExpense(expense, requestsById.get(String(expense.requestId || ""))))),
     })
+  }),
+)
+
+// Expense tracking (staff): every item filed and waiting, with totals per property, category and buyer.
+expensesRouter.get(
+  "/tracking",
+  requirePermission("expenses.read"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const filters = readFilters(req.query)
+    const data = await trackingData(req.user, filters)
+    if (data.notFound) {
+      sendError(res, 404, "That property is not available.")
+      return
+    }
+    const rows = await withProofUrls(data.rows.map((row) => ({ ...row, proofFileIds: row.fileIds })))
+    res.json({ ...data, rows: rows.map(({ proofFileIds, ...row }) => row), filters })
+  }),
+)
+
+expensesRouter.get(
+  "/tracking/export",
+  requirePermission("expenses.read"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const filters = readFilters(req.query)
+    const format = ["csv", "xlsx", "quickbooks"].includes(req.query.format) ? req.query.format : "xlsx"
+    // QuickBooks gets only what is on the books.
+    const data = await trackingData(req.user, format === "quickbooks" ? { ...filters, status: "approved" } : filters)
+    if (data.notFound) {
+      sendError(res, 404, "That property is not available.")
+      return
+    }
+    if (format === "xlsx") {
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+      res.setHeader("Content-Disposition", `attachment; filename="${exportName(data, filters, "xlsx")}"`)
+      res.send(expensesWorkbook(data))
+      return
+    }
+    const body = format === "csv" ? expensesCsv(data) : quickbooksCsv(data, { account: req.query.account, paidFrom: req.query.paidFrom, useCategory: req.query.useCategory === "1" })
+    const name = format === "csv" ? exportName(data, filters, "csv") : exportName(data, filters, "csv").replace("synergifund-expenses", "synergifund-quickbooks-journal")
+    res.setHeader("Content-Type", "text/csv; charset=utf-8")
+    res.setHeader("Content-Disposition", `attachment; filename="${name}"`)
+    res.send(body)
+  }),
+)
+
+// The receipt photos behind the costs shown, in one zip (for audits and taxes): "2026-10-21 The Home Depot $58.24.jpg".
+expensesRouter.get(
+  "/tracking/receipts",
+  requirePermission("expenses.read"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const filters = readFilters(req.query)
+    const data = await trackingData(req.user, filters)
+    if (data.notFound) {
+      sendError(res, 404, "That property is not available.")
+      return
+    }
+    const totals = new Map()
+    const firstRow = new Map()
+    for (const row of data.rows) {
+      const key = row.receiptId || row.requestId || row.id
+      totals.set(key, (totals.get(key) || 0) + (toCents(row.amount) || 0))
+      for (const id of row.fileIds) if (!firstRow.has(id)) firstRow.set(id, { row, key })
+    }
+    const ids = [...firstRow.keys()]
+    if (!ids.length) {
+      sendError(res, 404, "No receipt photos match these filters.")
+      return
+    }
+    if (ids.length > RECEIPT_ZIP_MAX) {
+      sendError(res, 400, `That is ${ids.length} photos. Download up to ${RECEIPT_ZIP_MAX} at a time: choose a shorter date range.`)
+      return
+    }
+    const files = await DocumentFile.find({ _id: { $in: ids } })
+    const pages = new Map()
+    const names = new Map()
+    for (const file of files.sort((a, b) => ids.indexOf(String(a._id)) - ids.indexOf(String(b._id)))) {
+      const { row, key } = firstRow.get(String(file._id))
+      const page = (pages.get(key) || 0) + 1
+      pages.set(key, page)
+      const extension = (String(file.name || "").match(/\.[a-z0-9]{2,5}$/i)?.[0] || ".jpg").toLowerCase()
+      const many = row.fileIds.length > 1
+      names.set(String(file._id), `${row.date || "No date"} ${row.vendor || row.description || "Receipt"} $${fromCents(totals.get(key)).toFixed(2)}${many ? ` (page ${page})` : ""}${extension}`)
+    }
+    const zipName = exportName(data, filters, "zip").replace("synergifund-expenses", "synergifund-receipts")
+    res.setHeader("Content-Type", "application/zip")
+    res.setHeader("Content-Disposition", `attachment; filename="${zipName}"`)
+    res.setHeader("X-Content-Type-Options", "nosniff")
+    await writeZip(res, files, new Map(), { flat: true, names })
   }),
 )
 
@@ -221,7 +321,18 @@ expensesRouter.patch(
       }
     }
     if (req.body.title) request.title = String(req.body.title).trim()
-    if (req.body.amount != null && req.body.amount !== "") {
+    // A receipt's part is its items: the amount is what they add up to.
+    const itemized = (request.lines || []).length > 0
+    if (itemized && "lines" in req.body) {
+      const lines = readLines(req.body.lines)
+      if (lines.error) {
+        sendError(res, 400, lines.error)
+        return
+      }
+      request.lines = lines.list
+      request.amount = fromCents(lines.list.reduce((total, line) => total + toCents(line.amount), 0))
+    }
+    if (!itemized && req.body.amount != null && req.body.amount !== "") {
       const amount = Number(req.body.amount)
       if (!Number.isFinite(amount) || amount <= 0) {
         sendError(res, 400, "Enter an amount.")
@@ -232,9 +343,14 @@ expensesRouter.patch(
     if ("vendor" in req.body) request.vendor = req.body.vendor || ""
     if ("note" in req.body) request.note = req.body.note || ""
     if ("date" in req.body) request.date = req.body.date || ""
-    if (req.body.category && EXPENSE_CATEGORIES.includes(req.body.category)) request.category = req.body.category
+    if (!itemized && req.body.category && EXPENSE_CATEGORIES.includes(req.body.category)) request.category = req.body.category
     if ("scopeLineId" in req.body) request.scopeLineId = req.body.scopeLineId || ""
     const remove = new Set(fieldList(req.body.removeProof))
+    // The original receipt stays with its expenses (for audits and taxes).
+    if (request.receiptId) {
+      const receipt = await Receipt.findById(request.receiptId).select("fileIds")
+      for (const id of receipt?.fileIds || []) remove.delete(String(id))
+    }
     request.proofFileIds = (request.proofFileIds || []).filter((id) => !remove.has(String(id)))
     if (request.proofFileId && remove.has(String(request.proofFileId))) request.proofFileId = request.proofFileIds[0]
     for (const file of req.files || []) {
@@ -383,12 +499,10 @@ expensesRouter.post(
       return
     }
     Object.assign(request, decided)
-    const expense = await Expense.create({
+    const requester = request.requestedBy ? await User.findById(request.requestedBy).select("name") : null
+    const shared = {
       propertyId: request.propertyId,
       requestId: request._id,
-      title: request.title,
-      amount: request.amount,
-      category: request.category,
       vendor: request.vendor,
       date: request.date,
       entity: request.entity,
@@ -399,13 +513,47 @@ expensesRouter.post(
       scopeLineId: request.scopeLineId,
       reapplied: Boolean(request.reapplied),
       postedBy: req.user._id,
-    })
+      submittedBy: request.requestedBy,
+      submittedByName: requester?.name || "",
+      receiptId: request.receiptId,
+    }
+    // A receipt's part posts one cost per item (and its sales tax), so each keeps its own category.
+    const posted = (request.lines || []).length
+      ? await Expense.insertMany(request.lines.map((line) => ({ ...shared, title: line.description, amount: line.amount, category: line.category, lineKind: line.kind || "item" })))
+      : [await Expense.create({ ...shared, title: request.title, amount: request.amount, category: request.category })]
+    const expense = posted[0]
     await refreshRehabRemaining(expense.propertyId)
     await notify({ userIds: [request.requestedBy], title: "Expense approved", body: `${request.title} posted to the property books.`, href: "/expenses", event: "expense.approved" })
     await recordActivity({ user: req.user, title: "Expense approved", detail: request.reapplied ? `${request.title} · reapplied` : request.title, propertyId: request.propertyId, alertExcept: [request.requestedBy] })
-    res.json({ request: await withProofUrls(presentRequest(request)), expense: await withProofUrls(presentExpense(expense)) })
+    res.json({ request: await withProofUrls(presentRequest(request)), expense: await withProofUrls(presentExpense(expense)), expenses: await withProofUrls(posted.map((item) => presentExpense(item))) })
   }),
 )
+
+// The items of a receipt's part, as the contractor corrected them (JSON from the form).
+function readLines(value) {
+  let list = value
+  if (typeof list === "string") {
+    try {
+      list = JSON.parse(list)
+    } catch {
+      return { error: "The items could not be read." }
+    }
+  }
+  if (!Array.isArray(list) || !list.length) return { error: "Keep at least one item." }
+  if (list.length > RECEIPT_MAX_ITEMS) return { error: `A receipt can have up to ${RECEIPT_MAX_ITEMS} items.` }
+  const lines = []
+  for (const [index, line] of list.entries()) {
+    const description = String(line?.description || "").replace(/\s+/g, " ").trim().slice(0, 200)
+    const cents = toCents(line?.amount)
+    if (!description) return { error: `Item ${index + 1} needs a description.` }
+    if (cents == null || Number.isNaN(cents) || cents === 0) return { error: `Item ${index + 1} needs an amount.` }
+    const kind = line?.kind === "tax" ? "tax" : "item"
+    const category = kind === "tax" ? SALES_TAX : RECEIPT_CATEGORIES.includes(line?.category) ? line.category : "Other"
+    lines.push({ description, category, amount: fromCents(cents), kind })
+  }
+  if (lines.reduce((total, line) => total + toCents(line.amount), 0) <= 0) return { error: "The items need to add up to more than $0." }
+  return { list: lines }
+}
 
 function fieldList(value) {
   if (Array.isArray(value)) return value.flatMap(fieldList)

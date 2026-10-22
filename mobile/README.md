@@ -24,6 +24,12 @@ the Wi-Fi: `EXPO_PUBLIC_APP_URL=http://192.168.1.18:3000 npx expo start` (with `
   (`POST /api/documents/download-link`, five minutes, one address, GET only) and hands it to the app, which
   downloads it and opens the share sheet. The website knows it is inside the app from `window.SynergiFundNative`.
 - `src/config.js`: which website the app shows.
+- `src/phone.js` and `modules/synergi-native/` (Android, Kotlin): calls and notifications. Server messages arrive
+  through Firebase (`SynergiMessagingService`); a call rings with a call-style notification and, on a locked phone,
+  the incoming call screen (`IncomingCallActivity`, Answer and Decline); an ongoing call runs a foreground service
+  (`CallService`) with Hang up; everything else is a notification that opens its page. The page inside the app tells
+  the app when a call starts or ends and passes on rings it hears over its open connection.
+- `app.config.js`: switches Firebase on when `google-services.json` is in this folder (see `PLAY_STORE.md`).
 - `app.json`: name, icons, app id `com.synergifund.app` (iPhone and Android), and the camera, microphone and photo
   permissions. On Android the permissions the app does not need are removed (`blockedPermissions`), and the
   keyboard makes room for the field being typed in (Android apps draw edge to edge, so it would cover it otherwise).
@@ -36,12 +42,19 @@ the Wi-Fi: `EXPO_PUBLIC_APP_URL=http://192.168.1.18:3000 npx expo start` (with `
 See `PLAY_STORE.md`: what is set up, the steps (accounts, test build, store build, upload), the store listing text
 and suggested answers for the Play Console forms.
 
+## Testing on an Android emulator
+
+Native code (the `modules` folder) needs a development build, not Expo Go:
+```bash
+npx expo run:android
+```
+To point the app at a local copy of the website on the emulator, run `adb reverse tcp:3000 tcp:3000` and start Expo
+with `EXPO_PUBLIC_APP_URL=http://localhost:3000` (calls need a secure page, and localhost counts as one).
+
 ## Next steps
 
-- **Notifications**: `expo-notifications` and Apple push. Needs a development build and the Apple Developer account.
-- **Calls like WhatsApp**: `react-native-webrtc` for the call audio and video, CallKit (`react-native-callkeep`) for the
-  incoming-call screen and VoIP push to ring a locked phone. Needs a real iPhone (the simulator cannot ring) and the
-  Apple Developer account.
+- **iPhone calls and notifications**: CallKit and Apple push (VoIP) for the same ringing over the lock screen. Needs a
+  real iPhone and the Apple Developer account.
 - **Builds**: `npx eas-cli@latest build` makes iPhone and Android builds in the cloud (no Xcode or Android Studio on
   the Mac); TestFlight and Google Play internal testing for the team.
 

@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { useSession } from "../shell/Providers"
 import { api } from "../../lib/api"
-import { disablePush, enablePush, installApp, usePwa } from "../../lib/pwa"
+import { disablePush, enablePush, inNativeApp, installApp, usePwa } from "../../lib/pwa"
 import { InstallGuide } from "./InstallGuide"
 import { can } from "@synergifund/shared"
 import { CallCheck } from "../calls/CallCheck"
@@ -91,6 +91,16 @@ export function AppOptions() {
         {!installed && pwa.installable && <button type="button" className="primary" onClick={install}>Install</button>}
         {guide && <InstallGuide platform={pwa.platform} onClose={() => setGuide(false)} />}
       </div>
+      {inNativeApp() ? (
+        // The phone app gets calls and messages itself; Android's own settings turn them on or off.
+        <div className="settings-row">
+          <div>
+            <h2>Notifications</h2>
+            <p>{window.SynergiFundNative?.pushReady ? "This phone rings for calls and shows messages through the SynergiFund app. Change them in the phone's settings." : "Calls and messages reach this phone through the SynergiFund app once notifications are allowed in the phone's settings."}</p>
+          </div>
+          <button type="button" className="tool" onClick={() => window.ReactNativeWebView?.postMessage(JSON.stringify({ type: "open-settings" }))}>Phone settings</button>
+        </div>
+      ) : (
       <div className="settings-row">
         <div>
           <h2>Notifications</h2>
@@ -102,6 +112,7 @@ export function AppOptions() {
           <button type="button" className="primary" disabled={pending || !pwa.ready || pwa.permission === "denied" || (pwa.permission === "unsupported" && !iosHint)} onClick={turnOn}>{pending ? "Saving…" : "Turn on"}</button>
         )}
       </div>
+      )}
       {(error || message) && <p className={error ? "banner" : "settings-note"}>{error || message}</p>}
       <SoundSettings />
       {session?.user && can(session.user, "chat.use") && <CallCheck admin={admin} />}

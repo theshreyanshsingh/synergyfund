@@ -1,0 +1,26 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.synergifund.nativebridge'
+version = '0.1.0'
+
+android {
+  namespace "com.synergifund.nativebridge"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
+}
+
+dependencies {
+  // Push messages from the SynergiFund server (Firebase Cloud Messaging). Without google-services.json in the app,
+  // Firebase is simply not set up and the app runs without push.
+  implementation platform('com.google.firebase:firebase-bom:35.0.2')
+  implementation 'com.google.firebase:firebase-messaging'
+  implementation 'androidx.core:core-ktx:1.17.0'
+}

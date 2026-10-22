@@ -237,6 +237,11 @@ async function openStoredStream(file, part = null) {
   return Readable.fromWeb(response.Body)
 }
 
+// The S3 client, for backups (see backup.js). Only when all four AWS values are set.
+export function storageClient() {
+  return s3()
+}
+
 function s3() {
   const config = storageConfig()
   if (!s3Client) {

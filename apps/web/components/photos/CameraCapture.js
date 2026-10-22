@@ -29,6 +29,13 @@ function drawScaled(source, width, height) {
   return canvas
 }
 
+// A picked photo made ready to upload: turned the right way up and at most 2000 px (HEIC becomes JPEG where the browser
+// can read it). Anything else (a PDF) stays as it is.
+export async function prepareFile(file) {
+  if (!String(file.type || "").startsWith("image/") && !/\.(heic|heif)$/i.test(file.name || "")) return { id: makeId(), file, url: "" }
+  return fileToShot(file)
+}
+
 async function fileToShot(file) {
   try {
     const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" })

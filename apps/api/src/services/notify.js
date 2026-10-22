@@ -204,8 +204,9 @@ const ADMIN_ALERTS = new Map([
   ["Member access updated", { event: "member.updated", area: "members" }],
   ["Member password set", { event: "member.password", area: "members" }],
   ["Member removed", { event: "member.removed", area: "members" }],
+  ["Backup restored", { event: "backup.restored", area: "settings" }],
 ])
-const AREA_PAGES = { draws: "/draws", expenses: "/expenses", property: "/properties", properties: "/properties", documents: "/documents", companies: "/companies", payments: "/payments", loans: "/loans", members: "/members" }
+const AREA_PAGES = { draws: "/draws", expenses: "/expenses", property: "/properties", properties: "/properties", documents: "/documents", companies: "/companies", payments: "/payments", loans: "/loans", members: "/members", settings: "/settings?tab=backups" }
 // The same kind of change by the same person within this time is one alert ("Draw updated (3)"), so a bulk edit or
 // an import does not buzz every admin's phone once per row.
 const ALERT_GATHER_MS = 1500

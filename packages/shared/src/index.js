@@ -137,6 +137,170 @@ export const PAYMENT_RECURRENCES = ["One time", "Weekly", "Every 2 weeks", "Mont
 
 export const APPROVAL_THRESHOLD = 5000
 
+// What an item on a store receipt is, for receipts read from a photo. Sales tax is its own line on each property.
+export const RECEIPT_CATEGORIES = [
+  "Lumber & framing",
+  "Hardware & fasteners",
+  "Plumbing",
+  "Electrical",
+  "HVAC",
+  "Paint & drywall",
+  "Flooring & tile",
+  "Cabinets & counters",
+  "Doors & windows",
+  "Roofing & exterior",
+  "Appliances",
+  "Fixtures & lighting",
+  "Landscaping",
+  "Tools & equipment",
+  "Cleaning & supplies",
+  "Labor",
+  "Permits & fees",
+  "Rental & delivery",
+  "Other",
+]
+export const SALES_TAX = "Sales tax"
+export const RECEIPT_MAX_ITEMS = 150
+
+// Dollars to whole cents: "1,234.5" → 123450. Blank → null; anything unreadable → NaN.
+export function toCents(value) {
+  if (value == null || value === "") return null
+  const number = typeof value === "number" ? value : Number(String(value).replace(/[$,\s]/g, ""))
+  if (!Number.isFinite(number)) return NaN
+  const cents = Number((Math.abs(number) * 100).toFixed(6))
+  return Math.sign(number) * Math.round(cents)
+}
+
+export function fromCents(cents) {
+  return Math.round(Number(cents) || 0) / 100
+}
+
+// Splits whole cents by weights so the parts add up exactly (the leftover cents go to the largest fractions).
+export function shareOut(totalCents, weights) {
+  const sum = weights.reduce((total, weight) => total + Math.max(0, Number(weight) || 0), 0)
+  if (!sum) return weights.map(() => 0)
+  const sign = totalCents < 0 ? -1 : 1
+  const total = Math.abs(totalCents)
+  const raw = weights.map((weight) => (total * Math.max(0, Number(weight) || 0)) / sum)
+  const parts = raw.map(Math.floor)
+  let left = total - parts.reduce((sumOf, part) => sumOf + part, 0)
+  const order = raw.map((value, index) => ({ index, rest: value - Math.floor(value) })).sort((a, b) => b.rest - a.rest || a.index - b.index)
+  for (const { index } of order) {
+    if (left <= 0) break
+    parts[index] += 1
+    left -= 1
+  }
+  return parts.map((part) => sign * part)
+}
+
+function dollars(cents) {
+  return `${cents < 0 ? "-" : ""}$${(Math.abs(cents) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+// How a receipt lands on the properties: every item goes to one property, or is split between several by amount or
+// percentage, and the sales tax is shared in proportion to each property's items. The web page shows this before
+// Submit and the server files exactly this, so both always agree. Amounts are whole cents.
+// items: [{ description, category, amount, propertyId, split: { mode: "amount" | "percent", parts: [{ propertyId, value }] } }]
+// propertyIds: the properties picked for the receipt; the first one gets every item that is not given another.
+export function receiptPlan({ items = [], tax = 0, propertyIds = [], names = {} } = {}) {
+  const errors = []
+  const chosen = [...new Set((propertyIds || []).map(String).filter(Boolean))]
+  const label = (id) => names[id] || "A property"
+  const lines = []
+  // What the items add up to, whether or not a property is picked yet (the total shown while filling it in).
+  let itemsCents = 0
+  if (!chosen.length) errors.push("Choose the property this receipt is for.")
+  if (!items.length) errors.push("Add at least one item.")
+  if (items.length > RECEIPT_MAX_ITEMS) errors.push(`A receipt can have up to ${RECEIPT_MAX_ITEMS} items.`)
+  items.slice(0, RECEIPT_MAX_ITEMS).forEach((item, index) => {
+    const number = index + 1
+    const description = String(item?.description || "").replace(/\s+/g, " ").trim().slice(0, 200)
+    const category = RECEIPT_CATEGORIES.includes(item?.category) || item?.category === SALES_TAX ? item.category : "Other"
+    const cents = toCents(item?.amount)
+    if (!description) errors.push(`Item ${number} needs a description.`)
+    if (cents == null || Number.isNaN(cents)) {
+      errors.push(`Item ${number} needs an amount.`)
+      return
+    }
+    if (cents === 0) {
+      errors.push(`Item ${number} is $0.00. Enter its amount or remove it.`)
+      return
+    }
+    itemsCents += cents
+    if (!chosen.length) return
+    const parts = []
+    const seen = new Set()
+    for (const part of item?.split?.parts || []) {
+      const id = String(part?.propertyId || "")
+      if (!chosen.includes(id) || seen.has(id)) continue
+      const value = item.split.mode === "percent" ? Number(String(part.value ?? "").replace(/[%\s]/g, "")) : toCents(part.value)
+      if (part.value === "" || part.value == null || value === 0) continue
+      if (!Number.isFinite(value) || (item.split.mode === "percent" ? value < 0 : value * Math.sign(cents) < 0)) {
+        errors.push(`Item ${number}: enter each property's ${item.split.mode === "percent" ? "percentage" : "amount"} as a number.`)
+        return
+      }
+      seen.add(id)
+      parts.push({ propertyId: id, value })
+    }
+    const base = { description, category, itemIndex: index, kind: "item" }
+    if (item?.split && parts.length > 1) {
+      if (item.split.mode === "percent") {
+        const sum = parts.reduce((total, part) => total + part.value, 0)
+        if (Math.abs(sum - 100) > 0.01) {
+          errors.push(`Item ${number}: the percentages add up to ${Math.round(sum * 100) / 100}%, not 100%.`)
+          return
+        }
+        shareOut(cents, parts.map((part) => part.value)).forEach((share, at) => {
+          if (share) lines.push({ ...base, propertyId: parts[at].propertyId, cents: share })
+        })
+        return
+      }
+      const sum = parts.reduce((total, part) => total + part.value, 0)
+      if (sum !== cents) {
+        errors.push(`Item ${number}: the split adds up to ${dollars(sum)}, not ${dollars(cents)}.`)
+        return
+      }
+      for (const part of parts) lines.push({ ...base, propertyId: part.propertyId, cents: part.value })
+      return
+    }
+    const target = parts.length === 1 ? parts[0].propertyId : chosen.includes(String(item?.propertyId || "")) ? String(item.propertyId) : chosen[0]
+    lines.push({ ...base, propertyId: target, cents })
+  })
+  const taxCents = toCents(tax) ?? 0
+  if (Number.isNaN(taxCents)) errors.push("Enter the sales tax as a number.")
+  else if (taxCents < 0) errors.push("The sales tax can't be below $0.")
+  const used = chosen.filter((id) => lines.some((line) => line.propertyId === id))
+  const itemsOf = (id) => lines.filter((line) => line.propertyId === id).reduce((total, line) => total + line.cents, 0)
+  const taxLines = []
+  if (taxCents > 0 && !Number.isNaN(taxCents)) {
+    const weights = used.map((id) => Math.max(0, itemsOf(id)))
+    // With no item placed yet, the messages above already say what to fix.
+    if (!weights.some(Boolean)) {
+      if (lines.length) errors.push("The items need to add up to more than $0 to share the sales tax.")
+    }
+    else shareOut(taxCents, weights).forEach((share, at) => {
+      if (share) taxLines.push({ propertyId: used[at], description: SALES_TAX, category: SALES_TAX, cents: share, itemIndex: -1, kind: "tax" })
+    })
+  }
+  const all = [...lines, ...taxLines]
+  const properties = used.map((id) => {
+    const items = itemsOf(id)
+    const taxShare = taxLines.filter((line) => line.propertyId === id).reduce((total, line) => total + line.cents, 0)
+    return { propertyId: id, itemsCents: items, taxCents: taxShare, totalCents: items + taxShare, count: lines.filter((line) => line.propertyId === id).length }
+  })
+  for (const entry of properties) {
+    if (entry.totalCents <= 0) errors.push(`${label(entry.propertyId)} comes to ${dollars(entry.totalCents)}. Each property's share needs to be more than $0.`)
+  }
+  return {
+    errors: [...new Set(errors)],
+    lines: all,
+    properties,
+    itemsCents,
+    taxCents: Number.isNaN(taxCents) ? 0 : taxCents,
+    totalCents: itemsCents + (Number.isNaN(taxCents) ? 0 : Math.max(0, taxCents)),
+  }
+}
+
 export const PERMISSION_CATALOG = [
   { group: "Portfolio", id: PERMISSIONS.propertiesRead, label: "View properties", detail: "See the portfolio and open a property." },
   { group: "Portfolio", id: PERMISSIONS.propertiesWrite, label: "Edit properties", detail: "Add properties and change deal details." },

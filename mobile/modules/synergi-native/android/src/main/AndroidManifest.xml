@@ -1,0 +1,45 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <!-- Notifications (Android 13+ asks), and ringing over the lock screen for incoming calls. -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+  <uses-permission android:name="android.permission.VIBRATE" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <!-- Keeps a call going with the screen off: an "ongoing call" notification using the microphone (and camera on video). -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+
+  <application>
+    <!-- Messages from the SynergiFund server: calls, call endings and every other notification. -->
+    <service
+      android:name="com.synergifund.nativebridge.SynergiMessagingService"
+      android:exported="false">
+      <intent-filter>
+        <action android:name="com.google.firebase.MESSAGING_EVENT" />
+      </intent-filter>
+    </service>
+
+    <!-- The incoming call screen, shown over the lock screen. -->
+    <activity
+      android:name="com.synergifund.nativebridge.IncomingCallActivity"
+      android:exported="false"
+      android:excludeFromRecents="true"
+      android:launchMode="singleTop"
+      android:showWhenLocked="true"
+      android:turnScreenOn="true"
+      android:taskAffinity="com.synergifund.incomingcall"
+      android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+
+    <!-- Decline and Hang up from a notification, without opening the app. -->
+    <receiver
+      android:name="com.synergifund.nativebridge.CallActionReceiver"
+      android:exported="false" />
+
+    <!-- The ongoing call, kept alive while the phone is locked or another app is open. -->
+    <service
+      android:name="com.synergifund.nativebridge.CallService"
+      android:exported="false"
+      android:foregroundServiceType="microphone|camera" />
+  </application>
+</manifest>

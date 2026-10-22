@@ -171,6 +171,9 @@ export const ExpenseRequest = register(
       reapplied: { type: Boolean, default: false },
       drawId: { type: Schema.Types.ObjectId, ref: "Draw" },
       scopeLineId: String,
+      // This property's part of a receipt: its items (and its share of the sales tax), each posted as its own cost.
+      receiptId: { type: Schema.Types.ObjectId, ref: "Receipt", index: true },
+      lines: [{ description: String, category: String, amount: Number, kind: { type: String, default: "item" } }],
     },
     { timestamps: true },
   ),
@@ -195,9 +198,88 @@ export const Expense = register(
       scopeLineId: String,
       reapplied: { type: Boolean, default: false },
       postedBy: { type: Schema.Types.ObjectId, ref: "User" },
+      // Who bought it (the contractor on a receipt), kept by name too in case they leave the team.
+      submittedBy: { type: Schema.Types.ObjectId, ref: "User" },
+      submittedByName: String,
+      // One item (or the sales tax share) from a receipt.
+      receiptId: { type: Schema.Types.ObjectId, ref: "Receipt", index: true },
+      lineKind: String,
     },
     { timestamps: true },
   ),
+)
+
+// A store receipt photographed or uploaded, read by AI into items the buyer checks, then filed on one or more
+// properties. A draft until it is submitted; then each property's part is a request (or posted costs, when someone who
+// approves expenses files it).
+export const Receipt = register(
+  "Receipt",
+  new Schema(
+    {
+      status: { type: String, default: "Draft" },
+      vendor: { type: String, default: "" },
+      date: { type: String, default: "" },
+      tax: Number,
+      // The total printed on the receipt, to check the items against.
+      printedTotal: Number,
+      entity: { type: String, default: "Construction company" },
+      note: { type: String, default: "" },
+      items: [
+        {
+          description: String,
+          category: String,
+          quantity: Number,
+          amount: Number,
+          propertyId: String,
+          split: { mode: String, parts: [{ propertyId: String, value: String, _id: false }] },
+        },
+      ],
+      propertyIds: [{ type: Schema.Types.ObjectId, ref: "Property" }],
+      fileIds: [{ type: Schema.Types.ObjectId, ref: "Document" }],
+      read: { status: String, model: String, error: String, at: Date, warnings: [String] },
+      createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+      // Who bought it: the person who files it, or the contractor an admin files it for.
+      boughtBy: { type: Schema.Types.ObjectId, ref: "User" },
+      boughtByName: String,
+      submittedAt: Date,
+      totalCents: Number,
+      requestIds: [{ type: Schema.Types.ObjectId, ref: "ExpenseRequest" }],
+      expenseIds: [{ type: Schema.Types.ObjectId, ref: "Expense" }],
+    },
+    { timestamps: true },
+  ),
+)
+
+// Backups: the schedule (one record), and every stored file copied for the backups. Both stay out of the backups
+// themselves, so restoring never changes the schedule or forgets a copy.
+export const BackupSetting = register(
+  "BackupSetting",
+  new Schema(
+    {
+      key: { type: String, required: true, unique: true, default: "org" },
+      daily: { type: Boolean, default: true },
+      // Hour of the day on the team's clock (0–23).
+      hour: { type: Number, default: 2 },
+      keepDays: { type: Number, default: 30 },
+      lastAutoDay: String,
+      updatedBy: String,
+    },
+    { timestamps: true },
+  ),
+)
+
+export const BackupFileCopy = register(
+  "BackupFileCopy",
+  new Schema(
+    {
+      storage: { type: String, required: true },
+      storagePath: { type: String, required: true },
+      copiedAt: Date,
+      // When its document was first seen gone; the copy is removed once no kept backup can need it.
+      goneSince: Date,
+    },
+    { timestamps: true },
+  ).index({ storage: 1, storagePath: 1 }, { unique: true }),
 )
 
 export const DrawBudget = register(
@@ -519,6 +601,23 @@ export const PushSubscription = register(
   ),
 )
 
+// A phone running the SynergiFund app (Android), reached through Firebase Cloud Messaging for calls and notifications.
+// keyHash: the phone's own key (hashed), so Decline on a locked phone works without a sign-in cookie.
+export const NativeDevice = register(
+  "NativeDevice",
+  new Schema(
+    {
+      userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+      token: { type: String, required: true, unique: true },
+      platform: { type: String, default: "android" },
+      keyHash: { type: String, required: true },
+      appVersion: String,
+      lastSeenAt: Date,
+    },
+    { timestamps: true },
+  ),
+)
+
 export const MailMessage = register(
   "MailMessage",
   new Schema(
@@ -553,6 +652,9 @@ export const AgentThread = register(
           usage: { promptTokens: Number, completionTokens: Number, totalTokens: Number, calls: Number },
           agentRunDurationMs: { type: Number, default: null },
           error: { type: Boolean, default: false },
+          // Files the person attached to a question, and what was read from them (the agent works from these notes).
+          attachments: [{ fileId: { type: Schema.Types.ObjectId, ref: "Document" }, name: String, mime: String, size: Number, _id: false }],
+          attachmentNotes: String,
           at: { type: Date, default: Date.now },
         },
       ],

@@ -10,6 +10,7 @@ import { AppOptions } from "../../../components/pwa/AppOptions"
 import { AgentSettings } from "../../../components/agent/AgentSettings"
 import { TeammateSettings } from "../../../components/agent/TeammateSettings"
 import { PasswordInput } from "../../../components/ui/PasswordInput"
+import { BackupSettings } from "../../../components/settings/BackupSettings"
 
 const roleLabel = Object.fromEntries(ROLES.map((role) => [role.id, role.label]))
 
@@ -25,7 +26,7 @@ export default function SettingsPage() {
   const tabs = [
     { id: "profile", label: "Profile" },
     { id: "app", label: "App" },
-    ...(admin ? [{ id: "agent", label: "Agent" }] : []),
+    ...(admin ? [{ id: "agent", label: "Agent" }, { id: "backups", label: "Backups" }] : []),
   ]
 
   useEffect(() => {
@@ -104,6 +105,7 @@ export default function SettingsPage() {
         {tab === "app" && <AppOptions />}
         {tab === "agent" && admin && <AgentSettings />}
         {tab === "agent" && admin && <TeammateSettings />}
+        {tab === "backups" && admin && <BackupSettings />}
       </div>
     </div>
   )

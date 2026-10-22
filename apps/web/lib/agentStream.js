@@ -90,12 +90,23 @@ async function failure(response) {
   return new Error(data.error || "The agent could not answer. Try again.")
 }
 
-export async function streamAgent({ prompt, threadId, temporary = false }, { onPacket, onChatId }) {
+// files: attached File objects; the question then goes as a form so they travel with it.
+export async function streamAgent({ prompt, threadId, temporary = false, files = [] }, { onPacket, onChatId }) {
+  let body
+  if (files.length) {
+    body = new FormData()
+    body.append("prompt", prompt)
+    if (threadId) body.append("threadId", threadId)
+    if (temporary) body.append("temporary", "true")
+    for (const file of files) body.append("files", file, file.name)
+  } else {
+    body = JSON.stringify({ prompt, threadId: threadId || undefined, temporary: temporary || undefined })
+  }
   const response = await fetch("/api/agent/run", {
     method: "POST",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, threadId: threadId || undefined, temporary: temporary || undefined }),
+    headers: files.length ? {} : { "Content-Type": "application/json" },
+    body,
   })
   if (!response.ok || !response.body) throw await failure(response)
   const chatId = response.headers.get("x-chat-id")

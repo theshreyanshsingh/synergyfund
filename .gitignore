@@ -1,6 +1,34 @@
 node_modules
 .next
 apps/api/uploads
+# Backups kept on this server when Amazon S3 is not set up (Settings › Backups)
+apps/api/backups
 .env
 *.log
 .DS_Store
+
+# Firebase service account keys are secrets (they belong in the server's environment, never in git)
+*firebase-adminsdk*.json
+*service-account*.json
+
+# Other local env files (an .env.example stays shareable)
+.env.*
+!.env.example
+
+# Firebase app config: local builds read it from mobile/, cloud builds get it from the
+# GOOGLE_SERVICES_JSON file variable on Expo (see mobile/app.config.js)
+google-services.json
+GoogleService-Info.plist
+
+# App builds, signing keys and Android tooling
+*.apk
+*.aab
+*.keystore
+*.jks
+.gradle/
+.cxx/
+local.properties
+.idea/
+*.iml
+.expo/
+coverage/

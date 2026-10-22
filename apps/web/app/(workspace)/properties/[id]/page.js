@@ -19,6 +19,8 @@ import { PageSpinner } from "../../../../components/ui/Spinner"
 import { DetailFrame } from "../../../../components/ui/DetailFrame"
 import { CameraCapture } from "../../../../components/photos/CameraCapture"
 import { Icon } from "../../../../components/ui/Icon"
+import { ExpenseTracking } from "../../../../components/expenses/ExpenseTracking"
+import { AddReceipt } from "../../../../components/receipts/AddReceipt"
 
 export default function PropertyDetailPage({ params }) {
   const { id } = use(params)
@@ -26,7 +28,7 @@ export default function PropertyDetailPage({ params }) {
   const search = useSearchParams()
   const session = useSession()
   const detail = useApi(`/properties/${id}`)
-  const [section, setSection] = useState(() => (["overview", "draws", "arv", "financing", "documents"].includes(search.get("tab")) ? search.get("tab") : "overview"))
+  const [section, setSection] = useState(() => (["overview", "draws", "expenses", "arv", "financing", "documents"].includes(search.get("tab")) ? search.get("tab") : "overview"))
   const [note, setNote] = useState("")
   const [files, setFiles] = useState([])
   const [message, setMessage] = useState("")
@@ -37,6 +39,7 @@ export default function PropertyDetailPage({ params }) {
   const [addingDraw, setAddingDraw] = useState(false)
   const [shots, setShots] = useState([])
   const [uploading, setUploading] = useState(false)
+  const [trackingVersion, setTrackingVersion] = useState(0)
   const companies = useApi(editing && session?.user?.role !== "contractor" ? "/companies" : null)
   const property = detail.data?.property
   const editOpened = useRef(false)
@@ -58,6 +61,8 @@ export default function PropertyDetailPage({ params }) {
   const canPost = session?.user && can(session.user, "expenses.approve")
   const canRequest = session?.user && can(session.user, "expenses.submit") && !canPost
   const canDraws = session?.user && can(session.user, "draws.write")
+  const canFileReceipt = Boolean(session?.user && (can(session.user, "expenses.submit") || can(session.user, "expenses.approve")))
+  const seesExpenses = Boolean(session?.user && can(session.user, "expenses.read"))
   const spent = detail.data.rehabSpent || 0
   const postedCosts = (detail.data.expenses || []).filter((item) => item.costTreatment !== "Exclude from construction margin")
   const draws = detail.data.draws
@@ -87,7 +92,7 @@ export default function PropertyDetailPage({ params }) {
     { id: "overview", label: "Overview" },
   ]
   // The Documents tab shows the same files the property's company shows under Documents › Properties.
-  if (internal) tabs.push({ id: "draws", label: "Draws" }, { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" }, { id: "documents", label: "Documents" })
+  if (internal) tabs.push({ id: "draws", label: "Draws" }, ...(seesExpenses ? [{ id: "expenses", label: "Expenses" }] : []), { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" }, { id: "documents", label: "Documents" })
 
   if (!internal) {
     return (
@@ -118,6 +123,17 @@ export default function PropertyDetailPage({ params }) {
             onSaved={() => detail.reload()}
           />
         </section>
+        {canFileReceipt && (
+          <section className="panel property-card property-receipts">
+            <div className="property-card-head">
+              <div>
+                <h2>Receipts</h2>
+                <p className="property-missing">Bought materials for this house? Take a photo of the receipt. The items are read for you; check them and submit.</p>
+              </div>
+            </div>
+            <AddReceipt propertyId={id} label="Add a receipt" onFiled={() => detail.reload()} />
+          </section>
+        )}
         <section className="panel property-card">
           <h2>Weekly photos</h2>
           <p className="property-missing">Take this week’s photos on site. Photos from the library are not accepted.</p>
@@ -330,6 +346,18 @@ export default function PropertyDetailPage({ params }) {
             {message && <p className="property-missing">{message}</p>}
           </section>
         </>
+      )}
+
+      {section === "expenses" && seesExpenses && (
+        <section className="property-expenses">
+          <div className="property-card-head">
+            <div>
+              <h2>Expense tracking</h2>
+              <p className="property-missing">Everything spent on this house, item by item: approved costs and receipts waiting for approval.</p>
+            </div>
+          </div>
+          <ExpenseTracking propertyId={id} version={trackingVersion} action={canFileReceipt ? <AddReceipt propertyId={id} label="Add receipt" className="primary" onFiled={() => { setTrackingVersion((value) => value + 1); detail.reload() }} /> : null} />
+        </section>
       )}
 
       {section === "documents" && (

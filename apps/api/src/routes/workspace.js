@@ -1,6 +1,7 @@
 import { Router } from "express"
 import { can, drawFigures, TASK_LABELS, drawPulled, ensureTaskPermissions, resolveBudget, INSURANCE_FREQUENCIES, isRole, LOAN_STATUSES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
 import {
+  NativeDevice,
   Activity,
   AgentThread,
   Bill,
@@ -31,6 +32,7 @@ import { changeSummary, notify, notifyPropertyAccess, recordActivity } from "../
 import { unreadSplit, usesChat } from "../services/chat.js"
 import { disconnectChat, refreshChat } from "../services/chatHub.js"
 import { teamToday } from "../lib/dates.js"
+import { removeDraftReceipts } from "../services/receiptCleanup.js"
 
 export const workspaceRouter = Router()
 
@@ -945,9 +947,11 @@ workspaceRouter.post(
       return
     }
     user.passwordHash = await bcrypt.default.hash(password, 10)
-    // Sessions signed in with the old password end (for example, to lock out a lost phone).
+    // Sessions signed in with the old password end (for example, to lock out a lost phone), and its phones stop
+    // getting calls and messages until the app is signed in again.
     user.sessionVersion = (user.sessionVersion || 0) + 1
     await user.save()
+    await NativeDevice.deleteMany({ userId: user._id })
     const mail = await notify({
       userIds: [user._id],
       title: "Your SynergiFund password was reset",
@@ -997,6 +1001,8 @@ workspaceRouter.delete(
     await CalendarEvent.updateMany({ guestIds: user._id }, { $pull: { guestIds: user._id } })
     // Their tasks become unassigned (an assignee who no longer exists would stop the task from being saved).
     await Task.updateMany({ assigneeId: user._id }, { $unset: { assigneeId: 1 }, $set: { owner: "" } })
+    await NativeDevice.deleteMany({ userId: user._id })
+    await removeDraftReceipts(user._id)
     await user.deleteOne()
     disconnectChat([user._id])
     await recordActivity({ user: req.user, title: "Member removed", detail: user.name })

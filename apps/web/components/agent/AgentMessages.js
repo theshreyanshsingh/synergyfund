@@ -658,7 +658,24 @@ export function TasksCard({ todos }) {
   )
 }
 
-function UserPrompt({ text }) {
+// The files sent with a question: photos as small pictures, anything else as its name. Each opens the file.
+function PromptFiles({ files }) {
+  if (!files?.length) return null
+  return (
+    <div className="agent-prompt-files">
+      {files.map((file) => {
+        const image = String(file.mime || "").startsWith("image/") && file.url
+        return (
+          <a key={file.id} href={file.url || undefined} target="_blank" rel="noreferrer" className={image ? "agent-prompt-file is-image" : "agent-prompt-file"} title={file.name}>
+            {image ? <img src={file.url} alt={file.name} /> : <><Icon name="file" size={14} /><span>{file.name}</span></>}
+          </a>
+        )
+      })}
+    </div>
+  )
+}
+
+function UserPrompt({ text, files }) {
   const ref = useRef(null)
   const [collapsible, setCollapsible] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -671,7 +688,8 @@ function UserPrompt({ text }) {
   return (
     <div className="agent-prompt-card">
       <div className="agent-prompt-body">
-        {collapsible ? (
+        <PromptFiles files={files} />
+        {!text ? null : collapsible ? (
           <div
             className="agent-prompt-collapse"
             role="button"
@@ -772,7 +790,7 @@ export function AgentMessages({ rows, streaming, emptyHint }) {
           <div key={turn.user?.id || `lead-${turnIndex}`} className="agent-turn">
             {turn.user && (
               <div className="agent-prompt-sticky" style={{ zIndex: 10 + (turns.length - turnIndex) }}>
-                <UserPrompt text={turn.user.content} />
+                <UserPrompt text={turn.user.content} files={turn.user.attachments} />
               </div>
             )}
             <div className="agent-replies">

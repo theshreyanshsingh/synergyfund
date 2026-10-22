@@ -13,7 +13,7 @@ import { expensesRouter } from "./routes/expenses.js"
 import { drawsRouter } from "./routes/draws.js"
 import { documentsRouter } from "./routes/documents.js"
 import { workspaceRouter } from "./routes/workspace.js"
-import { pushRouter } from "./routes/push.js"
+import { nativeDecline, pushRouter } from "./routes/push.js"
 import { agentRouter } from "./routes/agent.js"
 import { chatRouter } from "./routes/chat.js"
 import { allowedOrigins, attachChatSockets } from "./services/chatHub.js"
@@ -26,6 +26,9 @@ import { rememberAppOrigin } from "./services/appUrl.js"
 import { recoverNotes } from "./services/callNotes.js"
 import { startTeammate } from "./services/siteAgent.js"
 import { teammateRouter } from "./routes/teammate.js"
+import { backupsRouter } from "./routes/backups.js"
+import { receiptsRouter } from "./routes/receipts.js"
+import { restoreRunning, startBackupSchedule } from "./services/backup.js"
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../..")
 dotenv.config({ path: path.join(repoRoot, ".env"), quiet: true })
@@ -41,7 +44,17 @@ app.use((req, res, next) => {
   next()
 })
 app.get("/health", (req, res) => res.json({ ok: true }))
+// While a backup is being restored nothing can be changed (it would be lost), and sign-in waits too.
+app.use((req, res, next) => {
+  if (restoreRunning() && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    res.status(503).json({ error: "SynergiFund is restoring a backup. Try again in a minute." })
+    return
+  }
+  next()
+})
 app.use("/auth", authRouter)
+// The Android app declines a call from the lock screen with its own device key (no sign-in cookie there).
+app.post("/push/native/decline", nativeDecline)
 
 const api = express.Router()
 api.use(requireAuth)
@@ -56,6 +69,8 @@ api.use("/agent", agentRouter)
 api.use("/chat", chatRouter)
 api.use("/calls", callsRouter)
 api.use("/teammate", teammateRouter)
+api.use("/backups", backupsRouter)
+api.use("/receipts", receiptsRouter)
 api.use(workspaceRouter)
 app.use(api)
 
@@ -74,6 +89,7 @@ await seedIfEmpty()
 await closeStaleCalls()
 await recoverNotes().catch((error) => console.error("Call notes recovery failed", error))
 await startTeammate().catch((error) => console.error("AI teammate failed to start", error))
+startBackupSchedule()
 const server = http.createServer(app)
 attachChatSockets(server)
 server.listen(port, () => {
