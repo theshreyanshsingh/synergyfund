@@ -20,6 +20,7 @@ import { DetailFrame } from "../../../../components/ui/DetailFrame"
 import { CameraCapture } from "../../../../components/photos/CameraCapture"
 import { Icon } from "../../../../components/ui/Icon"
 import { ExpenseTracking } from "../../../../components/expenses/ExpenseTracking"
+import { CostSheet } from "../../../../components/expenses/CostSheet"
 import { AddReceipt } from "../../../../components/receipts/AddReceipt"
 
 export default function PropertyDetailPage({ params }) {
@@ -40,6 +41,7 @@ export default function PropertyDetailPage({ params }) {
   const [shots, setShots] = useState([])
   const [uploading, setUploading] = useState(false)
   const [trackingVersion, setTrackingVersion] = useState(0)
+  const [costVersion, setCostVersion] = useState(0)
   const companies = useApi(editing && session?.user?.role !== "contractor" ? "/companies" : null)
   const property = detail.data?.property
   const editOpened = useRef(false)
@@ -352,11 +354,18 @@ export default function PropertyDetailPage({ params }) {
         <section className="property-expenses">
           <div className="property-card-head">
             <div>
-              <h2>Expense tracking</h2>
-              <p className="property-missing">Everything spent on this house, item by item: approved costs and receipts waiting for approval.</p>
+              <h2>Cost sheet</h2>
+              <p className="property-missing">Everything this house has cost, from the purchase price to every rehab and material cost.</p>
             </div>
           </div>
-          <ExpenseTracking propertyId={id} version={trackingVersion} action={canFileReceipt ? <AddReceipt propertyId={id} label="Add receipt" className="primary" onFiled={() => { setTrackingVersion((value) => value + 1); detail.reload() }} /> : null} />
+          <CostSheet propertyId={id} version={costVersion} onChanged={() => { setTrackingVersion((value) => value + 1); detail.reload() }} />
+          <div className="property-card-head property-expenses-next">
+            <div>
+              <h2>Expense tracking</h2>
+              <p className="property-missing">Receipts and costs item by item, by category and buyer, with exports for QuickBooks.</p>
+            </div>
+          </div>
+          <ExpenseTracking propertyId={id} version={trackingVersion} action={canFileReceipt ? <AddReceipt propertyId={id} label="Add receipt" className="primary" onFiled={() => { setTrackingVersion((value) => value + 1); setCostVersion((value) => value + 1); detail.reload() }} /> : null} />
         </section>
       )}
 

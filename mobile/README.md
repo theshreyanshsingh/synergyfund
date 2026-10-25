@@ -30,6 +30,10 @@ the Wi-Fi: `EXPO_PUBLIC_APP_URL=http://192.168.1.18:3000 npx expo start` (with `
   (`CallService`) with Hang up; everything else is a notification that opens its page. The page inside the app tells
   the app when a call starts or ends and passes on rings it hears over its open connection.
 - `app.config.js`: switches Firebase on when `google-services.json` is in this folder (see `PLAY_STORE.md`).
+- `patches/`: a fix to `react-native-webview` (applied by `patch-package` on every install). On Android a file input
+  that takes a photo now asks for the camera permission instead of doing nothing, and a picker that cannot open no
+  longer leaves the page's other file inputs stuck. When upgrading `react-native-webview`, check whether the new
+  version still needs it, and remake or delete the patch.
 - `app.json`: name, icons, app id `com.synergifund.app` (iPhone and Android), and the camera, microphone and photo
   permissions. On Android the permissions the app does not need are removed (`blockedPermissions`), and the
   keyboard makes room for the field being typed in (Android apps draw edge to edge, so it would cover it otherwise).

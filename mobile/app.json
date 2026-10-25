@@ -3,17 +3,20 @@
     "name": "SynergiFund",
     "slug": "synergifund",
     "scheme": "synergifund",
-    "version": "1.0.0",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#111111",
     "ios": {
       "bundleIdentifier": "com.synergifund.app",
+      "buildNumber": "1",
+      "appleTeamId": "8PJ65D3FXP",
       "supportsTablet": true,
       "infoPlist": {
         "NSCameraUsageDescription": "SynergiFund uses the camera for site photos, receipts and video calls.",
         "NSMicrophoneUsageDescription": "SynergiFund uses the microphone for calls and voice messages.",
+        "NSSpeechRecognitionUsageDescription": "SynergiFund turns your voice into text when you speak a question to the Agent.",
         "NSPhotoLibraryUsageDescription": "SynergiFund lets you attach photos and files from your library.",
         "NSPhotoLibraryAddUsageDescription": "SynergiFund saves downloaded photos to your library when you ask it to.",
         "ITSAppUsesNonExemptEncryption": false
@@ -21,7 +24,7 @@
     },
     "android": {
       "package": "com.synergifund.app",
-      "versionCode": 1,
+      "versionCode": 4,
       "adaptiveIcon": {
         "backgroundColor": "#111111",
         "foregroundImage": "./assets/android-icon-foreground.png",

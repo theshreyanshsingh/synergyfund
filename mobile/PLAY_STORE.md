@@ -99,21 +99,26 @@ The store file is `android/app/build/outputs/bundle/release/app-release.aab`; th
 ## Store listing
 
 - **App name**: SynergiFund
-- **Short description** (74 of 80 characters):
-  Run your real estate portfolio: properties, draws, payments and team chat.
+- **Short description** (78 of 80 characters):
+  Properties, draws, receipts, payments and team chat for real estate investors.
 - **Full description**:
 
   SynergiFund is the private workspace for real estate investment teams. Everything about each house, from the
   purchase to the last draw, is in one place your partners, staff and contractors can open from their phone.
 
   • Properties: purchase price, ARV, rehab budget, loans and next steps for every house.
+  • Receipts: contractors photograph a receipt and the store, items and tax are read for them. They check it, pick
+    the property (or split it between several) and submit it for approval.
+  • Expense tracking: what is being spent on each property, by category and by contractor, with exports to Excel,
+    CSV and QuickBooks.
   • Rehab draws: budgets by line item, what was drawn, what is pending and what is left to withdraw.
   • Payments: mortgage payments, insurance, taxes and other bills, with what is due this week.
-  • Expenses: contractors send costs with receipt photos; the team approves them.
   • Documents: contracts, closing statements and photos filed by property and company, with downloads to your phone.
-  • Team chat and calls: a room for every property, channels, direct messages, and voice and video calls.
+  • Team chat and calls: a room for every property, channels, direct messages, and voice and video calls that ring
+    like a phone call, even when the app is closed.
   • Tasks and calendar: who does what, and when.
-  • The SynergiFund Agent: ask about your portfolio in plain words, work out an ARV from sold comps, or draft an email.
+  • The SynergiFund Agent: ask about your portfolio in plain words, attach a photo or a document, work out an ARV
+    from sold comps, or draft an email.
 
   Accounts are created by your workspace administrator.
 

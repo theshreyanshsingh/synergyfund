@@ -1,14 +1,14 @@
 import { Router } from "express"
-import { APPROVAL_THRESHOLD, EXPENSE_CATEGORIES, RECEIPT_CATEGORIES, RECEIPT_MAX_ITEMS, SALES_TAX, fromCents, toCents } from "@synergifund/shared"
+import { APPROVAL_THRESHOLD, COST_TYPES, EXPENSE_CATEGORIES, RECEIPT_CATEGORIES, RECEIPT_MAX_ITEMS, SALES_TAX, costSheet, costType, fromCents, toCents } from "@synergifund/shared"
 import { DocumentFile, Draw, Expense, ExpenseRequest, Property, Receipt, User } from "../models/index.js"
 import { writeZip } from "./documents.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { ownsProperty, propertyFilter } from "../services/access.js"
 import { saveUploadedFile, upload, withProofUrls } from "../services/files.js"
-import { notify, recordActivity } from "../services/notify.js"
+import { changeSummary, notify, recordActivity } from "../services/notify.js"
 import { refreshRehabRemaining } from "./draws.js"
 import { teamToday } from "../lib/dates.js"
-import { expensesCsv, expensesWorkbook, exportName, quickbooksCsv, readFilters, trackingData } from "../services/expenseTracking.js"
+import { costSheetCsv, costSheetName, costSheetWorkbook, expensesCsv, expensesWorkbook, exportName, quickbooksCsv, readFilters, trackingData } from "../services/expenseTracking.js"
 
 export const expensesRouter = Router()
 
@@ -172,6 +172,164 @@ expensesRouter.get(
     res.setHeader("Content-Disposition", `attachment; filename="${zipName}"`)
     res.setHeader("X-Content-Type-Options", "nosniff")
     await writeZip(res, files, new Map(), { flat: true, names })
+  }),
+)
+
+// ---- Property cost sheet: everything a house has cost, from the purchase on ----
+
+const COST_ID = /^[a-f0-9]{24}$/i
+const COST_DAY = /^\d{4}-\d{2}-\d{2}$/
+const COST_FIELDS = [
+  ["title", "Description"],
+  ["amount", "Amount", true],
+  ["date", "Date"],
+  ["vendor", "Paid to"],
+  ["category", "Type"],
+]
+
+// Costs added by hand (on the sheet, a draw or a paid bill) can be changed here. A receipt's items and an approved
+// request's costs stay as they were filed, so they always match the receipt or request behind them.
+function costLock(expense) {
+  if (expense.receiptId) return "This cost is an item on a receipt, so it stays as the receipt was filed."
+  if (expense.requestId) return "This cost came from an approved request, so it stays as it was approved."
+  return ""
+}
+
+async function sheetFor(req, propertyId) {
+  const property = COST_ID.test(String(propertyId || "")) ? await Property.findOne({ _id: propertyId, ...propertyFilter(req.user) }).select("address purchasePrice purchaseDate arv").lean() : null
+  if (!property) return null
+  const data = await trackingData(req.user, readFilters({ propertyId: String(property._id) }))
+  if (data.notFound) return null
+  const rows = data.rows.map((row) => ({ ...row, editable: row.state === "approved" && !row.receiptId && !row.requestId }))
+  return { property, sheet: costSheet(property, rows) }
+}
+
+expensesRouter.get(
+  "/cost-sheet",
+  requirePermission("expenses.read"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const found = await sheetFor(req, req.query.propertyId)
+    if (!found) {
+      sendError(res, 404, "That property is not available.")
+      return
+    }
+    const { property, sheet } = found
+    // Receipt photos open from the sheet, like they do in expense tracking (one lookup for every row).
+    const lists = [...sheet.groups.flatMap((group) => group.types), sheet.loanPayoffs]
+    const shown = await withProofUrls(lists.flatMap((entry) => entry.rows.map((row) => ({ ...row, proofFileIds: row.fileIds || [] }))))
+    let at = 0
+    for (const entry of lists) entry.rows = entry.rows.map(() => { const { proofFileIds, ...row } = shown[at++]; return row })
+    res.json({
+      property: { id: String(property._id), address: property.address, purchasePrice: property.purchasePrice ?? null, purchaseDate: property.purchaseDate || "", arv: property.arv ?? null },
+      sheet,
+      canAdd: req.permissions.includes("expenses.approve"),
+      canEditPurchase: req.permissions.includes("properties.write"),
+    })
+  }),
+)
+
+expensesRouter.get(
+  "/cost-sheet/export",
+  requirePermission("expenses.read"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const found = await sheetFor(req, req.query.propertyId)
+    if (!found) {
+      sendError(res, 404, "That property is not available.")
+      return
+    }
+    const { property, sheet } = found
+    if (req.query.format === "csv") {
+      res.setHeader("Content-Type", "text/csv; charset=utf-8")
+      res.setHeader("Content-Disposition", `attachment; filename="${costSheetName(property, "csv")}"`)
+      res.send(costSheetCsv(sheet))
+      return
+    }
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    res.setHeader("Content-Disposition", `attachment; filename="${costSheetName(property, "xlsx")}"`)
+    res.send(costSheetWorkbook(sheet, property))
+  }),
+)
+
+async function findCost(req, res) {
+  const expense = COST_ID.test(req.params.id) ? await Expense.findById(req.params.id) : null
+  const property = expense?.propertyId ? await Property.findById(expense.propertyId) : null
+  if (!expense || (expense.propertyId && (!property || !ownsProperty(req.user, property)))) {
+    sendError(res, 404, "That cost was not found.")
+    return null
+  }
+  const locked = costLock(expense)
+  if (locked) {
+    sendError(res, 400, locked)
+    return null
+  }
+  return expense
+}
+
+expensesRouter.patch(
+  "/costs/:id",
+  requirePermission("expenses.approve"),
+  asyncHandler(async (req, res) => {
+    const expense = await findCost(req, res)
+    if (!expense) return
+    const body = req.body || {}
+    const next = {}
+    if ("title" in body) {
+      const title = String(body.title || "").trim().slice(0, 200)
+      if (!title) {
+        sendError(res, 400, "Enter a description.")
+        return
+      }
+      next.title = title
+    }
+    if ("amount" in body) {
+      const cents = toCents(body.amount)
+      if (cents == null || Number.isNaN(cents) || cents <= 0) {
+        sendError(res, 400, "Enter an amount above $0.")
+        return
+      }
+      next.amount = fromCents(cents)
+    }
+    if ("date" in body) {
+      const date = String(body.date || "")
+      if (!COST_DAY.test(date)) {
+        sendError(res, 400, "Enter the date as a day, like 2026-10-24.")
+        return
+      }
+      next.date = date
+    }
+    if ("vendor" in body) next.vendor = String(body.vendor || "").trim().slice(0, 120)
+    if ("type" in body) {
+      const kind = COST_TYPES[body.type]
+      if (!kind) {
+        sendError(res, 400, "Choose what kind of cost this is.")
+        return
+      }
+      // Only a real change of type moves it: an unchanged type keeps the category it was filed with (a Contractor
+      // cost is already Labor).
+      if (costType(expense.category, expense.title) !== body.type) Object.assign(next, { category: kind.category, entity: kind.entity, costTreatment: kind.costTreatment })
+    }
+    const before = expense.toObject()
+    Object.assign(expense, next)
+    await expense.save()
+    await refreshRehabRemaining(expense.propertyId)
+    const changes = changeSummary(before, expense.toObject(), COST_FIELDS)
+    await recordActivity({ user: req.user, title: "Cost updated", detail: [before.title, changes || "Saved with no changes"].join(" · "), propertyId: expense.propertyId })
+    res.json({ expense: await withProofUrls(presentExpense(expense)) })
+  }),
+)
+
+expensesRouter.delete(
+  "/costs/:id",
+  requirePermission("expenses.approve"),
+  asyncHandler(async (req, res) => {
+    const expense = await findCost(req, res)
+    if (!expense) return
+    await expense.deleteOne()
+    await refreshRehabRemaining(expense.propertyId)
+    await recordActivity({ user: req.user, title: "Cost deleted", detail: [expense.title, `$${Number(expense.amount || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, expense.date || ""].filter(Boolean).join(" · "), propertyId: expense.propertyId })
+    res.json({ ok: true })
   }),
 )
 

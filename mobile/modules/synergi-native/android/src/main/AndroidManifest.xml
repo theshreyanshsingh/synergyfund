@@ -10,6 +10,14 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
 
+  <!-- A file input that takes a photo opens the phone's camera app; Android 11+ only lets the app find it when asked
+       for here. -->
+  <queries>
+    <intent>
+      <action android:name="android.media.action.IMAGE_CAPTURE" />
+    </intent>
+  </queries>
+
   <application>
     <!-- Messages from the SynergiFund server: calls, call endings and every other notification. -->
     <service

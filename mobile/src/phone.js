@@ -25,6 +25,15 @@ export function pathFromLink(url) {
   return path.startsWith("/") && !path.startsWith("//") ? path : ""
 }
 
+// Goes to a notification's page while the app is open. The site switches pages in place, so a call in progress
+// carries on; a page that does not (signed out, or an older site) loads it fresh.
+export function openScript(origin, path) {
+  return `(function () {
+  var event = new CustomEvent("synergifund:open", { detail: ${JSON.stringify(path)}, cancelable: true });
+  if (window.dispatchEvent(event)) location.href = ${JSON.stringify(`${origin}${path}`)};
+})(); true;`
+}
+
 // Registers this phone's push address for whoever is signed in on the page; the page passes back the phone's key.
 export function registerScript(token) {
   return `(function () {

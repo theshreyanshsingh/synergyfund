@@ -273,3 +273,52 @@ export function quickbooksCsv(data, { account = "", paidFrom = "", useCategory =
   }
   return csv(out.map((row) => row.map((cell) => String(cell))))
 }
+
+// ---- Property cost sheet exports ----
+
+const SHEET_HEADER = ["Group", "Type", "Date", "Description", "Paid to", "Amount", "Status", "Bought by", "Receipt"]
+
+function sheetLines(sheet) {
+  const out = []
+  for (const group of sheet.groups) {
+    for (const entry of group.types) {
+      for (const row of entry.rows) {
+        out.push([group.label, entry.type, row.date || "", row.description || "", row.vendor || "", Number(row.amount) || 0, row.state === "approved" ? (row.kind === "purchase" ? "" : "Approved") : `${row.status || "Waiting"} (not in the total)`, row.buyer || "", row.fileIds?.length ? receiptLinks(row) : ""])
+      }
+    }
+  }
+  for (const row of sheet.loanPayoffs.rows) {
+    out.push(["Not counted", "Loan payoff", row.date || "", row.description || "", row.vendor || "", Number(row.amount) || 0, "Repays the loan (not in the total)", row.buyer || "", row.fileIds?.length ? receiptLinks(row) : ""])
+  }
+  return out
+}
+
+export function costSheetName(property, extension) {
+  return `${["synergifund-cost-sheet", slug(property.address), teamToday()].filter(Boolean).join("-")}.${extension}`
+}
+
+export function costSheetCsv(sheet) {
+  return `﻿${csv([SHEET_HEADER, ...sheetLines(sheet)])}`
+}
+
+// Two tabs: the summary by group and type (with the all-in total), and every line.
+export function costSheetWorkbook(sheet, property) {
+  const book = xlsx.utils.book_new()
+  const sheetOf = (rows, widths) => {
+    const ws = xlsx.utils.aoa_to_sheet(rows)
+    ws["!cols"] = widths.map((wch) => ({ wch }))
+    return ws
+  }
+  const summary = [[property.address], ["Cost sheet", "", teamToday()], [], ["Group", "Type", "Total", "Items", "Waiting for approval"]]
+  for (const group of sheet.groups) {
+    for (const entry of group.types) summary.push([group.label, entry.type, entry.total, entry.count, entry.pending || ""])
+    summary.push([`${group.label} total`, "", group.total, "", group.pending || ""])
+    summary.push([])
+  }
+  summary.push(["All-in cost", "", sheet.total, "", sheet.pending || ""])
+  if (sheet.loanPayoffs.count) summary.push(["Loan payoffs (not counted)", "", sheet.loanPayoffs.total, sheet.loanPayoffs.count])
+  xlsx.utils.book_append_sheet(book, sheetOf(summary, [30, 26, 14, 8, 20]), "Summary")
+  const lines = sheetLines(sheet).map((line) => line.map((cell) => (typeof cell === "number" ? cell : String(cell ?? ""))))
+  xlsx.utils.book_append_sheet(book, sheetOf([SHEET_HEADER, ...lines, [], ["All-in cost", "", "", "", "", sheet.total]], [16, 24, 11, 40, 24, 13, 30, 20, 60]), "All costs")
+  return xlsx.write(book, { type: "buffer", bookType: "xlsx" })
+}

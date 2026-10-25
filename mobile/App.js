@@ -7,15 +7,18 @@ import Constants from "expo-constants"
 import { WebView } from "react-native-webview"
 import { APP_ORIGIN, APP_URL, isAppPage } from "./src/config"
 import { downloadAndShare } from "./src/downloads"
-import { pathFromLink, phone, registerScript, signedOutPage, visibilityScript } from "./src/phone"
+import { openScript, pathFromLink, phone, registerScript, signedOutPage, visibilityScript } from "./src/phone"
 
 SplashScreen.preventAutoHideAsync()
 SplashScreen.setOptions({ duration: 250, fade: true })
 
 const VERSION = Constants.expoConfig?.version || "1.0.0"
 
-// Tells the website it is inside the app before any of its code runs (downloads come to the app, install prompts hide).
-const BEFORE_LOAD = `window.SynergiFundNative = ${JSON.stringify({ platform: Platform.OS, version: VERSION })}; true;`
+// Tells the website it is inside the app before any of its code runs (downloads come to the app, install prompts hide),
+// and tells the app a new page has started: the page before it, and any call it had, is gone.
+const BEFORE_LOAD = `window.SynergiFundNative = ${JSON.stringify({ platform: Platform.OS, version: VERSION })};
+try { window.ReactNativeWebView.postMessage(JSON.stringify({ type: "page-start" })); } catch (e) {}
+true;`
 
 // Reports the page's background color, so the area behind the phone's clock and home bar matches the light or dark theme.
 const AFTER_LOAD = `(function () {
@@ -57,6 +60,8 @@ function Shell() {
   const canGoBack = useRef(false)
   // The first page: the app's start page, or the page a notification or Answer opened the app on.
   const [start, setStart] = useState("")
+  // Whether the page has a call going (the app shows the ongoing call notification while it does).
+  const inCall = useRef(false)
   // The phone registers for calls and messages once per page load, when someone is signed in.
   const needsRegister = useRef(true)
   const asked = useRef(false)
@@ -71,10 +76,10 @@ function Shell() {
     }
     Linking.getInitialURL().then(open).catch(() => open(""))
     const timer = setTimeout(() => open(""), 1500)
-    // A notification or Answer while the app is already open: go to that page.
+    // A notification or Answer while the app is already open: go to that page (without reloading the site).
     const subscription = Linking.addEventListener("url", ({ url }) => {
       const path = pathFromLink(url)
-      if (path) web.current?.injectJavaScript(`location.href = ${JSON.stringify(`${APP_ORIGIN}${path}`)}; true;`)
+      if (path) web.current?.injectJavaScript(openScript(APP_ORIGIN, path))
     })
     return () => {
       clearTimeout(timer)
@@ -168,8 +173,15 @@ function Shell() {
       phone.configure(APP_ORIGIN, data.deviceKey)
       askOnce()
     }
+    // A new page loaded (a reload, or a link the site could not open in place): a call on the page before it has
+    // ended, so its ongoing call notification goes too. The page says again if it joins a call.
+    if (data.type === "page-start") {
+      if (inCall.current && phone) phone.endCall()
+      inCall.current = false
+    }
     // A call started or ended on the page: keep it going with the screen off, with Hang up in the notification.
     if (data.type === "call-state" && phone) {
+      inCall.current = Boolean(data.active)
       if (data.active) phone.startCall(String(data.title || "SynergiFund call"), String(data.body || "Ongoing call"), Boolean(data.video))
       else phone.endCall()
     }

@@ -117,11 +117,19 @@ export const EXPENSE_CATEGORIES = [
   "Property rehab",
   "Shared rehab",
   "Contractor",
+  "Labor",
   "Materials",
+  "Permits & fees",
   "Technology",
   "Acquisition",
+  "Closing costs",
   "Financing",
+  "Interest",
+  "Loan payoff",
   "Utilities",
+  "HOA",
+  "Insurance",
+  "Property taxes",
   "Insurance & taxes",
   "Selling costs",
   "Other",
@@ -298,6 +306,111 @@ export function receiptPlan({ items = [], tax = 0, propertyIds = [], names = {} 
     itemsCents,
     taxCents: Number.isNaN(taxCents) ? 0 : taxCents,
     totalCents: itemsCents + (Number.isNaN(taxCents) ? 0 : Math.max(0, taxCents)),
+  }
+}
+
+// ---- Property cost sheet ----
+
+// Everything a house has cost, from the purchase on, in the order it is spent. Each cost lands on one type, read
+// from its category (older costs keep the categories they were filed with, so those map too).
+export const COST_GROUPS = [
+  { id: "purchase", label: "Purchase", types: ["Purchase price", "Closing costs"] },
+  { id: "holding", label: "Holding costs", types: ["Insurance", "Property taxes", "Interest & loan payments", "Utilities & HOA"] },
+  { id: "rehab", label: "Rehab", types: ["Labor", "Materials", "Permits & other rehab"] },
+  { id: "selling", label: "Selling", types: ["Selling costs"] },
+  { id: "other", label: "Other", types: ["Other costs"] },
+]
+
+// What a cost added on the sheet is saved as. Rehab costs count against the rehab budget; the rest do not.
+const HOLD = { entity: "Investment company", costTreatment: "Exclude from construction margin" }
+const BUILD = { entity: "Construction company", costTreatment: "Include in construction margin" }
+export const COST_TYPES = {
+  "Closing costs": { category: "Closing costs", ...HOLD, hint: "Title, settlement, recording, lender fees" },
+  Insurance: { category: "Insurance", ...HOLD, hint: "Hazard, builder's risk, flood" },
+  "Property taxes": { category: "Property taxes", ...HOLD, hint: "County or city property tax" },
+  "Interest & loan payments": { category: "Interest", ...HOLD, hint: "Monthly interest or loan payment" },
+  "Utilities & HOA": { category: "Utilities", ...HOLD, hint: "Power, water, gas, HOA dues" },
+  Labor: { category: "Labor", ...BUILD, hint: "Contractor or crew pay" },
+  Materials: { category: "Materials", ...BUILD, hint: "Lumber, fixtures, supplies" },
+  "Permits & other rehab": { category: "Permits & fees", ...BUILD, hint: "Permits, inspections, dumpsters" },
+  "Selling costs": { category: "Selling costs", ...HOLD, hint: "Agent commission, staging, closing" },
+  "Other costs": { category: "Other", ...HOLD, hint: "Anything else" },
+}
+
+const LOAN_PAYOFF = "Loan payoff"
+
+// The sheet type for a cost's category. A loan payoff repays borrowed money (the purchase price already counts), so it
+// is listed apart and left out of the total.
+export function costType(category, title = "") {
+  const name = String(category || "")
+  if (name === "Acquisition" || name === "Closing costs") return "Closing costs"
+  if (name === "Insurance") return "Insurance"
+  if (name === "Property taxes") return "Property taxes"
+  if (name === "Insurance & taxes") return /\btax/i.test(title) ? "Property taxes" : "Insurance"
+  if (name === "Loan payoff" || (name === "Financing" && /pay\s?off/i.test(title))) return LOAN_PAYOFF
+  if (name === "Financing" || name === "Interest") return "Interest & loan payments"
+  if (name === "Utilities" || name === "HOA") return "Utilities & HOA"
+  if (name === "Contractor" || name === "Labor") return "Labor"
+  if (name === "Permits & fees" || name === "Property rehab" || name === "Shared rehab") return "Permits & other rehab"
+  if (name === "Selling costs") return "Selling costs"
+  if (name === "Materials" || name === SALES_TAX || RECEIPT_CATEGORIES.includes(name)) return name === "Other" ? "Other costs" : "Materials"
+  return "Other costs"
+}
+
+// The sheet for one property: the purchase price plus every cost row (approved, and waiting for approval), grouped by
+// type. Totals count approved costs; waiting ones are listed with their own total. Amounts are added in whole cents.
+// rows: [{ id, state: "approved" | "pending", date, description, vendor, category, amount, ... }]
+export function costSheet({ purchasePrice = null, purchaseDate = "" } = {}, rows = []) {
+  const types = new Map(COST_GROUPS.flatMap((group) => group.types.map((type) => [type, { type, cents: 0, pendingCents: 0, count: 0, rows: [] }])))
+  const price = toCents(purchasePrice)
+  const hasPrice = price != null && !Number.isNaN(price)
+  if (hasPrice) {
+    const entry = types.get("Purchase price")
+    entry.cents = price
+    entry.count = 1
+    entry.rows.push({ id: "purchase-price", kind: "purchase", state: "approved", status: "Approved", date: String(purchaseDate || ""), description: "Purchase price", vendor: "", category: "Purchase price", amount: fromCents(price) })
+  }
+  const payoffs = { cents: 0, count: 0, rows: [] }
+  for (const row of rows) {
+    const cents = toCents(row.amount) || 0
+    const type = costType(row.category, row.description)
+    if (type === LOAN_PAYOFF) {
+      if (row.state === "approved") payoffs.cents += cents
+      payoffs.count += 1
+      payoffs.rows.push({ ...row, type })
+      continue
+    }
+    const entry = types.get(type)
+    if (row.state === "approved") entry.cents += cents
+    else entry.pendingCents += cents
+    entry.count += 1
+    entry.rows.push({ ...row, type })
+  }
+  const newest = (a, b) => String(b.date || "").localeCompare(String(a.date || "")) || String(b.id).localeCompare(String(a.id))
+  let total = 0
+  let pending = 0
+  let pendingCount = 0
+  const groups = COST_GROUPS.map((group) => {
+    const list = group.types.map((type) => {
+      const entry = types.get(type)
+      entry.rows.sort(newest)
+      return { type, total: fromCents(entry.cents), pending: fromCents(entry.pendingCents), count: entry.count, rows: entry.rows, addable: Boolean(COST_TYPES[type]) }
+    })
+    const cents = group.types.reduce((sum, type) => sum + types.get(type).cents, 0)
+    const waiting = group.types.reduce((sum, type) => sum + types.get(type).pendingCents, 0)
+    total += cents
+    pending += waiting
+    pendingCount += list.reduce((sum, entry) => sum + entry.rows.filter((row) => row.state !== "approved").length, 0)
+    return { id: group.id, label: group.label, total: fromCents(cents), pending: fromCents(waiting), count: list.reduce((sum, entry) => sum + entry.count, 0), types: list }
+  })
+  return {
+    groups,
+    total: fromCents(total),
+    pending: fromCents(pending),
+    pendingCount,
+    purchasePrice: hasPrice ? fromCents(price) : null,
+    purchaseDate: String(purchaseDate || ""),
+    loanPayoffs: { total: fromCents(payoffs.cents), count: payoffs.count, rows: payoffs.rows.sort(newest) },
   }
 }
 

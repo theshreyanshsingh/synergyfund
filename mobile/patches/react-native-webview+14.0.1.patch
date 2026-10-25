@@ -1,0 +1,66 @@
+diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewModuleImpl.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewModuleImpl.java
+index 89b0aeb..d45e20b 100644
+--- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewModuleImpl.java
++++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewModuleImpl.java
+@@ -43,6 +43,7 @@ public class RNCWebViewModuleImpl implements ActivityEventListener {
+ 
+     public static final int PICKER = 1;
+     public static final int FILE_DOWNLOAD_PERMISSION_REQUEST = 1;
++    public static final int CAMERA_PERMISSION_REQUEST = 2;
+ 
+     final private ReactApplicationContext mContext;
+ 
+@@ -207,7 +208,33 @@ public class RNCWebViewModuleImpl implements ActivityEventListener {
+         return null;
+     }
+ 
++    // SynergiFund patch: an input that takes a photo (capture) asks for the camera permission first instead of doing
++    // nothing, and a picker that cannot open hands the page an empty answer, so the next file input still opens.
+     public boolean startPhotoPickerIntent(final String[] acceptTypes, final boolean allowMultiple, final ValueCallback<Uri[]> callback, final boolean isCaptureEnabled) {
++        if (isCaptureEnabled && needsCameraPermission()) {
++            Activity current = mContext.getCurrentActivity();
++            if (current instanceof PermissionAwareActivity) {
++                ((PermissionAwareActivity) current).requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST, new PermissionListener() {
++                    @Override
++                    public boolean onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
++                        if (requestCode != CAMERA_PERMISSION_REQUEST) return false;
++                        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
++                            openPhotoPicker(acceptTypes, allowMultiple, callback, true);
++                        } else {
++                            callback.onReceiveValue(null);
++                            if (mFilePathCallback == callback) mFilePathCallback = null;
++                            Toast.makeText(mContext, "Allow the camera for SynergiFund in Settings to take a photo here.", Toast.LENGTH_LONG).show();
++                        }
++                        return true;
++                    }
++                });
++                return true;
++            }
++        }
++        return openPhotoPicker(acceptTypes, allowMultiple, callback, isCaptureEnabled);
++    }
++
++    private boolean openPhotoPicker(final String[] acceptTypes, final boolean allowMultiple, final ValueCallback<Uri[]> callback, final boolean isCaptureEnabled) {
+         mFilePathCallback = callback;
+         Activity activity = mContext.getCurrentActivity();
+ 
+@@ -238,14 +265,12 @@ public class RNCWebViewModuleImpl implements ActivityEventListener {
+             chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, extraIntents.toArray(new Parcelable[]{}));
+         }
+ 
+-        if (chooserIntent != null) {
+-            if (chooserIntent.resolveActivity(activity.getPackageManager()) != null) {
+-                activity.startActivityForResult(chooserIntent, PICKER);
+-            } else {
+-                Log.w("RNCWebViewModule", "there is no Activity to handle this Intent");
+-            }
++        if (chooserIntent != null && chooserIntent.resolveActivity(activity.getPackageManager()) != null) {
++            activity.startActivityForResult(chooserIntent, PICKER);
+         } else {
+-            Log.w("RNCWebViewModule", "there is no Camera permission");
++            Log.w("RNCWebViewModule", chooserIntent == null ? "there is no Camera permission" : "there is no Activity to handle this Intent");
++            callback.onReceiveValue(null);
++            mFilePathCallback = null;
+         }
+ 
+         return true;

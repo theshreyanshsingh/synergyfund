@@ -84,10 +84,14 @@ object Push {
     return NotificationManagerCompat.from(context).areNotificationsEnabled()
   }
 
-  // Opens a page of the app (a path such as /calls?answer=…), or the app's start page.
+  // Opens a page of the app (a path such as /calls?answer=…). With no page, the app comes back as it was left, so a
+  // call in progress (the ongoing call notification) carries on.
   fun openIntent(context: Context, path: String?): Intent {
-    val target = if (path.isNullOrBlank()) "/" else path
-    return Intent(Intent.ACTION_VIEW, Uri.parse("synergifund://open?path=" + Uri.encode(target)))
+    if (path.isNullOrBlank()) {
+      return (context.packageManager.getLaunchIntentForPackage(context.packageName) ?: Intent(Intent.ACTION_MAIN).setPackage(context.packageName))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    }
+    return Intent(Intent.ACTION_VIEW, Uri.parse("synergifund://open?path=" + Uri.encode(path)))
       .setPackage(context.packageName)
       .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
   }

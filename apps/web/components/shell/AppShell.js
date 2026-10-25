@@ -44,6 +44,18 @@ export function AppShell({ children }) {
     if (!allowed) router.replace("/properties")
   }, [pathname, session, router])
 
+  // A notification tapped in the phone app opens its page here without reloading, so a call in progress carries on.
+  useEffect(() => {
+    function onOpen(event) {
+      const path = String(event.detail || "")
+      if (!path.startsWith("/") || path.startsWith("//")) return
+      event.preventDefault()
+      router.push(path)
+    }
+    window.addEventListener("synergifund:open", onOpen)
+    return () => window.removeEventListener("synergifund:open", onOpen)
+  }, [router])
+
   useEffect(() => {
     function onKey(event) {
       if (event.key === "Escape") setMenuOpen(false)

@@ -296,12 +296,14 @@ const BILL_FIELDS = [
   ["vendor", "Payee"],
 ]
 
+// The cost a paid bill becomes (its category on the property's cost sheet).
 const EXPENSE_FOR_PAYMENT = {
   Mortgage: "Financing",
-  "Loan payoff": "Financing",
-  Insurance: "Insurance & taxes",
-  "Property taxes": "Insurance & taxes",
+  "Loan payoff": "Loan payoff",
+  Insurance: "Insurance",
+  "Property taxes": "Property taxes",
   Utilities: "Utilities",
+  HOA: "HOA",
   Contractor: "Contractor",
   Materials: "Materials",
 }
