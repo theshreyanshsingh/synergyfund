@@ -1,6 +1,6 @@
 import { Router } from "express"
 import mongoose from "mongoose"
-import { ChatChannel, ChatMessage, ChatRead, DocumentFile, User } from "../models/index.js"
+import { ChatChannel, ChatMessage, ChatRead, ChatReport, DocumentFile, User } from "../models/index.js"
 import { asyncHandler, sendError } from "../lib/http.js"
 import {
   MAX_MESSAGE,
@@ -112,6 +112,10 @@ async function alertPeople({ channel, property, message, author, people, parent 
     if (direct || mentioned || followers.has(id)) recipients.add(id)
   }
   if (!recipients.size) return
+  // Someone who blocked the author hears nothing from them.
+  const blockers = await User.find({ _id: { $in: [...recipients] }, blockedUserIds: author._id }).select("_id")
+  for (const person of blockers) recipients.delete(String(person._id))
+  if (!recipients.size) return
   const where = channelLabel(channel, property, author, people)
   const preview = plainText(message.text, people) || (message.attachments.length ? `Shared ${message.attachments.length === 1 ? "a file" : `${message.attachments.length} files`}` : "")
   const body = preview.length > 280 ? `${preview.slice(0, 280)}…` : preview
@@ -160,6 +164,19 @@ async function findMessage(user, messageId) {
   return found ? { message, ...found } : null
 }
 
+// Direct messages between people where one blocked the other are not allowed (either way).
+async function blockProblem(user, otherIds) {
+  const others = otherIds.map(String).filter((id) => id !== String(user._id))
+  if (!others.length) return ""
+  const mine = new Set((user.blockedUserIds || []).map(String))
+  const people = await User.find({ _id: { $in: others } }).select("_id name blockedUserIds")
+  const blockedByMe = people.filter((person) => mine.has(String(person._id)))
+  if (blockedByMe.length) return `You blocked ${blockedByMe.map((person) => person.name).join(", ")}. Unblock them to send a message.`
+  const blockedMe = people.filter((person) => (person.blockedUserIds || []).some((id) => String(id) === String(user._id)))
+  if (blockedMe.length) return `You can't send messages to ${blockedMe.map((person) => person.name).join(", ")}.`
+  return ""
+}
+
 async function markRead(user, channel, at = new Date()) {
   const read = await ChatRead.findOneAndUpdate(
     { userId: user._id, channelId: channel._id },
@@ -198,6 +215,7 @@ chatRouter.get(
       // The AI teammate is listed (so it can be @mentioned and named) but marked, so it is not offered for calls or DMs.
       people: visiblePeople.map((person) => ({ id: String(person._id), name: person.name, email: person.email, role: person.role, online: isOnline(person._id), ...(person.bot ? { bot: true } : {}) })),
       online: onlineIds(),
+      blocked: (req.user.blockedUserIds || []).map(String),
     })
   }),
 )
@@ -394,6 +412,8 @@ chatRouter.post(
         return sendError(res, 403, "You can message admins and people you already talk to.")
       }
     }
+    const blocked = await blockProblem(req.user, people.map((person) => person._id))
+    if (blocked) return sendError(res, 403, blocked)
     const key = directKey(people.map((person) => person._id))
     let channel = await ChatChannel.findOne({ kind: "direct", directKey: key })
     if (!channel) {
@@ -451,6 +471,10 @@ chatRouter.post(
     const found = await loadChannel(req.user, req.params.id)
     if (!found) return sendError(res, 404, "That conversation was not found.")
     const { channel, property } = found
+    if (channel.kind === "direct") {
+      const blocked = await blockProblem(req.user, channel.memberIds || [])
+      if (blocked) return sendError(res, 403, blocked)
+    }
     const text = String(req.body.text || "").replace(/\r\n/g, "\n").trim()
     if (text.length > MAX_MESSAGE) return sendError(res, 400, `Keep messages under ${MAX_MESSAGE.toLocaleString("en-US")} characters.`)
     const fileIds = (Array.isArray(req.body.fileIds) ? req.body.fileIds : []).filter((id) => mongoose.isValidObjectId(id)).slice(0, 10)
@@ -535,6 +559,61 @@ chatRouter.delete(
     res.json({ ok: true })
   }),
 )
+
+// Report a message to the admins: they are told at once (with a link to it) and can delete it or remove the person.
+chatRouter.post(
+  "/messages/:id/report",
+  asyncHandler(async (req, res) => {
+    const found = await findMessage(req.user, req.params.id)
+    if (!found) return sendError(res, 404, "That message was not found.")
+    const { message, channel, property } = found
+    if (message.deletedAt) return sendError(res, 400, "That message was already deleted.")
+    if (String(message.userId || "") === String(req.user._id)) return sendError(res, 400, "You can't report your own message. Delete it instead.")
+    const reason = String(req.body?.reason || "").replace(/\s+/g, " ").trim().slice(0, 500)
+    const open = await ChatReport.findOne({ messageId: message._id, reporterId: req.user._id, status: "Open" })
+    if (open) return res.json({ ok: true, already: true })
+    const people = await audience(channel, property)
+    const said = plainText(message.text, people) || (message.attachments.length ? `Shared ${message.attachments.length === 1 ? "a file" : `${message.attachments.length} files`}` : "")
+    await ChatReport.create({
+      messageId: message._id,
+      channelId: channel._id,
+      reporterId: req.user._id,
+      reporterName: req.user.name,
+      authorId: message.userId,
+      authorName: message.userName,
+      text: said.slice(0, 2000),
+      reason,
+    })
+    const where = channelLabel(channel, property, req.user, people)
+    const quote = said.length > 160 ? `${said.slice(0, 160)}…` : said
+    await notify({
+      roles: ["admin"],
+      exceptUserIds: [req.user._id],
+      title: "Chat message reported",
+      body: `${req.user.name} reported a message by ${message.userName || "someone"} in ${where}: "${quote}"${reason ? ` · Reason: ${reason}` : ""}`,
+      href: chatHref(channel, message.parentId),
+      event: "chat.reported",
+    })
+    await recordActivity({ user: req.user, title: "Chat message reported", detail: `A message by ${message.userName || "someone"} in ${where}${reason ? ` · ${reason}` : ""}` })
+    res.status(201).json({ ok: true })
+  }),
+)
+
+// Block or unblock a person: their messages are hidden for you, and neither of you can message the other directly.
+async function setBlocked(req, res, blocked) {
+  const id = String(req.params.id || "")
+  if (!mongoose.isValidObjectId(id)) return sendError(res, 404, "That person was not found.")
+  if (id === String(req.user._id)) return sendError(res, 400, "You can't block yourself.")
+  const person = await User.findById(id).select("_id name bot")
+  if (!person || person.bot) return sendError(res, 404, "That person was not found.")
+  const updated = await User.findByIdAndUpdate(req.user._id, blocked ? { $addToSet: { blockedUserIds: person._id } } : { $pull: { blockedUserIds: person._id } }, { new: true }).select("blockedUserIds")
+  const list = (updated?.blockedUserIds || []).map(String)
+  emitToUsers([String(req.user._id)], "blocked", { blocked: list })
+  res.json({ blocked: list })
+}
+
+chatRouter.post("/people/:id/block", asyncHandler((req, res) => setBlocked(req, res, true)))
+chatRouter.delete("/people/:id/block", asyncHandler((req, res) => setBlocked(req, res, false)))
 
 chatRouter.post(
   "/messages/:id/reactions",

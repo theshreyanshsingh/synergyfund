@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useSession } from "../shell/Providers"
 import { FormSheet, InfoSheet } from "../ui/FormSheet"
@@ -10,7 +10,7 @@ import { PageSpinner, Spinner } from "../ui/Spinner"
 import { api } from "../../lib/api"
 import { emitChat, setActiveChat, useChatEvents, useChatStatus } from "../../lib/chatSocket"
 import { Avatar, ChatComposer } from "./ChatComposer"
-import { ChatMessages } from "./ChatMessages"
+import { ChatMessages, ChatSafety, ReportDialog } from "./ChatMessages"
 import { channelTitle, clock, dayLabel, nameOf, plain, sameDay } from "./chatFormat"
 import { CallButtons } from "../calls/CallButtons"
 
@@ -94,6 +94,13 @@ export function ChatApp({ mode = "channels" }) {
   const [search, setSearch] = useState(null)
   const [marks, setMarks] = useState({})
   const [threadVersion, setThreadVersion] = useState(0)
+  // People this person blocked, the message being reported, and a short note after reporting or blocking.
+  const [blocked, setBlocked] = useState(() => new Set())
+  const [reporting, setReporting] = useState(null)
+  const [toast, setToast] = useState("")
+  const blockedRef = useRef(blocked)
+  blockedRef.current = blocked
+  const toastTimer = useRef(0)
   const markedFor = useRef("")
   const drafts = useRef(DRAFTS)
   const readTimers = useRef(new Map())
@@ -128,6 +135,7 @@ export function ChatApp({ mode = "channels" }) {
       setChannels(data.channels)
       setPeopleList(data.people)
       setOnline(new Set(data.online))
+      setBlocked(new Set(data.blocked || []))
       setError("")
       return data
     } catch (err) {
@@ -319,7 +327,7 @@ export function ChatApp({ mode = "channels" }) {
       const direct = channel?.kind === "direct"
       const mentioned = direct || message.mentionIds.includes(me) || message.mentionsChannel
       setChannels((current) => current.map((item) => (item.id === message.channelId ? { ...item, unread: (item.unread || 0) + (message.parentId ? 0 : 1), mentions: (item.mentions || 0) + (mentioned ? 1 : 0) } : item)))
-      if (mentioned) alertDesktop(message, channel)
+      if (mentioned && !blockedRef.current.has(message.userId)) alertDesktop(message, channel)
     },
     "message:update": ({ message }) => {
       setFeeds((current) => (current[message.channelId]?.loaded ? { ...current, [message.channelId]: { ...current[message.channelId], items: replaceMessage(current[message.channelId].items, message) } } : current))
@@ -342,6 +350,7 @@ export function ChatApp({ mode = "channels" }) {
       setChannels((current) => current.filter((channel) => channel.id !== id))
       if (activeRef.current === id) open("", { replace: true })
     },
+    blocked: ({ blocked: list }) => setBlocked(new Set(list || [])),
     read: ({ channelId, lastReadAt }) => setChannels((current) => current.map((channel) => (channel.id === channelId ? { ...channel, unread: 0, mentions: 0, lastReadAt: lastReadAt || channel.lastReadAt } : channel))),
     typing: ({ channelId, parentId, userId, name }) => {
       const key = parentId || channelId
@@ -410,6 +419,28 @@ export function ChatApp({ mode = "channels" }) {
     }
   }
 
+  function note(text) {
+    setToast(text)
+    window.clearTimeout(toastTimer.current)
+    toastTimer.current = window.setTimeout(() => setToast(""), 5000)
+  }
+
+  async function setBlock(personId, on) {
+    const data = await api(`/chat/people/${personId}/block`, { method: on ? "POST" : "DELETE" })
+    setBlocked(new Set(data.blocked))
+    const name = nameOf(people, personId)
+    note(on ? `You blocked ${name}. Their messages are hidden from you, and you can't message each other directly.` : `You unblocked ${name}.`)
+  }
+
+  const safety = useMemo(() => ({
+    blocked,
+    onReport: (message) => setReporting(message),
+    onBlock: (personId) => setBlock(personId, true).catch((err) => setError(err.message)),
+    onUnblock: (personId) => setBlock(personId, false).catch((err) => setError(err.message)),
+    // setBlock only reads state through setters and refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [blocked, people])
+
   async function loadOlder(id) {
     const feed = feeds[id]
     if (!feed?.items.length || feed.loadingOlder) return
@@ -460,6 +491,7 @@ export function ChatApp({ mode = "channels" }) {
   const panel = threadId && active ? "thread" : details && active ? "details" : ""
 
   return (
+    <ChatSafety.Provider value={safety}>
     <div className={`chat-page${activeId ? " has-active" : ""}${panel ? " has-panel" : ""}`}>
       <ChatNav
         mode={mode}
@@ -570,7 +602,22 @@ export function ChatApp({ mode = "channels" }) {
       {dialog === "direct" && (
         <StartDirect peopleList={peopleList.filter((person) => person.id !== me)} online={online} onClose={() => setDialog("")} onStart={startDirect} />
       )}
+      {reporting && (
+        <ReportDialog
+          message={reporting}
+          people={people}
+          onClose={() => setReporting(null)}
+          onSubmit={async ({ reason, alsoBlock }) => {
+            await api(`/chat/messages/${reporting.id}/report`, { method: "POST", body: { reason } })
+            if (alsoBlock && reporting.userId) await setBlock(reporting.userId, true)
+            setReporting(null)
+            note(alsoBlock ? `Reported, and you blocked ${nameOf(people, reporting.userId)}. The admins have been told.` : "Reported. The admins have been told and will look at it.")
+          }}
+        />
+      )}
+      {toast && <div className="chat-toast" role="status">{toast}</div>}
     </div>
+    </ChatSafety.Provider>
   )
 }
 
@@ -1032,6 +1079,7 @@ function DetailsPanel({ channel, people, peopleList, me, isAdmin, online, member
               <Avatar name={person.name} online={online.has(person.id)} size="sm" />
               <span><b>{person.name}{person.id === me ? " (you)" : ""}{channel.kind === "channel" && person.id === channel.createdBy && <em className="chat-member-role">Channel admin</em>}</b><small>{person.email}</small></span>
               {person.id !== me && !person.bot && <button type="button" className="chat-member-action" onClick={() => onMessage(person.id)}>Message</button>}
+              {person.id !== me && !person.bot && <BlockButton personId={person.id} />}
               {manage && channel.memberList && person.id !== me && (
                 <button type="button" className="chat-member-action is-danger" onClick={() => patch({ removeMemberIds: [person.id] })}>Remove</button>
               )}
@@ -1229,5 +1277,16 @@ function SearchResults({ search, channels, people, me, onClose, onOpen }) {
         </div>
       </div>
     </div>
+  )
+}
+
+// Block or unblock someone from the people in a conversation.
+function BlockButton({ personId }) {
+  const safety = useContext(ChatSafety)
+  const on = safety.blocked.has(personId)
+  return (
+    <button type="button" className={on ? "chat-member-action" : "chat-member-action is-danger"} onClick={() => (on ? safety.onUnblock(personId) : safety.onBlock(personId))}>
+      {on ? "Unblock" : "Block"}
+    </button>
   )
 }

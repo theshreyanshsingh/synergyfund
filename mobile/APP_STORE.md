@@ -66,14 +66,18 @@ TestFlight and can be picked for review. Run it with `EXPO_PUBLIC_APP_URL` unset
 
 ## App Review information
 
-- **Sign-in required**: give Apple a reviewer account that cannot see real business data, for example a Contractor
-  assigned only to a demo property, and say in the notes that it is a test account.
-- **Notes**: SynergiFund is the workspace app for real estate investment teams; accounts are created by each team's
-  administrator, so there is no sign-up in the app. The test account shows a demo property with receipts, draws and
-  chat.
-- Apple may answer that an app for one company's team belongs in **Unlisted App Distribution** (on the App Store, but
-  only through a link) instead of the public store. If so, request it at developer.apple.com/contact/request/unlisted-app
-  and resubmit the same build.
+- **Sign-in required**: a reviewer account that cannot see real business data: a Contractor assigned only to a demo
+  property with sample data. Admin, finance and member accounts see the whole real portfolio.
+- **First review (October 2026)**: Apple asked for more information (Guideline 2.1, usual for a new developer
+  account): a screen recording on a real iPhone starting from launching the app, the app's purpose and audience,
+  review instructions with the demo login, the outside services it uses, regional differences and any regulation.
+  The full reply, what to record and how to set up the reviewer account are in
+  `~/Desktop/SynergiFund App Store/App Review reply.txt`; keep the same text in App Review Information › Notes.
+- **Chat safety (Guideline 1.2)**: anyone can report a message (the admins are notified at once with a link to it)
+  and block a person (their messages are hidden; no direct messages either way). Admins can delete any message and
+  remove people.
+- **Distribution**: requested as Unlisted App Distribution (on the App Store, reachable only by link), because the
+  app is for teams whose administrators create the accounts (Guideline 3.2).
 
 ## App Privacy (App Store Connect › App Privacy)
 

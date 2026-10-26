@@ -1,13 +1,17 @@
 "use client"
 
-import { Fragment, useEffect, useRef, useState } from "react"
+import { Fragment, createContext, useContext, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { Icon } from "../ui/Icon"
+import { Modal } from "../ui/Modal"
 import { Avatar } from "./ChatComposer"
 import { ChatText } from "./ChatMarkdown"
-import { QUICK_EMOJI, clock, dayLabel, fileSize, fromEditable, nameOf, sameDay, toEditable } from "./chatFormat"
+import { QUICK_EMOJI, clock, dayLabel, fileSize, fromEditable, nameOf, plain, sameDay, toEditable } from "./chatFormat"
 
 const GROUP_GAP = 5 * 60 * 1000
+
+// Keeping chat safe: who this person blocked, and reporting a message or blocking someone (set up by the chat page).
+export const ChatSafety = createContext({ blocked: new Set(), onReport: null, onBlock: null, onUnblock: null })
 
 export function ChatMessages({ messages, people, me, isAdmin, online, unreadAfter, inThread, onReact, onReply, onEdit, onDelete }) {
   let lastAuthor = ""
@@ -53,9 +57,27 @@ export function ChatMessages({ messages, people, me, isAdmin, online, unreadAfte
 function ChatMessage({ message, people, me, compact, canDelete, online, inThread, onReact, onReply, onEdit, onDelete }) {
   const [editing, setEditing] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [revealed, setRevealed] = useState(false)
+  const safety = useContext(ChatSafety)
   const author = people.get(message.userId)?.name || message.userName || "Someone"
   const mine = message.userId === me
   const mentioned = message.mentionsChannel || message.mentionIds.includes(me)
+
+  // Someone this person blocked: their message stays folded away unless they choose to see it.
+  if (!mine && message.userId && safety.blocked.has(message.userId) && !message.deleted && !revealed && message.kind !== "call" && message.kind !== "notes") {
+    return (
+      <div className="chat-message is-compact is-blocked" id={`message-${message.id}`}>
+        <div className="chat-gutter" />
+        <div className="chat-body">
+          <p className="chat-removed">
+            Message from {author}, whom you blocked.{" "}
+            <button type="button" className="chat-inline-link" onClick={() => setRevealed(true)}>Show</button>
+            {safety.onUnblock && <> · <button type="button" className="chat-inline-link" onClick={() => safety.onUnblock(message.userId)}>Unblock</button></>}
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   if (message.kind === "call" && !message.deleted) {
     const missed = /^Missed|declined$/.test(message.text)
@@ -165,6 +187,7 @@ function ChatMessage({ message, people, me, compact, canDelete, online, inThread
           <button type="button" title="More reactions" aria-label="More reactions" onClick={() => setPicking((current) => !current)}><Icon name="smile" size={15} /></button>
           {!inThread && !message.parentId && <button type="button" title="Reply in thread" aria-label="Reply in thread" onClick={() => onReply(message)}><Icon name="reply" size={15} /></button>}
           {mine && <button type="button" title="Edit" aria-label="Edit message" onClick={() => setEditing(true)}><Icon name="edit" size={15} /></button>}
+          {!mine && message.userId && safety.onReport && <button type="button" title="Report" aria-label="Report message" onClick={() => safety.onReport(message)}><Icon name="alert" size={15} /></button>}
           {canDelete && <button type="button" title="Delete" aria-label="Delete message" className="is-danger" onClick={() => onDelete(message)}><Icon name="trash" size={15} /></button>}
           {picking && (
             <div className="chat-react-menu" onMouseLeave={() => setPicking(false)}>
@@ -245,5 +268,43 @@ function EditBox({ message, people, onCancel, onSave }) {
         <button type="button" className="primary" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save"}</button>
       </div>
     </div>
+  )
+}
+
+// Report a message to the admins, and block its author too if wanted.
+export function ReportDialog({ message, people, onClose, onSubmit }) {
+  const [reason, setReason] = useState("")
+  const [alsoBlock, setAlsoBlock] = useState(false)
+  const [error, setError] = useState("")
+  const [pending, setPending] = useState(false)
+  const author = people.get(message.userId)?.name || message.userName || "this person"
+  const said = plain(message.text, people) || (message.attachments?.length ? `Shared ${message.attachments.length === 1 ? "a file" : `${message.attachments.length} files`}` : "")
+
+  async function submit(event) {
+    event.preventDefault()
+    setPending(true)
+    setError("")
+    try {
+      await onSubmit({ reason: reason.trim(), alsoBlock })
+    } catch (err) {
+      setError(err.message)
+      setPending(false)
+    }
+  }
+
+  return (
+    <Modal title="Report message" onClose={pending ? () => {} : onClose}>
+      <form className="chat-report" onSubmit={submit}>
+        <p>The workspace admins are told right away and see this message. They can delete it or remove {author} from SynergiFund.</p>
+        <blockquote><b>{author}</b>{said ? ` · ${said.length > 240 ? `${said.slice(0, 240)}…` : said}` : ""}</blockquote>
+        <label className="field"><span>What is wrong with it? (optional)</span><textarea rows={3} maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="For example: abusive, spam, not meant for this room" /></label>
+        <label className="field-check keep-case"><input type="checkbox" checked={alsoBlock} onChange={(event) => setAlsoBlock(event.target.checked)} /> Also block {author}: hide their messages from me and stop direct messages between us.</label>
+        {error && <div className="banner">{error}</div>}
+        <div className="chat-report-actions">
+          <button type="button" className="tool" onClick={onClose} disabled={pending}>Cancel</button>
+          <button type="submit" className="primary" disabled={pending}>{pending ? "Reporting…" : "Report"}</button>
+        </div>
+      </form>
+    </Modal>
   )
 }

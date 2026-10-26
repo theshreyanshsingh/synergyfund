@@ -1877,6 +1877,19 @@ button.paycal-more { border: 0; background: transparent; text-align: left; curso
 .chat-member-action { flex: none; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--white); color: var(--text); font-size: 11px; font-weight: 600; opacity: 0; }
 .chat-member:hover .chat-member-action, .chat-member-action:focus-visible { opacity: 1; }
 .chat-member-action.is-danger { color: var(--bad); }
+/* Reporting a message and blocking someone */
+.chat-inline-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-style: normal; font-weight: 600; text-transform: none; cursor: pointer; }
+.chat-message.is-blocked .chat-removed { font-style: normal; }
+.chat-report { display: grid; gap: 12px; margin-top: 8px; }
+.chat-report p { margin: 0; color: var(--muted); line-height: 1.5; }
+.chat-report blockquote { margin: 0; padding: 10px 12px; border-left: 3px solid var(--line); border-radius: 6px; background: var(--row-hover); color: var(--text); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.chat-report textarea { resize: vertical; min-height: 70px; }
+.chat-report-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.modal .chat-report-actions button.primary { width: auto; margin-left: 0; }
+.chat-toast { position: fixed; left: 50%; bottom: max(24px, calc(16px + env(safe-area-inset-bottom))); z-index: 60; width: max-content; max-width: min(520px, calc(100vw - 32px)); transform: translateX(-50%); padding: 10px 14px; border-radius: 10px; background: var(--text); color: var(--white); font-size: 13px; line-height: 1.4; box-shadow: var(--shadow); }
+@media (hover: none) {
+  .chat-member-action { opacity: 1; }
+}
 .chat-details-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
 .chat-details-actions .is-danger { color: var(--bad); }
 .chat-add-people { display: grid; gap: 8px; margin-bottom: 10px; }

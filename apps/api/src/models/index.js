@@ -31,6 +31,8 @@ export const User = register(
       sounds: { ringtone: String, chime: String },
       // The AI teammate's account: it posts in property chats, never signs in, and gets no notifications.
       bot: { type: Boolean, default: false },
+      // People this person blocked in chat: their messages are hidden for them, and they can't message them directly.
+      blockedUserIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
     },
     { timestamps: true },
   ),
@@ -802,6 +804,25 @@ export const ChatMessage = register(
     .index({ channelId: 1, parentId: 1, createdAt: -1 })
     .index({ parentId: 1, createdAt: 1 })
     .index({ mentionIds: 1, createdAt: -1 }),
+)
+
+// A chat message someone reported to the admins (with what it said then, in case it is edited or deleted later).
+export const ChatReport = register(
+  "ChatReport",
+  new Schema(
+    {
+      messageId: { type: Schema.Types.ObjectId, ref: "ChatMessage", required: true },
+      channelId: { type: Schema.Types.ObjectId, ref: "ChatChannel" },
+      reporterId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+      reporterName: String,
+      authorId: { type: Schema.Types.ObjectId, ref: "User" },
+      authorName: String,
+      text: String,
+      reason: String,
+      status: { type: String, default: "Open" },
+    },
+    { timestamps: true },
+  ).index({ messageId: 1, reporterId: 1 }),
 )
 
 export const ChatRead = register(
