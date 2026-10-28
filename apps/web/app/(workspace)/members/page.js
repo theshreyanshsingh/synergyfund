@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { PERMISSIONS, ROLE_PERMISSIONS, ROLES, can, initials, permissionsFor } from "@synergifund/shared"
+import { PERMISSIONS, ROLE_PERMISSIONS, ROLES, can, cityLine, initials, permissionsFor } from "@synergifund/shared"
 import { PermissionPicker } from "../../../components/members/PermissionPicker"
 import { MultiSelect } from "../../../components/ui/MultiSelect"
 import { StatusPill } from "../../../components/ui/StatusPill"
@@ -224,7 +224,7 @@ export default function MembersPage() {
                       : "They join the chat room for each property chosen here. Admins are in every property room."}
                   </p>
                   <MultiSelect
-                    options={(properties.data?.items || []).map((property) => ({ id: property.id, label: property.address, hint: [property.city, property.stage].filter(Boolean).join(" · ") }))}
+                    options={(properties.data?.items || []).map((property) => ({ id: property.id, label: property.address, hint: [cityLine(property), property.stage].filter(Boolean).join(" · ") }))}
                     selected={draft.propertyIds || []}
                     onChange={(propertyIds) => setDraft((current) => ({ ...current, propertyIds }))}
                     placeholder="Search properties to add…"

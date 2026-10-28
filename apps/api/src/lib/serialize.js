@@ -31,6 +31,8 @@ export function presentProperty(property, user) {
       id: String(source._id),
       address: source.address,
       city: source.city || "",
+      state: source.state || "",
+      zip: source.zip || "",
       stage: source.stage,
       accessInfo: source.accessInfo || "",
       scopeLines: (source.scopeLines || []).map((line) => ({
@@ -47,6 +49,8 @@ export function presentProperty(property, user) {
     id: String(source._id),
     address: source.address,
     city: source.city || "",
+    state: source.state || "",
+    zip: source.zip || "",
     stage: source.stage,
     strategy: source.strategy || "",
     health: source.health || "Health not assessed",

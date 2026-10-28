@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { MIN_COMPS, compStats, daysBetween, mapsLink, zillowLink } from "@synergifund/shared"
+import { MIN_COMPS, cityLine, compStats, daysBetween, mapsLink, zillowLink } from "@synergifund/shared"
 import { FormSheet } from "../ui/FormSheet"
 import { Icon } from "../ui/Icon"
 import { api } from "../../lib/api"
@@ -277,7 +277,7 @@ function CompCard({ comp, property, writable, busy, onEdit, onToggle, onRemove, 
   const input = useRef(null)
   const days = daysBetween(comp.purchaseDate, comp.saleDate)
   const ppsf = comp.salePrice && comp.sqft ? comp.salePrice / comp.sqft : null
-  const zillow = comp.zillowUrl || zillowLink(comp.address, comp.city || property.city)
+  const zillow = comp.zillowUrl || zillowLink(comp.address, comp.city || cityLine(property))
   return (
     <article className={comp.include ? "comp-card" : "comp-card is-excluded"}>
       <div className="comp-card-head">
@@ -319,7 +319,7 @@ function CompCard({ comp, property, writable, busy, onEdit, onToggle, onRemove, 
       )}
       <div className="comp-actions">
         <a href={zillow} target="_blank" rel="noreferrer">{comp.zillowUrl ? "Zillow listing" : "Find on Zillow"}</a>
-        <a href={mapsLink(comp.address, comp.city || property.city)} target="_blank" rel="noreferrer">Google Maps</a>
+        <a href={mapsLink(comp.address, comp.city || cityLine(property))} target="_blank" rel="noreferrer">Google Maps</a>
         {writable && (
           <>
             <label className="comp-include"><input type="checkbox" checked={comp.include} disabled={Boolean(busy)} onChange={onToggle} />Use in ARV</label>

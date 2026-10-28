@@ -1048,3 +1048,30 @@ export function mapsLink(address, city = "") {
   const text = [address, city].map((part) => String(part || "").trim()).filter(Boolean).join(", ")
   return text ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(text)}` : ""
 }
+
+// The state codes a property's State can be (the 50 states, DC and Puerto Rico).
+export const US_STATES = ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "PR", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]
+
+// A city typed with the state and ZIP in it ("Jacksonville, FL 32207", "Jacksonville FL"), split into its parts.
+// Null when the text is only a city. Without a comma or a ZIP the state must be in capitals, so a city whose last
+// word happens to be two letters stays a city.
+export function splitCity(text) {
+  const match = String(text || "").trim().match(/^(.*?[A-Za-z.])(\s*,\s*|\s+)([A-Za-z]{2})\.?(?:[,\s]+(\d{5})(?:-?(\d{4}))?)?$/)
+  if (!match || !US_STATES.includes(match[3].toUpperCase())) return null
+  if (!match[2].includes(",") && !match[4] && match[3] !== match[3].toUpperCase()) return null
+  return { city: match[1].trim(), state: match[3].toUpperCase(), zip: match[4] ? `${match[4]}${match[5] ? `-${match[5]}` : ""}` : "" }
+}
+
+// "Jacksonville, FL 32206": the line under a property's street address, from its city, state and ZIP.
+export function cityLine(place = {}) {
+  const typed = splitCity(place.city)
+  const city = typed ? typed.city : String(place.city || "").trim()
+  const state = String(place.state || "").trim().toUpperCase() || typed?.state || ""
+  const zip = String(place.zip || "").trim() || typed?.zip || ""
+  return [city, [state, zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")
+}
+
+// The whole address on one line: "103 W 22nd St, Jacksonville, FL 32206".
+export function fullAddress(place = {}) {
+  return [String(place.address || "").trim(), cityLine(place)].filter(Boolean).join(", ")
+}

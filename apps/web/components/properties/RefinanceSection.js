@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { REFINANCE, refinancePlan, yearlyInsurance } from "@synergifund/shared"
+import { REFINANCE, cityLine, fullAddress, refinancePlan, yearlyInsurance } from "@synergifund/shared"
 import { FormSheet } from "../ui/FormSheet"
 import { StatusPill } from "../ui/StatusPill"
 import { api } from "../../lib/api"
@@ -66,7 +66,7 @@ export function RefinanceSection({ property, loans, writable, onChanged, onAddLo
   const storedDate = String(property.purchaseDate || "")
   const insurance = yearlyInsurance(property)
   const rent = property.marketRent ?? property.actualRent ?? null
-  const place = [property.address, property.city].filter(Boolean).join(", ")
+  const place = fullAddress(property)
 
   // What the lender asks for, ready to paste into an email or text.
   async function copyForLender() {
@@ -111,7 +111,7 @@ export function RefinanceSection({ property, loans, writable, onChanged, onAddLo
         <div>
           <dt>Address</dt>
           <dd>{property.address}</dd>
-          {property.city && <small>{property.city}</small>}
+          {cityLine(property) && <small>{cityLine(property)}</small>}
         </div>
         <div>
           <dt>Purchase date</dt>

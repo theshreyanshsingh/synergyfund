@@ -3,7 +3,7 @@
 import { use, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { can } from "@synergifund/shared"
+import { can, cityLine } from "@synergifund/shared"
 import { CompanyFields, EinField, PropertyPicker, WireFields, companyForm } from "../../../../components/companies/CompanyParts"
 import { ExposureBadge } from "../../../../components/companies/ExposureBadge"
 import { DocStatus, FolderBrowser } from "../../../../components/documents/FolderBrowser"
@@ -321,7 +321,7 @@ export default function CompanyPage({ params }) {
                 <div>
                   <strong><Link href={`/properties/${item.id}`}>{item.address}</Link></strong>
                   <em>
-                    {[item.city, item.strategy, item.loanBalance != null ? `${money(item.loanBalance)} loan` : ""].filter(Boolean).join(" · ") || "No details yet"}
+                    {[cityLine(item), item.strategy, item.loanBalance != null ? `${money(item.loanBalance)} loan` : ""].filter(Boolean).join(" · ") || "No details yet"}
                     {" · "}
                     <button type="button" className="company-file-link" onClick={() => openPropertyDocs(item.id)}>{plural(item.documents, "file", "files")}</button>
                   </em>

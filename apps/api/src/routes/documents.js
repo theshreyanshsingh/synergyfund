@@ -2,7 +2,7 @@ import zlib from "node:zlib"
 import { Router } from "express"
 import mammoth from "mammoth"
 import xlsx from "xlsx"
-import { allowedDocument, cleanDocumentLabels, documentType, folderName, folderOf, foldersFor } from "@synergifund/shared"
+import { allowedDocument, cleanDocumentLabels, documentType, folderName, folderOf, foldersFor, US_STATES } from "@synergifund/shared"
 import { Company, DocumentFile, ImportJob, Loan, Property, Task, User } from "../models/index.js"
 import { lenderForName } from "../services/lenders.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
@@ -612,6 +612,8 @@ documentsRouter.delete(
 const PROPERTY_FIELDS = [
   ["address", ["address", "property address", "street", "property"], "text"],
   ["city", ["city", "location"], "text"],
+  ["state", ["state", "st"], "text"],
+  ["zip", ["zip", "zip code", "zipcode", "postal code"], "text"],
   ["stage", ["stage", "property status"], "text"],
   ["strategy", ["strategy"], "text"],
   ["purchasePrice", ["purchase price", "purchase", "price"], "number"],
@@ -730,6 +732,8 @@ documentsRouter.post(
         property = await Property.create({
           address,
           city: mapped.city || "",
+          state: mapped.state || "",
+          zip: mapped.zip || "",
           stage: mapped.stage || "Under contract",
           strategy: mapped.strategy || "",
           purchasePrice: mapped.purchasePrice,
@@ -792,7 +796,14 @@ async function portfolioRows(file, job) {
 }
 
 function mapPortfolioRow(cells = {}) {
-  return Object.fromEntries([...PROPERTY_FIELDS, ...LOAN_FIELDS].map(([key, , kind]) => [key, readCell(cells, key, kind)]))
+  const mapped = Object.fromEntries([...PROPERTY_FIELDS, ...LOAN_FIELDS].map(([key, , kind]) => [key, readCell(cells, key, kind)]))
+  // Only a two-letter state code and a 5-digit ZIP (or ZIP+4) are kept.
+  if (mapped.state) mapped.state = US_STATES.includes(mapped.state.toUpperCase()) ? mapped.state.toUpperCase() : undefined
+  if (mapped.zip) {
+    const digits = mapped.zip.replace(/\D/g, "")
+    mapped.zip = digits.length === 5 ? digits : digits.length === 9 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : undefined
+  }
+  return mapped
 }
 
 function readCell(cells, key, kind) {
@@ -820,7 +831,7 @@ function fillProperty(property, mapped) {
     property.stage = mapped.stage
     changed = true
   }
-  for (const key of ["city", "strategy", "purchasePrice", "purchaseDate", "arv", "rehabBudget", "actualRent", "marketRent", "ownerEntity", "dealSource", "nextAction", "rentStatus", "rentMarket", "accessInfo"]) {
+  for (const key of ["city", "state", "zip", "strategy", "purchasePrice", "purchaseDate", "arv", "rehabBudget", "actualRent", "marketRent", "ownerEntity", "dealSource", "nextAction", "rentStatus", "rentMarket", "accessInfo"]) {
     if (fillBlank(property, key, mapped[key])) changed = true
   }
   return changed

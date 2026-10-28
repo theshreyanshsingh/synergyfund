@@ -2209,6 +2209,9 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .info-utilities .tool.danger { color: var(--bad); }
 .info-amount { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 10px; }
 .info-amount > .field { margin: 0; }
+/* State and ZIP side by side in the property forms. */
+.place-fields { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; }
+.place-fields > .field { margin: 0; }
 @media (max-width: 900px) {
   .property-info { grid-template-columns: minmax(0, 1fr); }
 }

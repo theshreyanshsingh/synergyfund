@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import { navFor } from "@synergifund/shared"
+import { cityLine, navFor } from "@synergifund/shared"
 import { api } from "../../lib/api"
 import { Icon } from "../ui/Icon"
 
@@ -36,7 +36,7 @@ export function CommandPalette({ user, open, onClose }) {
       .map((item) => ({ id: item.href, label: item.label, hint: item.section || "", href: item.href, icon: item.icon }))
       .filter(match)
     const deals = properties
-      .map((property) => ({ id: property.id, label: property.address, hint: property.city || property.stage || "Property", href: `/properties/${property.id}`, icon: "building" }))
+      .map((property) => ({ id: property.id, label: property.address, hint: cityLine(property) || property.stage || "Property", href: `/properties/${property.id}`, icon: "building" }))
       .filter(match)
       .slice(0, 8)
     const owners = companies

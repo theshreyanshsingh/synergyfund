@@ -1,6 +1,6 @@
 import { Router } from "express"
 import { z } from "zod"
-import { drawPulled, INSURANCE_FREQUENCIES, lineTracking, loanSummary, propertyUtilities, REFINANCE, resolveBudget, STAGES } from "@synergifund/shared"
+import { cityLine, drawPulled, INSURANCE_FREQUENCIES, lineTracking, loanSummary, propertyUtilities, REFINANCE, resolveBudget, STAGES, US_STATES } from "@synergifund/shared"
 import { Activity, Bill, CalendarEvent, Company, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
@@ -11,6 +11,7 @@ import { loanFields } from "../services/loans.js"
 import { removePropertyRoom } from "../services/chat.js"
 import { orderProperties } from "../services/propertyOrder.js"
 import { geocode } from "../services/geocode.js"
+import { fillAddressParts } from "../services/addressParts.js"
 import { recheckCalls } from "../services/calls.js"
 import { emitToUsers } from "../services/chatHub.js"
 import { changeSummary, notifyPropertyAccess, recordActivity } from "../services/notify.js"
@@ -24,6 +25,8 @@ export const propertiesRouter = Router()
 const PROPERTY_FIELDS = [
   ["address", "Address"],
   ["city", "City"],
+  ["state", "State"],
+  ["zip", "ZIP"],
   ["stage", "Status"],
   ["strategy", "Goal"],
   ["nextAction", "Next step"],
@@ -56,6 +59,8 @@ const PROPERTY_FIELDS = [
 const writable = z.object({
   address: z.string().min(3),
   city: z.string().optional().default(""),
+  state: z.string().optional().default(""),
+  zip: z.string().optional().default(""),
   stage: z.string().optional(),
   strategy: z.string().optional().default(""),
   health: z.string().optional(),
@@ -102,6 +107,29 @@ function dayOrBlank(value) {
   return date.getUTCDate() === Number(match[3]) && date.getUTCMonth() === Number(match[2]) - 1
 }
 
+// The state as its two-letter code and the ZIP as 5 digits (or ZIP+4). Returns an error to show, or "".
+function readPlace(data) {
+  if ("city" in data) data.city = String(data.city || "").trim()
+  if ("state" in data) {
+    data.state = String(data.state || "").trim().toUpperCase()
+    if (data.state && !US_STATES.includes(data.state)) return "Choose the state, like FL."
+  }
+  if ("zip" in data) {
+    const digits = String(data.zip || "").replace(/\D/g, "")
+    if (digits && digits.length !== 5 && digits.length !== 9) return "Enter a 5-digit ZIP, like 32206."
+    data.zip = digits.length === 9 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits
+  }
+  return ""
+}
+
+// A missing state or ZIP is filled in from the address after a save, waited for up to 4 seconds (a slower lookup
+// finishes in the background and shows next time the property is opened).
+async function fillPlace(property) {
+  const fill = fillAddressParts(property).catch(() => ({}))
+  const set = await Promise.race([fill, new Promise((resolve) => setTimeout(() => resolve({}), 4000))])
+  if (Object.keys(set).length) property.set(set)
+}
+
 // "" or "none" takes the property out of its company; anything else must be an existing company.
 async function readCompanyChoice(value) {
   const id = String(value ?? "").trim()
@@ -127,7 +155,9 @@ propertiesRouter.get(
     const query = Property.find(filter)
     if (req.query.q) {
       const expression = new RegExp(String(req.query.q).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i")
-      query.where({ $or: [{ address: expression }, { city: expression }, { ownerEntity: expression }] })
+      // The owner is the company, so its name finds the property too (not for contractors, who never see companies).
+      const owners = req.user.role === "contractor" ? [] : await Company.find({ name: expression }).select("_id")
+      query.where({ $or: [{ address: expression }, { city: expression }, { ownerEntity: expression }, { zip: expression }, ...(owners.length ? [{ companyId: { $in: owners.map((company) => company._id) } }] : [])] })
     }
     const items = orderProperties(await query)
     if (req.user.role === "contractor") {
@@ -197,7 +227,7 @@ propertiesRouter.get(
     const property = await loadForComps(req, res)
     if (!property) return
     if (property.lat == null || property.lng == null) {
-      const spot = await geocode(property.address, property.city)
+      const spot = await geocode(property.address, cityLine(property))
       if (spot) {
         await Property.updateOne({ _id: property._id }, { $set: { lat: spot.lat, lng: spot.lng } }, { timestamps: false })
         property.lat = spot.lat
@@ -498,6 +528,11 @@ propertiesRouter.post(
       sendError(res, 400, "A property needs an address.")
       return
     }
+    const placeError = readPlace(parsed.data)
+    if (placeError) {
+      sendError(res, 400, placeError)
+      return
+    }
     const choice = await readCompanyChoice(req.body.companyId)
     if (choice.error) {
       sendError(res, 404, choice.error)
@@ -541,6 +576,7 @@ propertiesRouter.post(
         note: "Added with the property",
       })
     }
+    await fillPlace(property)
     await recordActivity({ user: req.user, title: "Property added", detail: [property.address, choice.company ? `in ${choice.company.name}` : ""].filter(Boolean).join(" · "), propertyId: property._id })
     res.status(201).json({ property: presentProperty(property, req.user) })
   }),
@@ -558,6 +594,11 @@ propertiesRouter.patch(
     const parsed = writable.partial().safeParse(req.body)
     if (!parsed.success) {
       sendError(res, 400, "Those property details could not be saved.")
+      return
+    }
+    const placeError = readPlace(parsed.data)
+    if (placeError) {
+      sendError(res, 400, placeError)
       return
     }
     if (!req.permissions.includes("internal.pricing")) delete parsed.data.houseBoughtPrice
@@ -598,7 +639,7 @@ propertiesRouter.patch(
     if ("rehabBudget" in req.body && parsed.data.rehabBudget == null && (before.rehabBudget != null || req.body.clearDrawBudget === true)) {
       await DrawBudget.updateMany({ propertyId: property._id, budget: { $ne: null } }, { $unset: { budget: 1 } })
     }
-    if (("address" in parsed.data && parsed.data.address !== before.address) || ("city" in parsed.data && parsed.data.city !== before.city)) {
+    if (["address", "city", "state", "zip"].some((key) => key in parsed.data && parsed.data[key] !== (before[key] ?? ""))) {
       property.lat = undefined
       property.lng = undefined
     }
@@ -620,6 +661,7 @@ propertiesRouter.patch(
       "utilities" in req.body && JSON.stringify(propertyUtilities(before.utilities)) !== JSON.stringify(propertyUtilities(after.utilities)) ? "Utilities updated" : "",
     ].filter(Boolean).join(" · ")
     await recordActivity({ user: req.user, title: "Property updated", detail: changes || "Saved with no changes", propertyId: property._id })
+    await fillPlace(property)
     res.json({ property: presentProperty(property, req.user) })
   }),
 )

@@ -1,13 +1,16 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { INSURANCE_FREQUENCIES, UTILITY_CHOICES, propertyUtilities, yearlyInsurance } from "@synergifund/shared"
 import { FormSheet } from "../ui/FormSheet"
 import { api } from "../../lib/api"
 import { dollars } from "../../lib/format"
+import { useApi } from "../../lib/useApi"
 
 // Property Info: the reference details for one property in one place: ownership, taxes, insurance (moved here from
-// the loans) and utilities. Owner and purchase date are the same fields used everywhere else in SynergiFund.
+// the loans) and utilities. The owner is the property's company (Deal › Company), or a name typed for an owner that is
+// not a company in SynergiFund; the purchase date is the same field used everywhere else.
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/
 
@@ -57,7 +60,9 @@ function amount(value) {
   return Number.isFinite(number) && number >= 0 ? { value: Math.round(number * 100) / 100 } : { error: true }
 }
 
-export function PropertyInfoSection({ property, writable, canPay = false, onChanged }) {
+const same = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase()
+
+export function PropertyInfoSection({ property, company = null, writable, canPay = false, onChanged }) {
   const [editing, setEditing] = useState("")
   const [utility, setUtility] = useState(null)
   const [paying, setPaying] = useState("")
@@ -95,7 +100,21 @@ export function PropertyInfoSection({ property, writable, canPay = false, onChan
       <section className="panel property-card info-card">
         <div className="property-card-head"><h2>Ownership</h2>{edit("ownership")}</div>
         <dl className="info-facts">
-          <div><dt>Property owner</dt><dd>{shown(property.ownerEntity)}</dd></div>
+          <div>
+            <dt>Property owner</dt>
+            {company ? (
+              <>
+                <dd><Link href={`/companies/${company.id}`} className="property-company">{company.name}</Link></dd>
+                <small>The company on the deal{[company.entityType, company.stateOfFormation].filter(Boolean).length ? ` · ${[company.entityType, company.stateOfFormation].filter(Boolean).join(", ")}` : ""}</small>
+                {property.ownerEntity && !same(property.ownerEntity, company.name) && <small>Entered before as “{property.ownerEntity}”</small>}
+              </>
+            ) : (
+              <>
+                <dd>{shown(property.ownerEntity)}</dd>
+                {property.ownerEntity && <small>Not a company in SynergiFund yet · <Link href="/companies">Companies</Link></small>}
+              </>
+            )}
+          </div>
           <div><dt>Purchase date</dt><dd>{shown(property.purchaseDate ? dayLabel(property.purchaseDate) : "")}</dd></div>
         </dl>
       </section>
@@ -147,7 +166,7 @@ export function PropertyInfoSection({ property, writable, canPay = false, onChan
         </ul>
       </section>
 
-      {editing === "ownership" && <OwnershipForm property={property} onClose={() => setEditing("")} onSave={save} />}
+      {editing === "ownership" && <OwnershipForm property={property} company={company} onClose={() => setEditing("")} onSave={save} />}
       {editing === "taxes" && <TaxForm property={property} onClose={() => setEditing("")} onSave={save} />}
       {editing === "insurance" && <InsuranceForm property={property} onClose={() => setEditing("")} onSave={save} />}
       {utility && <UtilityForm utilities={utilities} target={utility} onClose={() => setUtility(null)} onSave={save} />}
@@ -211,16 +230,52 @@ function useSave(onSave) {
   return { error, setError, pending, run }
 }
 
-function OwnershipForm({ property, onClose, onSave }) {
+// The owner is chosen from the companies, so Property Info and Deal › Company are always the same one.
+// "Someone else" is for an owner that is not a company in SynergiFund (a person, or an LLC not added yet).
+const OTHER = "other"
+
+function OwnershipForm({ property, company, onClose, onSave }) {
   const start = DAY.test(String(property.purchaseDate || "").slice(0, 10)) ? String(property.purchaseDate).slice(0, 10) : ""
-  const [owner, setOwner] = useState(property.ownerEntity || "")
+  const list = useApi("/companies")
+  const choices = [...(list.data?.items || [])]
+  if (company && !choices.some((item) => item.id === company.id)) choices.unshift({ id: company.id, name: company.name })
+  // A typed owner with the same name as a company starts on that company.
+  const typedMatch = !company && property.ownerEntity ? choices.find((item) => same(item.name, property.ownerEntity)) : null
+  const [picked, setPicked] = useState(null)
+  const choice = picked ?? (company ? company.id : typedMatch ? typedMatch.id : property.ownerEntity ? OTHER : "")
+  const [owner, setOwner] = useState(company ? "" : property.ownerEntity || "")
   const [date, setDate] = useState(start)
   const { error, pending, run } = useSave(onSave)
+  const purchase = date !== start ? { purchaseDate: date } : {}
+
+  function submit(event) {
+    event.preventDefault()
+    if (choice === OTHER) {
+      const name = owner.trim().replace(/\s+/g, " ")
+      // Typing the name of a company links that company instead.
+      const match = choices.find((item) => same(item.name, name))
+      return run(match ? { companyId: match.id, ownerEntity: "", ...purchase } : { companyId: "none", ownerEntity: name, ...purchase })
+    }
+    run(choice ? { companyId: choice, ownerEntity: "", ...purchase } : { companyId: "none", ownerEntity: "", ...purchase })
+  }
+
   return (
-    <FormSheet eyebrow={property.address} title="Ownership" hint={property.purchaseDate && !start ? `The purchase date on file is "${property.purchaseDate}". Pick the exact day to replace it.` : "Who owns the property, and the day it was bought."} onClose={onClose} pending={pending} error={error} submitLabel="Save"
-      onSubmit={(event) => { event.preventDefault(); run({ ownerEntity: owner.trim(), ...(date !== start ? { purchaseDate: date } : {}) }) }}>
+    <FormSheet eyebrow={property.address} title="Ownership" hint={property.purchaseDate && !start ? `The purchase date on file is "${property.purchaseDate}". Pick the exact day to replace it.` : "The owner is the property's company, the same one shown under Deal › Company. The property's documents show under that company."} onClose={onClose} pending={pending} error={error} submitLabel="Save"
+      onSubmit={submit}>
       <div className="form-grid">
-        <label className="field wide"><span>Property owner</span><input value={owner} onChange={(event) => setOwner(event.target.value)} maxLength={200} placeholder="Person or company on the deed" /></label>
+        <label className="field wide"><span>Property owner</span>
+          <select value={choice} onChange={(event) => setPicked(event.target.value)} disabled={list.loading && !choices.length}>
+            <option value="">Not entered</option>
+            {choices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            <option value={OTHER}>Someone else (type the name)</option>
+          </select>
+        </label>
+        {choice === OTHER && (
+          <>
+            <label className="field wide"><span>Owner name</span><input value={owner} onChange={(event) => setOwner(event.target.value)} maxLength={200} placeholder="Person or company on the deed" required /></label>
+            <p className="chat-form-hint wide">To keep an LLC's documents and properties together, add it on <Link href="/companies">Companies</Link> and choose it here.</p>
+          </>
+        )}
         <label className="field"><span>Purchase date</span><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
       </div>
     </FormSheet>

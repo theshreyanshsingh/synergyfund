@@ -437,7 +437,7 @@ companiesRouter.get(
   asyncHandler(async (req, res) => {
     const company = await loadCompany(req, res)
     if (!company) return
-    const properties = orderProperties(await Property.find({ companyId: company._id }).select("_id address city stage strategy labels purchasePrice arv rehabBudget position createdAt"))
+    const properties = orderProperties(await Property.find({ companyId: company._id }).select("_id address city state zip stage strategy labels purchasePrice arv rehabBudget position createdAt"))
     const [loans, ownFiles, propertyFiles] = await Promise.all([
       loanTotals(properties),
       DocumentFile.find({ companyId: company._id, kind: LIBRARY }).select("companyId folder labels kind name mime"),
@@ -450,6 +450,8 @@ companiesRouter.get(
         id: String(property._id),
         address: property.address,
         city: property.city || "",
+        state: property.state || "",
+        zip: property.zip || "",
         stage: property.stage || "",
         strategy: property.strategy || "",
         labels: property.labels || [],

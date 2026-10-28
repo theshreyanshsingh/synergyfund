@@ -1,4 +1,4 @@
-import { COMPANY_FOLDERS, EXPENSE_CATEGORIES, refinancePlan, yearlyInsurance, LOAN_STATUSES, PERMISSIONS, PROPERTY_FOLDERS, TASK_LABELS, documentType, drawFigures, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
+import { cityLine, COMPANY_FOLDERS, EXPENSE_CATEGORIES, refinancePlan, yearlyInsurance, LOAN_STATUSES, PERMISSIONS, PROPERTY_FOLDERS, TASK_LABELS, documentType, drawFigures, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
 import { Bill, Company, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, Property, Task, User } from "../../models/index.js"
 import { presentProperty } from "../../lib/serialize.js"
 import { propertyFilter } from "../access.js"
@@ -140,7 +140,7 @@ function notFound(reference, matches) {
   return {
     success: false,
     error: `"${reference}" matches ${matches.length} properties. Ask again with one of these addresses.`,
-    candidates: matches.slice(0, 10).map((property) => ({ id: String(property._id), address: property.address, city: property.city || "" })),
+    candidates: matches.slice(0, 10).map((property) => ({ id: String(property._id), address: property.address, city: cityLine(property) })),
   }
 }
 
@@ -536,14 +536,15 @@ export const TOOLS = [
       const limit = clampLimit(args.limit, 100, 200)
       // One short row per property (no comps, scope or notes), so long lists are never cut off.
       const row = (property) => (contractor
-        ? { address: property.address, city: property.city || "", status: property.stage }
+        ? { address: property.address, city: cityLine(property), status: property.stage }
         : {
           address: property.address,
-          city: property.city || "",
+          city: cityLine(property),
           status: property.stage,
           goal: property.strategy || "",
           company: companyNames.get(String(property.companyId || "")) || "",
-          owner: property.ownerEntity || "",
+          // The company is the owner; a typed owner only when the property is not in a company.
+          owner: companyNames.get(String(property.companyId || "")) || property.ownerEntity || "",
           purchasePrice: property.purchasePrice ?? null,
           purchaseDate: property.purchaseDate || "",
           arv: property.arv ?? null,
@@ -1422,7 +1423,7 @@ export const TOOLS = [
         if (resolved.budget != null) rehab = { value: resolved.budget, source: resolved.estimated ? "the property's scope line budgets (estimated)" : "the property's rehab budget" }
       }
       // Distances are measured on the map, not taken from the listing pages, when both places can be found.
-      const home = record?.lat != null && record?.lng != null ? { lat: record.lat, lng: record.lng } : await geocode(subject.address, subject.city)
+      const home = record?.lat != null && record?.lng != null ? { lat: record.lat, lng: record.lng } : await geocode(subject.address, record ? cityLine(record) : subject.city)
       const analyze = (comps) => analyzeArv({ subject, comps, rehabEstimate: rehab.value, listPrice: given.listPrice ?? null, today: todayKey() })
       const settled = (result) => !result.success || (result.ready && !result.clearOutlier)
       let result

@@ -44,6 +44,10 @@ export const Property = register(
     {
       address: { type: String, required: true },
       city: String,
+      state: String,
+      zip: String,
+      // The full address the state and ZIP lookup did not find (so it is not looked up again until it changes).
+      addressChecked: String,
       stage: { type: String, default: "Under contract" },
       strategy: String,
       health: { type: String, default: "Health not assessed" },

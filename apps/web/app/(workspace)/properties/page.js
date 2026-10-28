@@ -4,9 +4,10 @@ import { Suspense, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { PageSpinner } from "../../../components/ui/Spinner"
-import { PROPERTY_LABELS, can, refinancePlan, STAGES, STRATEGIES } from "@synergifund/shared"
+import { PROPERTY_LABELS, can, cityLine, refinancePlan, STAGES, STRATEGIES } from "@synergifund/shared"
 import { DrawImport } from "../../../components/draws/DrawImport"
 import { FormSheet } from "../../../components/ui/FormSheet"
+import { StateSelect } from "../../../components/properties/StateSelect"
 import { StatusPill } from "../../../components/ui/StatusPill"
 import { Icon } from "../../../components/ui/Icon"
 import { WorkspacePage } from "../../../components/ui/WorkspacePage"
@@ -16,7 +17,7 @@ import { money } from "../../../lib/format"
 import { useApi } from "../../../lib/useApi"
 import { useChatEvents } from "../../../lib/chatSocket"
 
-const BLANK_FORM = { address: "", city: "", stage: "Under contract", strategy: "Fix & flip", purchasePrice: "", purchaseDate: "", arv: "", rehabBudget: "", nextAction: "" }
+const BLANK_FORM = { address: "", city: "", state: "", zip: "", stage: "Under contract", strategy: "Fix & flip", purchasePrice: "", purchaseDate: "", arv: "", rehabBudget: "", nextAction: "" }
 
 function PropertiesScreen() {
   const router = useRouter()
@@ -153,7 +154,11 @@ function PropertiesScreen() {
         <FormSheet eyebrow="Properties" title="New property" hint="Start with the address. Leave a number blank if you do not have it yet." onClose={() => setOpen(false)} onSubmit={save} submitLabel="Save property" error={error}>
           <div className="form-grid">
             <label className="field wide"><span>Address</span><input name="address" value={form.address} onChange={set("address")} required /></label>
-            <label className="field"><span>City</span><input name="city" value={form.city} onChange={set("city")} /></label>
+            <label className="field"><span>City</span><input name="city" value={form.city} onChange={set("city")} autoComplete="address-level2" /></label>
+            <div className="field place-fields">
+              <label className="field"><span>State</span><StateSelect name="state" value={form.state} onChange={(state) => setForm((current) => ({ ...current, state }))} /></label>
+              <label className="field"><span>ZIP</span><input name="zip" value={form.zip} onChange={set("zip")} inputMode="numeric" maxLength={10} autoComplete="postal-code" placeholder="Filled in from the address" /></label>
+            </div>
             <label className="field"><span>Status</span><select name="stage" value={form.stage} onChange={set("stage")}>{STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
             <label className="field"><span>Strategy</span><select name="strategy" value={form.strategy} onChange={set("strategy")}>{STRATEGIES.map((item) => <option key={item}>{item}</option>)}</select></label>
             {!contractor && (
@@ -205,14 +210,14 @@ function PropertiesScreen() {
   )
 }
 
-// The name cell: address and city. While a refinance is to do (ready to start or in process), a small Refinance tag
+// The name cell: address, and city, state and ZIP. While a refinance is to do (ready to start or in process), a small Refinance tag
 // shows on the row, and an opened card on a phone shows a banner under the address that opens the Refinance section.
 function PropertyName({ row, refinance }) {
   const plan = refinance ? refinancePlan(row) : null
   return (
     <span className="person-copy property-name">
       <strong>{row.address}{plan?.open && <span className="refi-tag" title={plan.label}>Refinance</span>}</strong>
-      <small>{row.city || "Location not entered"}</small>
+      <small>{cityLine(row) || "Location not entered"}</small>
       {plan?.open && (
         <Link className="refi-banner" href={`/properties/${row.id}?tab=financing#refinance`} onClick={(event) => event.stopPropagation()}>
           <span>{plan.label}</span>

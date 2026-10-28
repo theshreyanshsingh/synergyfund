@@ -29,22 +29,39 @@ async function lookup(query) {
 }
 
 // The US Census address lookup places a house on its own lot (OpenStreetMap often only knows the street).
-async function census(query) {
+// It also gives the address's city, state and ZIP. Null when it does not know the address; undefined when the
+// lookup itself failed (so it can be tried again later).
+export async function censusAddress(query) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 8000)
   try {
     const url = `https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=${encodeURIComponent(query)}&benchmark=Public_AR_Current&format=json`
     const response = await fetch(url, { signal: controller.signal })
-    if (!response.ok) return null
-    const match = (await response.json())?.result?.addressMatches?.[0]?.coordinates
-    const lat = Number(match?.y)
-    const lng = Number(match?.x)
-    return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null
+    if (!response.ok) return undefined
+    const result = (await response.json())?.result
+    if (!result) return undefined
+    const match = result.addressMatches?.[0]
+    if (!match) return null
+    const lat = Number(match.coordinates?.y)
+    const lng = Number(match.coordinates?.x)
+    const parts = match.addressComponents || {}
+    return {
+      lat: Number.isFinite(lat) ? lat : null,
+      lng: Number.isFinite(lng) ? lng : null,
+      city: String(parts.city || ""),
+      state: String(parts.state || "").toUpperCase(),
+      zip: /^\d{5}$/.test(String(parts.zip || "")) ? String(parts.zip) : "",
+    }
   } catch {
-    return null
+    return undefined
   } finally {
     clearTimeout(timer)
   }
+}
+
+async function census(query) {
+  const match = await censusAddress(query)
+  return match?.lat != null && match?.lng != null ? { lat: match.lat, lng: match.lng } : null
 }
 
 export function geocode(address, city = "") {

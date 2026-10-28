@@ -2,7 +2,7 @@
 
 import { use, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { compStats, daysBetween, drawPulled, isPendingDraw, mapsLink, zillowLink } from "@synergifund/shared"
+import { cityLine, compStats, daysBetween, drawPulled, isPendingDraw, mapsLink, zillowLink } from "@synergifund/shared"
 import { PageSpinner } from "../../../../../components/ui/Spinner"
 import { CompsMap } from "../../../../../components/properties/CompsMap"
 import { money, photoUrl, placedComps, shortDate, useCompLocations } from "../../../../../components/properties/ArvSection"
@@ -99,7 +99,7 @@ export default function PropertyReport({ params }) {
           <div>
             <p className="report-eyebrow">{settings.title || "Property report"}</p>
             <h1>{property.address}</h1>
-            <p>{[property.city, property.stage, property.strategy].filter(Boolean).join(" · ")}</p>
+            <p>{[cityLine(property), property.stage, property.strategy].filter(Boolean).join(" · ")}</p>
           </div>
           <dl>
             {settings.preparedFor && <div><dt>Prepared for</dt><dd>{settings.preparedFor}</dd></div>}
@@ -163,7 +163,7 @@ export default function PropertyReport({ params }) {
                       <td>
                         <b>{comp.address}</b>
                         <small>{comp.city || property.city}{comp.include ? "" : " · not used in the ARV"}</small>
-                        <small className="report-links"><a href={comp.zillowUrl || zillowLink(comp.address, comp.city || property.city)}>Zillow</a> · <a href={mapsLink(comp.address, comp.city || property.city)}>Map</a></small>
+                        <small className="report-links"><a href={comp.zillowUrl || zillowLink(comp.address, comp.city || cityLine(property))}>Zillow</a> · <a href={mapsLink(comp.address, comp.city || cityLine(property))}>Map</a></small>
                       </td>
                       <td>{[comp.beds != null ? `${comp.beds} bd` : "", comp.baths != null ? `${comp.baths} ba` : "", comp.sqft ? `${Number(comp.sqft).toLocaleString("en-US")}` : ""].filter(Boolean).join(" / ") || "—"}</td>
                       <td className="num">{money(comp.salePrice)}</td>

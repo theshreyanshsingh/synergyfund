@@ -3,11 +3,12 @@
 import { use, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { LINE_STATUSES, PROPERTY_LABELS, STAGES, STRATEGIES, can } from "@synergifund/shared"
+import { LINE_STATUSES, PROPERTY_LABELS, STAGES, STRATEGIES, can, cityLine, splitCity } from "@synergifund/shared"
 import { FormSheet } from "../../../../components/ui/FormSheet"
 import { DrawEditor } from "../../../../components/draws/DrawEditor"
 import { FinancingSection } from "../../../../components/properties/FinancingSection"
 import { PropertyInfoSection } from "../../../../components/properties/PropertyInfoSection"
+import { StateSelect } from "../../../../components/properties/StateSelect"
 import { ArvSection } from "../../../../components/properties/ArvSection"
 import { DocumentsSection } from "../../../../components/properties/DocumentsSection"
 import { ReportSheet } from "../../../../components/properties/ReportSheet"
@@ -99,7 +100,7 @@ export default function PropertyDetailPage({ params }) {
 
   if (!internal) {
     return (
-      <DetailFrame backHref="/properties" backLabel="Properties" title={property.address} meta={property.city || ""} status={<StatusPill>{property.stage}</StatusPill>}>
+      <DetailFrame backHref="/properties" backLabel="Properties" title={property.address} meta={cityLine(property)} status={<StatusPill>{property.stage}</StatusPill>}>
         {property.accessInfo && (
           <section className="panel property-card">
             <h2>Access</h2>
@@ -188,7 +189,7 @@ export default function PropertyDetailPage({ params }) {
       backHref="/properties"
       backLabel="Properties"
       title={property.address}
-      meta={[property.city, property.stage, property.strategy].filter(Boolean).join(" · ")}
+      meta={[cityLine(property), property.stage, property.strategy].filter(Boolean).join(" · ")}
       status={<StatusPill>{property.stage}</StatusPill>}
       actions={[
         canWrite && <button key="delete" type="button" className="danger" onClick={() => removeProperty(id, property.address, router)}>Delete</button>,
@@ -263,7 +264,8 @@ export default function PropertyDetailPage({ params }) {
                 {(property.labels || []).length > 0 && <div className="wide label-row">{property.labels.map((label) => <StatusPill key={label}>{label}</StatusPill>)}</div>}
                 <Fact label="Company" value={company ? <Link href={`/companies/${company.id}`} className="property-company">{company.name}</Link> : "Not in a company"} />
                 <Fact label="Strategy" value={property.strategy} />
-                {(!company || (property.ownerEntity && property.ownerEntity.trim().toLowerCase() !== company.name.toLowerCase())) && <Fact label="Owner" value={property.ownerEntity} />}
+                {/* The company is the owner (Property Info shows the same one); a typed owner only when there is no company. */}
+                {!company && <Fact label="Owner" value={property.ownerEntity} />}
                 <Fact label="Market" value={property.rentMarket} />
                 <Fact label="Next step" value={property.nextAction} wide />
                 <Fact label="Access" value={property.accessInfo} wide />
@@ -375,7 +377,7 @@ export default function PropertyDetailPage({ params }) {
       )}
 
       {section === "info" && (
-        <PropertyInfoSection property={property} writable={Boolean(canWrite)} canPay={Boolean(canPost)} onChanged={() => { detail.reload(); setCostVersion((value) => value + 1); setTrackingVersion((value) => value + 1) }} />
+        <PropertyInfoSection property={property} company={company} writable={Boolean(canWrite)} canPay={Boolean(canPost)} onChanged={() => { detail.reload(); setCostVersion((value) => value + 1); setTrackingVersion((value) => value + 1) }} />
       )}
 
       {section === "financing" && (
@@ -396,10 +398,11 @@ export default function PropertyDetailPage({ params }) {
           const body = {
             address: editing.address,
             city: editing.city,
+            state: editing.state,
+            zip: editing.zip,
             stage: editing.stage,
             strategy: editing.strategy,
             nextAction: editing.nextAction,
-            ownerEntity: editing.ownerEntity,
             companyId: editing.companyId,
             accessInfo: editing.accessInfo,
             rentStatus: editing.rentStatus,
@@ -415,6 +418,13 @@ export default function PropertyDetailPage({ params }) {
             labels: editing.labels,
           }
           if (editing.purchaseDate !== editing.purchaseDateShown) body.purchaseDate = editing.purchaseDate || ""
+          // The company is the owner. A typed owner is kept only without a company; one typed with a company's name
+          // links that company. Moving the property into a company replaces the typed owner.
+          const typedOwner = editing.ownerEntity.trim()
+          const namedCompany = !editing.companyId && typedOwner ? companyChoices.find((item) => item.name.trim().toLowerCase() === typedOwner.toLowerCase()) : null
+          if (namedCompany) Object.assign(body, { companyId: namedCompany.id, ownerEntity: "" })
+          else if (!editing.companyId) body.ownerEntity = editing.ownerEntity
+          else if (editing.companyId !== (company?.id || "")) body.ownerEntity = ""
           if ("houseBoughtPrice" in property) body.houseBoughtPrice = blankNumber(editing.houseBoughtPrice)
           // Emptying a budget that was shown removes it everywhere, including a copy on the draw budget record.
           if (body.rehabBudget == null && editing.rehabBudgetShown !== "") body.clearDrawBudget = true
@@ -429,7 +439,11 @@ export default function PropertyDetailPage({ params }) {
           <div className="form-grid">
             <label className="field wide"><span>Address</span><input value={editing.address} onChange={(event) => setEditing({ ...editing, address: event.target.value })} required /></label>
             <LabelField labels={editing.labels} onChange={(labels) => setEditing({ ...editing, labels })} />
-            <label className="field"><span>City</span><input value={editing.city} onChange={(event) => setEditing({ ...editing, city: event.target.value })} /></label>
+            <label className="field"><span>City</span><input value={editing.city} onChange={(event) => setEditing({ ...editing, city: event.target.value })} autoComplete="address-level2" /></label>
+            <div className="field place-fields">
+              <label className="field"><span>State</span><StateSelect value={editing.state} onChange={(state) => setEditing({ ...editing, state })} /></label>
+              <label className="field"><span>ZIP</span><input value={editing.zip} onChange={(event) => setEditing({ ...editing, zip: event.target.value })} inputMode="numeric" maxLength={10} autoComplete="postal-code" placeholder="Filled in from the address" /></label>
+            </div>
             <label className="field"><span>Status</span><select value={editing.stage} onChange={(event) => setEditing({ ...editing, stage: event.target.value })}>{STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
             <label className="field"><span>Strategy</span><select value={editing.strategy} onChange={(event) => setEditing({ ...editing, strategy: event.target.value })}><option value="">Not set</option>{STRATEGIES.map((item) => <option key={item}>{item}</option>)}</select></label>
             <label className="field"><span>Purchase price</span><input value={editing.purchasePrice} onChange={(event) => setEditing({ ...editing, purchasePrice: event.target.value })} /></label>
@@ -443,13 +457,13 @@ export default function PropertyDetailPage({ params }) {
             <label className="field"><span>Actual rent</span><input value={editing.actualRent} onChange={(event) => setEditing({ ...editing, actualRent: event.target.value })} /></label>
             <label className="field"><span>Rent status</span><input value={editing.rentStatus} onChange={(event) => setEditing({ ...editing, rentStatus: event.target.value })} /></label>
             <label className="field"><span>Market</span><input value={editing.rentMarket} onChange={(event) => setEditing({ ...editing, rentMarket: event.target.value })} /></label>
-            <label className="field"><span>Company</span>
+            <label className="field"><span>Company (owner)</span>
               <select value={editing.companyId} onChange={(event) => setEditing({ ...editing, companyId: event.target.value })}>
                 <option value="">Not in a company</option>
                 {companyChoices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
             </label>
-            <label className="field"><span>Owner</span><input value={editing.ownerEntity} onChange={(event) => setEditing({ ...editing, ownerEntity: event.target.value })} /></label>
+            {!editing.companyId && <label className="field"><span>Owner (not a company)</span><input value={editing.ownerEntity} onChange={(event) => setEditing({ ...editing, ownerEntity: event.target.value })} placeholder="Person or company on the deed" /></label>}
             <label className="field wide"><span>Next step</span><input value={editing.nextAction} onChange={(event) => setEditing({ ...editing, nextAction: event.target.value })} /></label>
             <label className="field wide"><span>Access</span><input value={editing.accessInfo} onChange={(event) => setEditing({ ...editing, accessInfo: event.target.value })} /></label>
             {"houseBoughtPrice" in property && <label className="field"><span>HouseBought price</span><input value={editing.houseBoughtPrice} onChange={(event) => setEditing({ ...editing, houseBoughtPrice: event.target.value })} /></label>}
@@ -615,10 +629,17 @@ function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, proje
   )
 }
 
+// The city, state and ZIP for the form, taking them out of a city typed with them in it.
+function placeParts(property) {
+  const typed = splitCity(property.city)
+  return { city: typed ? typed.city : property.city || "", state: property.state || typed?.state || "", zip: property.zip || typed?.zip || "" }
+}
+
 function propertyForm(property, recordBudget = null) {
   return {
     address: property.address || "",
-    city: property.city || "",
+    // A city typed with its state and ZIP ("Jacksonville, FL 32207") opens as its three parts.
+    ...placeParts(property),
     stage: property.stage || "Under contract",
     strategy: property.strategy || "",
     purchasePrice: property.purchasePrice ?? "",
