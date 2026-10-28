@@ -92,6 +92,8 @@ export function presentProperty(property, user) {
     customerTerms: user?.role === "contractor" ? "" : source.customerTerms || "",
     rehabBudget: source.rehabBudget ?? null,
     rehabRemaining: source.rehabRemaining ?? null,
+    refinanceStage: source.refinanceStage || "",
+    refinanceClosedAt: source.refinanceClosedAt || null,
     labels: source.labels || [],
     scopeLines: source.scopeLines || [],
     assignedUserIds: (source.assignedUserIds || []).map(String),

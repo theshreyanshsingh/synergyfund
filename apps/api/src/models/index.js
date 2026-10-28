@@ -91,6 +91,11 @@ export const Property = register(
       customerTerms: String,
       rehabBudget: Number,
       rehabRemaining: Number,
+      // BRRRR refinance stage (Ready to Start, In Process, Closed), and the loans closing it marked Paid off (with the
+      // status each had, so reopening the refinance can put them back).
+      refinanceStage: String,
+      refinanceClosedAt: Date,
+      refinanceClosedLoans: [{ loanId: { type: Schema.Types.ObjectId, ref: "Loan" }, status: String, _id: false }],
       labels: [String],
       scopeLines: [
         {

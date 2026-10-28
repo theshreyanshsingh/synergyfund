@@ -674,6 +674,67 @@ export function loanSummary(loans = []) {
   }
 }
 
+// ---- Refinance (BRRRR) ----
+
+// The refinance rules in one place: change the numbers here and every screen follows.
+// A house owned more than seasoningMonths is "seasoned" and gets the seasoned leverage; otherwise the unseasoned one.
+export const REFINANCE = {
+  seasoningMonths: 6,
+  seasoned: { status: "Seasoned", percent: 75, kind: "Cash-Out DSCR" },
+  unseasoned: { status: "Unseasoned", percent: 80, kind: "Rate-and-Term Refinance" },
+  // Refinancing starts once the rehab is done and the house is rented or listed.
+  readyStages: ["For rent", "Rented", "For sale"],
+  stages: ["Ready to Start", "In Process", "Refinanced"],
+}
+
+const DAY_KEY = /^(\d{4})-(\d{2})-(\d{2})$/
+
+// A real calendar day written YYYY-MM-DD (not 2026-13-01 or 2026-02-30).
+function realDay(day) {
+  const match = DAY_KEY.exec(String(day || ""))
+  if (!match) return null
+  const [year, month, date] = [Number(match[1]), Number(match[2]) - 1, Number(match[3])]
+  const check = new Date(Date.UTC(year, month, date))
+  return check.getUTCFullYear() === year && check.getUTCMonth() === month && check.getUTCDate() === date ? { year, month, date } : null
+}
+
+// A day (YYYY-MM-DD) some months later; the 31st becomes the last day of a shorter month.
+export function addMonths(day, months) {
+  const real = realDay(String(day || "").slice(0, 10))
+  if (!real) return ""
+  const { year, month, date } = real
+  const target = new Date(Date.UTC(year, month + months, 1))
+  const last = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate()
+  target.setUTCDate(Math.min(date, last))
+  return target.toISOString().slice(0, 10)
+}
+
+// Leverage desired, from the purchase date: purchased more than 6 months ago is seasoned (75% cash-out DSCR),
+// otherwise unseasoned (80% rate-and-term). today: YYYY-MM-DD.
+export function leverageDesired(purchaseDate, today) {
+  const bought = String(purchaseDate || "").slice(0, 10)
+  if (!realDay(bought)) return { missing: true, text: "Enter Purchase Date" }
+  const seasonedAfter = addMonths(bought, REFINANCE.seasoningMonths)
+  const seasoned = String(today) > seasonedAfter
+  const rule = seasoned ? REFINANCE.seasoned : REFINANCE.unseasoned
+  return { missing: false, seasoned, status: rule.status, percent: rule.percent, kind: rule.kind, text: `${rule.status}: ${rule.percent}% ${rule.kind}`, seasonedAfter }
+}
+
+// Where a property is in its refinance. One stored stage drives the Financing tab, the banner and the tag on the
+// Properties list. today: YYYY-MM-DD (for the leverage).
+export function refinancePlan(property = {}, today = "") {
+  const eligible = REFINANCE.readyStages.includes(property.stage)
+  const stage = REFINANCE.stages.includes(property.refinanceStage) ? property.refinanceStage : REFINANCE.stages[0]
+  return {
+    eligible,
+    stage,
+    // The banner and tag show while a refinance is to do (ready to start or in process), not once it is refinanced.
+    open: eligible && stage !== REFINANCE.stages[REFINANCE.stages.length - 1],
+    label: `Refinance: ${stage}`,
+    leverage: leverageDesired(property.purchaseDate, today),
+  }
+}
+
 export function ensureTaskPermissions(list = []) {
   const selected = knownPermissions(list)
   if (selected.includes(PERMISSIONS.tasksManage) && !selected.includes(PERMISSIONS.tasksAssign)) selected.push(PERMISSIONS.tasksAssign)

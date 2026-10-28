@@ -1,6 +1,6 @@
 import { Router } from "express"
 import { z } from "zod"
-import { drawPulled, lineTracking, loanSummary, resolveBudget, STAGES } from "@synergifund/shared"
+import { drawPulled, lineTracking, loanSummary, REFINANCE, resolveBudget, STAGES } from "@synergifund/shared"
 import { Activity, Bill, CalendarEvent, Company, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
@@ -582,6 +582,63 @@ propertiesRouter.patch(
     ].filter(Boolean).join(" · ")
     await recordActivity({ user: req.user, title: "Property updated", detail: changes || "Saved with no changes", propertyId: property._id })
     res.json({ property: presentProperty(property, req.user) })
+  }),
+)
+
+// The BRRRR refinance stage (one stage per property: the Financing tab, the banner and the Properties list all read it).
+// Marking it Refinanced marks the loans still open Paid off; the new loan is then added with Add loan. Moving it back
+// from Refinanced puts those loans back the way they were.
+propertiesRouter.patch(
+  "/:id/refinance",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const property = await Property.findById(req.params.id)
+    if (!property || !ownsProperty(req.user, property)) {
+      sendError(res, 404, "That property is not available.")
+      return
+    }
+    const stage = String(req.body?.stage || "")
+    if (!REFINANCE.stages.includes(stage)) {
+      sendError(res, 400, `Choose ${REFINANCE.stages.join(", ")}.`)
+      return
+    }
+    if (!REFINANCE.readyStages.includes(property.stage)) {
+      sendError(res, 400, `Not ready for refinance: the property is ${property.stage || "not set"}. Refinancing starts once it is ${REFINANCE.readyStages.join(", ").replace(/, ([^,]*)$/, " or $1")}.`)
+      return
+    }
+    const before = REFINANCE.stages.includes(property.refinanceStage) ? property.refinanceStage : REFINANCE.stages[0]
+    const name = (loan) => [loan.lender && loan.lender !== "Not provided" ? loan.lender : "Loan", loan.loanNumber ? `#${loan.loanNumber}` : ""].filter(Boolean).join(" ")
+    const done = REFINANCE.stages[REFINANCE.stages.length - 1]
+    let paidOff = []
+    let restored = []
+    if (stage === done && before !== done) {
+      paidOff = await Loan.find({ propertyId: property._id, status: { $ne: "Paid off" } })
+      property.refinanceClosedLoans = paidOff.map((loan) => ({ loanId: loan._id, status: loan.status || "Current" }))
+      property.refinanceClosedAt = new Date()
+      if (paidOff.length) await Loan.updateMany({ _id: { $in: paidOff.map((loan) => loan._id) } }, { $set: { status: "Paid off" } })
+    } else if (stage !== done && before === done) {
+      const closed = property.refinanceClosedLoans || []
+      const still = closed.length ? await Loan.find({ _id: { $in: closed.map((entry) => entry.loanId) }, status: "Paid off" }) : []
+      for (const loan of still) {
+        loan.status = closed.find((entry) => String(entry.loanId) === String(loan._id))?.status || "Current"
+        await loan.save()
+      }
+      restored = still
+      property.refinanceClosedLoans = []
+      property.refinanceClosedAt = undefined
+    }
+    property.refinanceStage = stage
+    property.updatedBy = req.user.name
+    await property.save()
+    if (before !== stage) {
+      await recordActivity({
+        user: req.user,
+        title: "Refinance updated",
+        detail: [`Refinance ${before} → ${stage}`, paidOff.length ? `Paid off: ${paidOff.map(name).join(", ")}` : "", restored.length ? `Back as before: ${restored.map(name).join(", ")}` : ""].filter(Boolean).join(" · "),
+        propertyId: property._id,
+      })
+    }
+    res.json({ property: presentProperty(property, req.user), paidOff: paidOff.map((loan) => String(loan._id)), restored: restored.map((loan) => String(loan._id)) })
   }),
 )
 

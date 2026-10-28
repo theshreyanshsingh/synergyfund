@@ -4,6 +4,7 @@ import { useState } from "react"
 import Link from "next/link"
 import { loanSummary } from "@synergifund/shared"
 import { LoanFields } from "../loans/LoanFields"
+import { RefinanceSection } from "./RefinanceSection"
 import { FormSheet } from "../ui/FormSheet"
 import { StatusPill } from "../ui/StatusPill"
 import { api } from "../../lib/api"
@@ -32,7 +33,7 @@ function earliest(dates) {
   return dates.filter(Boolean).sort()[0] || ""
 }
 
-export function FinancingSection({ propertyId, loans, writable, onChanged }) {
+export function FinancingSection({ propertyId, property, loans, writable, onChanged }) {
   const [editing, setEditing] = useState(null)
   const [lenders, setLenders] = useState(null)
   const [error, setError] = useState("")
@@ -138,6 +139,8 @@ export function FinancingSection({ propertyId, loans, writable, onChanged }) {
           ))}
         </div>
       </section>
+
+      {property && <RefinanceSection property={property} loans={loans} writable={writable} onChanged={onChanged} />}
 
       {editing && (
         <FormSheet

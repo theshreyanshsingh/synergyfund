@@ -4,10 +4,11 @@ import { Suspense, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { PageSpinner } from "../../../components/ui/Spinner"
-import { PROPERTY_LABELS, can, STAGES, STRATEGIES } from "@synergifund/shared"
+import { PROPERTY_LABELS, can, refinancePlan, STAGES, STRATEGIES } from "@synergifund/shared"
 import { DrawImport } from "../../../components/draws/DrawImport"
 import { FormSheet } from "../../../components/ui/FormSheet"
 import { StatusPill } from "../../../components/ui/StatusPill"
+import { Icon } from "../../../components/ui/Icon"
 import { WorkspacePage } from "../../../components/ui/WorkspacePage"
 import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
@@ -15,7 +16,7 @@ import { money } from "../../../lib/format"
 import { useApi } from "../../../lib/useApi"
 import { useChatEvents } from "../../../lib/chatSocket"
 
-const BLANK_FORM = { address: "", city: "", stage: "Under contract", strategy: "Fix & flip", purchasePrice: "", arv: "", rehabBudget: "", nextAction: "" }
+const BLANK_FORM = { address: "", city: "", stage: "Under contract", strategy: "Fix & flip", purchasePrice: "", purchaseDate: "", arv: "", rehabBudget: "", nextAction: "" }
 
 function PropertiesScreen() {
   const router = useRouter()
@@ -126,7 +127,7 @@ function PropertiesScreen() {
           ...(contractor ? [] : [{ key: "company", label: "Company", options: [], value: (row) => row.company }]),
         ]}
         columns={[
-          { key: "address", label: "Name", render: (row) => <span className="person-copy"><strong>{row.address}</strong><small>{row.city || "Location not entered"}</small></span> },
+          { key: "address", label: "Name", render: (row) => <PropertyName row={row} refinance={!contractor} /> },
           ...(contractor ? [] : [
             { key: "company", label: "Company", render: (row) => row.companyId ? <Link href={`/companies/${row.companyId}`} className="table-link" onClick={(event) => event.stopPropagation()}>{row.company || "Company"}</Link> : <span className="muted-cell">—</span> },
             { key: "rehabBudget", label: "Rehab budget", render: (row) => row.rehabBudget == null ? "—" : money(row.rehabBudget) },
@@ -164,6 +165,7 @@ function PropertiesScreen() {
               </label>
             )}
             <label className="field"><span>Purchase price</span><input name="purchasePrice" value={form.purchasePrice} onChange={set("purchasePrice")} /></label>
+            <label className="field"><span>Purchase date</span><input name="purchaseDate" type="date" value={form.purchaseDate} onChange={set("purchaseDate")} /></label>
             <label className="field"><span>ARV</span><input name="arv" value={form.arv} onChange={set("arv")} /></label>
             <label className="field"><span>Rehab budget</span><input name="rehabBudget" value={form.rehabBudget} onChange={set("rehabBudget")} /></label>
             <label className="field wide"><span>Next step</span><input name="nextAction" value={form.nextAction} onChange={set("nextAction")} /></label>
@@ -200,6 +202,24 @@ function PropertiesScreen() {
         </FormSheet>
       )}
     </>
+  )
+}
+
+// The name cell: address and city. While a refinance is to do (ready to start or in process), a small Refinance tag
+// shows on the row, and an opened card on a phone shows a banner under the address that opens the Refinance section.
+function PropertyName({ row, refinance }) {
+  const plan = refinance ? refinancePlan(row) : null
+  return (
+    <span className="person-copy property-name">
+      <strong>{row.address}{plan?.open && <span className="refi-tag" title={plan.label}>Refinance</span>}</strong>
+      <small>{row.city || "Location not entered"}</small>
+      {plan?.open && (
+        <Link className="refi-banner" href={`/properties/${row.id}?tab=financing#refinance`} onClick={(event) => event.stopPropagation()}>
+          <span>{plan.label}</span>
+          <Icon name="chevron" size={14} />
+        </Link>
+      )}
+    </span>
   )
 }
 

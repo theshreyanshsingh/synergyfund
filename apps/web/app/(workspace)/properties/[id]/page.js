@@ -374,7 +374,7 @@ export default function PropertyDetailPage({ params }) {
       )}
 
       {section === "financing" && (
-        <FinancingSection propertyId={id} loans={loans} writable={Boolean(canWrite)} onChanged={() => detail.reload()} />
+        <FinancingSection propertyId={id} property={property} loans={loans} writable={Boolean(canWrite)} onChanged={() => detail.reload()} />
       )}
 
       {editing && (
@@ -409,6 +409,7 @@ export default function PropertyDetailPage({ params }) {
             marketRent: blankNumber(editing.marketRent),
             labels: editing.labels,
           }
+          if (editing.purchaseDate !== editing.purchaseDateShown) body.purchaseDate = editing.purchaseDate || ""
           if ("houseBoughtPrice" in property) body.houseBoughtPrice = blankNumber(editing.houseBoughtPrice)
           // Emptying a budget that was shown removes it everywhere, including a copy on the draw budget record.
           if (body.rehabBudget == null && editing.rehabBudgetShown !== "") body.clearDrawBudget = true
@@ -427,6 +428,7 @@ export default function PropertyDetailPage({ params }) {
             <label className="field"><span>Status</span><select value={editing.stage} onChange={(event) => setEditing({ ...editing, stage: event.target.value })}>{STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></label>
             <label className="field"><span>Strategy</span><select value={editing.strategy} onChange={(event) => setEditing({ ...editing, strategy: event.target.value })}><option value="">Not set</option>{STRATEGIES.map((item) => <option key={item}>{item}</option>)}</select></label>
             <label className="field"><span>Purchase price</span><input value={editing.purchasePrice} onChange={(event) => setEditing({ ...editing, purchasePrice: event.target.value })} /></label>
+            <label className="field"><span>Purchase date</span><input type="date" value={editing.purchaseDate} onChange={(event) => setEditing({ ...editing, purchaseDate: event.target.value })} /></label>
             <label className="field"><span>ARV</span><input value={editing.arv} onChange={(event) => setEditing({ ...editing, arv: event.target.value })} /></label>
             <label className="field"><span>Square feet</span><input inputMode="numeric" value={editing.sqft} onChange={(event) => setEditing({ ...editing, sqft: event.target.value })} /></label>
             <label className="field"><span>Beds</span><input inputMode="decimal" value={editing.beds} onChange={(event) => setEditing({ ...editing, beds: event.target.value })} /></label>
@@ -615,6 +617,9 @@ function propertyForm(property, recordBudget = null) {
     stage: property.stage || "Under contract",
     strategy: property.strategy || "",
     purchasePrice: property.purchasePrice ?? "",
+    // The date field shows only a day (YYYY-MM-DD); an older free-text date shows blank and is kept unless changed.
+    purchaseDate: /^\d{4}-\d{2}-\d{2}/.test(property.purchaseDate || "") ? String(property.purchaseDate).slice(0, 10) : "",
+    purchaseDateShown: /^\d{4}-\d{2}-\d{2}/.test(property.purchaseDate || "") ? String(property.purchaseDate).slice(0, 10) : "",
     arv: property.arv ?? "",
     sqft: property.sqft ?? "",
     beds: property.beds ?? "",
