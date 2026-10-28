@@ -1,4 +1,4 @@
-import { insuranceDates, loanPaymentDates } from "./schedule.js"
+import { loanPaymentDates } from "./schedule.js"
 import { teamToday } from "../lib/dates.js"
 
 function shift(key, days) {
@@ -7,15 +7,11 @@ function shift(key, days) {
   return date.toISOString().slice(0, 10)
 }
 
-// The next loan payment and insurance dates from today (the team's today), the same dates the calendar shows.
+// The next loan payment from today (the team's today), the same date the calendar shows. Insurance is on the
+// property now (Property Info), not the loan.
 export function loanSchedule(loan, now = new Date()) {
   const today = teamToday(now)
-  const inTwoMonths = shift(today, 62)
-  const inAYear = shift(today, 400)
-  return {
-    nextPaymentDue: loanPaymentDates(loan, today, inTwoMonths)[0] || "",
-    nextInsuranceDue: insuranceDates(loan, today, inAYear)[0] || "",
-  }
+  return { nextPaymentDue: loanPaymentDates(loan, today, shift(today, 62))[0] || "" }
 }
 
 export function loanFields(loan) {
@@ -23,9 +19,6 @@ export function loanFields(loan) {
     status: loan.status || "Current",
     originalAmount: loan.originalAmount ?? null,
     paymentDay: loan.paymentDay ?? null,
-    insurancePayment: loan.insurancePayment ?? null,
-    insuranceFrequency: loan.insuranceFrequency || "Yearly",
-    insuranceDue: loan.insuranceDue || "",
     ...loanSchedule(loan),
   }
 }

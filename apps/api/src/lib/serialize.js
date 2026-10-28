@@ -1,4 +1,4 @@
-import { assignmentFee, can, cleanSounds, permissionsFor } from "@synergifund/shared"
+import { assignmentFee, can, cleanSounds, permissionsFor, propertyUtilities } from "@synergifund/shared"
 
 export function publicUser(user) {
   return {
@@ -92,6 +92,17 @@ export function presentProperty(property, user) {
     customerTerms: user?.role === "contractor" ? "" : source.customerTerms || "",
     rehabBudget: source.rehabBudget ?? null,
     rehabRemaining: source.rehabRemaining ?? null,
+    taxAmount: source.taxAmount ?? null,
+    taxParcel: source.taxParcel || "",
+    taxDueDate: source.taxDueDate || "",
+    insuranceCarrier: source.insuranceCarrier || "",
+    insuranceAmount: source.insuranceAmount ?? null,
+    insuranceFrequency: source.insuranceFrequency || "Yearly",
+    insuranceDue: source.insuranceDue || "",
+    insurancePolicy: source.insurancePolicy || "",
+    insurancePaidOn: source.insurancePaidOn || "",
+    taxPaidOn: source.taxPaidOn || "",
+    utilities: propertyUtilities(source.utilities),
     refinanceStage: source.refinanceStage || "",
     refinanceClosedAt: source.refinanceClosedAt || null,
     labels: source.labels || [],

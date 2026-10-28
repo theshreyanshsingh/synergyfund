@@ -10,8 +10,6 @@ import { StatusPill } from "../ui/StatusPill"
 import { api } from "../../lib/api"
 import { money } from "../../lib/format"
 
-const PER_YEAR = { Monthly: 12, Quarterly: 4, "Every 6 months": 2, Yearly: 1 }
-
 export function dayLabel(value) {
   const [year, month, day] = String(value || "").slice(0, 10).split("-").map(Number)
   if (!year || !month || !day) return ""
@@ -22,11 +20,6 @@ function ordinal(day) {
   const rest = day % 100
   if (rest >= 11 && rest <= 13) return `${day}th`
   return `${day}${({ 1: "st", 2: "nd", 3: "rd" })[day % 10] || "th"}`
-}
-
-function insuranceLabel(loan) {
-  if (loan.insurancePayment == null) return "Not entered"
-  return `${money(loan.insurancePayment)} ${String(loan.insuranceFrequency || "Yearly").toLowerCase()}`
 }
 
 function earliest(dates) {
@@ -42,10 +35,7 @@ export function FinancingSection({ propertyId, property, loans, writable, onChan
   const open = loans.filter((loan) => loan.status !== "Paid off")
   const totals = open.filter((loan) => loan.originalAmount != null)
   const totalLoan = totals.length ? totals.reduce((sum, loan) => sum + Number(loan.originalAmount || 0), 0) : null
-  const insured = open.filter((loan) => loan.insurancePayment != null)
-  const insuranceYear = insured.length ? insured.reduce((sum, loan) => sum + Number(loan.insurancePayment || 0) * (PER_YEAR[loan.insuranceFrequency] || 1), 0) : null
   const nextPayment = earliest(open.map((loan) => loan.nextPaymentDue))
-  const nextInsurance = earliest(open.map((loan) => loan.nextInsuranceDue))
 
   async function start(loan) {
     setError("")
@@ -89,18 +79,13 @@ export function FinancingSection({ propertyId, property, loans, writable, onChan
           <strong>{money(summary.payment)}</strong>
           {nextPayment && <em>Next due {dayLabel(nextPayment)}</em>}
         </article>
-        <article className="property-figure">
-          <span>Insurance</span>
-          <strong>{insuranceYear == null ? "Not entered" : `${money(insuranceYear)}/yr`}</strong>
-          {nextInsurance && <em>Next due {dayLabel(nextInsurance)}</em>}
-        </article>
       </section>
 
       <section className="panel property-card">
         <div className="property-card-head">
           <div>
             <h2>Loans</h2>
-            <p className="property-missing">Payments and insurance show on the <Link href="/calendar">calendar</Link> automatically from their due dates.</p>
+            <p className="property-missing">Payments show on the <Link href="/calendar">calendar</Link> automatically from their due dates.</p>
           </div>
           {writable && <button type="button" className="tool" onClick={() => start(null)}>Add loan</button>}
         </div>
@@ -125,11 +110,6 @@ export function FinancingSection({ propertyId, property, loans, writable, onChan
                   <dd>{loan.paymentDay ? `${ordinal(loan.paymentDay)} of the month` : "Not entered"}</dd>
                   {loan.nextPaymentDue && <small>Next {dayLabel(loan.nextPaymentDue)}</small>}
                 </div>
-                <div><dt>Insurance payment</dt><dd>{insuranceLabel(loan)}</dd></div>
-                <div>
-                  <dt>Insurance due</dt>
-                  <dd>{loan.nextInsuranceDue ? dayLabel(loan.nextInsuranceDue) : loan.insuranceDue ? dayLabel(loan.insuranceDue) : "Not entered"}</dd>
-                </div>
                 <div><dt>Maturity</dt><dd>{loan.maturity ? dayLabel(loan.maturity) : "Not entered"}</dd></div>
                 <div><dt>Terms</dt><dd>{loan.termsStatus || "Recorded"}</dd></div>
               </dl>
@@ -140,7 +120,7 @@ export function FinancingSection({ propertyId, property, loans, writable, onChan
         </div>
       </section>
 
-      {property && <RefinanceSection property={property} loans={loans} writable={writable} onChanged={onChanged} />}
+      {property && <RefinanceSection property={property} loans={loans} writable={writable} onChanged={onChanged} onAddLoan={() => start(null)} />}
 
       {editing && (
         <FormSheet

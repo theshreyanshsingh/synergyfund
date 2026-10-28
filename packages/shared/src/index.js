@@ -652,7 +652,36 @@ export function cleanSounds(value = {}) {
 }
 
 export const LOAN_STATUSES = ["Current", "Late", "In default", "Paid off"]
-export const INSURANCE_FREQUENCIES = ["Monthly", "Quarterly", "Every 6 months", "Yearly"]
+// How often a property's insurance is paid (Property Info). Loans used to hold insurance with "Every 6 months".
+export const INSURANCE_FREQUENCIES = ["Monthly", "Quarterly", "Semi-Annually", "Yearly"]
+
+// Insurance payments a year for each frequency, and a property's insurance for a whole year (blank when not entered).
+export const INSURANCE_PER_YEAR = { Monthly: 12, Quarterly: 4, "Semi-Annually": 2, Yearly: 1 }
+export function yearlyInsurance(property = {}) {
+  if (property.insuranceAmount == null || property.insuranceAmount === "") return null
+  return Math.round(Number(property.insuranceAmount) * (INSURANCE_PER_YEAR[property.insuranceFrequency] || 1) * 100) / 100
+}
+
+// Properties that are no longer owned: no insurance or tax reminders for them.
+export const NOT_OWNED_STAGES = ["Sold", "Exit"]
+
+// Utilities on Property Info: Water and Electric are on every property and can't be removed; others can be added.
+export const DEFAULT_UTILITIES = ["Water", "Electric"]
+export const UTILITY_CHOICES = ["Sewer", "Gas", "Trash", "Internet"]
+
+// A property's utilities, Water and Electric first (always there), then the added ones in order, one per name.
+export function propertyUtilities(list = []) {
+  const seen = new Set()
+  const clean = []
+  for (const item of Array.isArray(list) ? list : []) {
+    const name = String(item?.name || "").replace(/\s+/g, " ").trim().slice(0, 40)
+    if (!name || seen.has(name.toLowerCase())) continue
+    seen.add(name.toLowerCase())
+    clean.push({ name, provider: String(item?.provider || "").trim().slice(0, 120), account: String(item?.account || "").trim().slice(0, 120) })
+  }
+  const fixed = DEFAULT_UTILITIES.map((name) => ({ ...(clean.find((item) => item.name.toLowerCase() === name.toLowerCase()) || { provider: "", account: "" }), name, fixed: true }))
+  return [...fixed, ...clean.filter((item) => !DEFAULT_UTILITIES.some((name) => name.toLowerCase() === item.name.toLowerCase())).map((item) => ({ ...item, fixed: false }))]
+}
 
 // One status and one open balance per property, from its loans. Paid-off loans carry no balance.
 export function loanSummary(loans = []) {

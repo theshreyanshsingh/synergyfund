@@ -26,6 +26,7 @@ const STEPS = {
   Monthly: { months: 1 },
   Quarterly: { months: 3 },
   "Every 6 months": { months: 6 },
+  "Semi-Annually": { months: 6 },
   Yearly: { months: 12 },
 }
 
@@ -70,17 +71,31 @@ export function nextPaymentDate(bill) {
   return ""
 }
 
-// Insurance repeats from its next due date; it stops when the loan is paid off.
-export function insuranceDates(loan, from, to) {
-  if (loan?.status === "Paid off" || !(Number(loan?.insurancePayment) > 0)) return []
-  const due = String(loan?.insuranceDue || "").slice(0, 10)
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) return []
-  const step = STEPS[loan.insuranceFrequency] || STEPS.Yearly
+function repeating(due, step, from, to) {
+  const day = String(due || "").slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return []
   const dates = []
   for (let index = 0; index < 600; index += 1) {
-    const date = occurrence(due, step, index)
+    const date = occurrence(day, step, index)
     if (date > to) break
     if (date >= from) dates.push(date)
   }
   return dates
+}
+
+// The due date after this one, for insurance (by how often it is paid) or taxes (yearly).
+export function nextDueAfter(due, frequency = "Yearly") {
+  const day = String(due || "").slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return ""
+  return occurrence(day, STEPS[frequency] || STEPS.Yearly, 1)
+}
+
+// A property's insurance (Property Info) repeats from its next due date, as often as it is paid.
+export function insuranceDates(property, from, to) {
+  return repeating(property?.insuranceDue, STEPS[property?.insuranceFrequency] || STEPS.Yearly, from, to)
+}
+
+// Property taxes repeat yearly from the tax due date, when one is entered.
+export function taxDates(property, from, to) {
+  return repeating(property?.taxDueDate, STEPS.Yearly, from, to)
 }

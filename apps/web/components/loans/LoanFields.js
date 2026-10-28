@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { INSURANCE_FREQUENCIES, LOAN_LABELS, LOAN_STATUSES } from "@synergifund/shared"
+import { LOAN_LABELS, LOAN_STATUSES } from "@synergifund/shared"
 
 const NEW_LENDER = "__new"
 
@@ -45,13 +45,6 @@ export function LoanFields({ lenders, properties = [], loan, propertyId = "" }) 
       <label className="field"><span>Current balance</span><input name="balance" inputMode="decimal" placeholder="$0" defaultValue={loan?.balance ?? ""} /></label>
       <label className="field"><span>Monthly payment</span><input name="payment" inputMode="decimal" placeholder="$0" defaultValue={loan?.payment ?? ""} /></label>
       <label className="field"><span>Payment due day</span><input name="paymentDay" type="number" min="1" max="31" inputMode="numeric" placeholder="Day of the month, 1 to 31" defaultValue={loan?.paymentDay ?? ""} /></label>
-      <label className="field"><span>Insurance payment</span><input name="insurancePayment" inputMode="decimal" placeholder="$0" defaultValue={loan?.insurancePayment ?? ""} /></label>
-      <label className="field"><span>Insurance repeats</span>
-        <select name="insuranceFrequency" defaultValue={loan?.insuranceFrequency || "Yearly"}>
-          {INSURANCE_FREQUENCIES.map((frequency) => <option key={frequency}>{frequency}</option>)}
-        </select>
-      </label>
-      <label className="field"><span>Next insurance due date</span><input name="insuranceDue" type="date" defaultValue={loan?.insuranceDue || ""} /></label>
       <label className="field"><span>Maturity</span><input name="maturity" type="date" defaultValue={loan?.maturity || ""} /></label>
       <label className="field"><span>Loan number</span><input name="loanNumber" defaultValue={loan?.loanNumber || ""} /></label>
       <label className="field"><span>Terms status</span>
@@ -61,7 +54,7 @@ export function LoanFields({ lenders, properties = [], loan, propertyId = "" }) 
         </select>
       </label>
       <label className="field wide"><span>Terms for this property</span><textarea name="terms" defaultValue={loan?.terms || ""} placeholder="Anything specific to this house" /></label>
-      <p className="field wide form-note">Monthly payments and insurance go on the calendar automatically from the due day and due date.</p>
+      <p className="field wide form-note">Monthly payments go on the calendar automatically from the due day. Insurance is on the property's Property Info tab.</p>
     </div>
   )
 }

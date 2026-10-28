@@ -2181,6 +2181,43 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .loan-facts dt { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
 .loan-facts dd { margin: 3px 0 0; font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .loan-facts small { color: var(--muted); font-size: 12px; }
+/* Property Info tab: ownership, taxes, insurance and utilities */
+.property-info { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.property-info > .banner { grid-column: 1 / -1; }
+.info-card { min-width: 0; margin: 0; }
+.info-card .property-card-head { align-items: center; margin-bottom: 12px; }
+.info-card h2 { margin: 0; }
+.info-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; margin: 0; }
+.info-facts > div { display: grid; gap: 2px; min-width: 0; }
+.info-facts dt { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.info-facts dd { margin: 0; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
+.info-facts small { color: var(--muted); font-size: 12px; }
+.info-empty { color: var(--faint); font-weight: 500; }
+.info-hint { margin: 12px 0 0; color: var(--muted); font-size: 12.5px; }
+.info-message { grid-column: 1 / -1; margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--good-bg); font-size: 13px; }
+.info-card .property-card-head .row-actions { display: inline-flex; gap: 6px; }
+.info-facts small.info-overdue { color: var(--bad); font-weight: 650; }
+.info-facts small.info-soon { color: var(--warn, #b45309); font-weight: 650; }
+.info-facts > div.is-overdue dd { color: var(--bad); }
+.info-utilities { margin: 0; padding: 0; list-style: none; display: grid; }
+.info-utilities li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--row-line); }
+.info-utilities li:first-child { border-top: 0; padding-top: 0; }
+.info-utilities li > div { display: grid; gap: 2px; min-width: 0; }
+.info-utilities strong { font-size: 14px; }
+.info-utilities li > div > span { color: var(--text); font-size: 13px; overflow-wrap: anywhere; }
+.info-utilities .row-actions { display: inline-flex; gap: 6px; flex: none; }
+.info-utilities .tool.danger { color: var(--bad); }
+.info-amount { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 10px; }
+.info-amount > .field { margin: 0; }
+@media (max-width: 900px) {
+  .property-info { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 480px) {
+  .info-facts { grid-template-columns: minmax(0, 1fr); }
+  .info-amount { grid-template-columns: minmax(0, 1fr) 130px; }
+  .info-utilities li { align-items: flex-start; flex-direction: column; gap: 6px; }
+}
+
 /* Refinance (Financing tab), and its tag and banner on the Properties list */
 .refinance .property-card-head { align-items: flex-start; }
 .refinance-stage { min-width: 180px; margin: 0; }
@@ -2193,6 +2230,9 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .refinance-facts > div.is-missing dd { color: var(--bad); }
 .refinance-facts dd { overflow-wrap: anywhere; }
 .refinance-inline { justify-self: start; margin-top: 4px; padding: 3px 9px; font-size: 12px; }
+.refinance-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.refinance-facts small a { color: var(--accent); text-decoration: none; }
+.refinance-done .tool { margin-left: 6px; padding: 3px 10px; font-size: 12.5px; }
 .property-name strong { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .refi-tag { display: inline-block; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, var(--white)); color: var(--accent); font-size: 10.5px; font-weight: 750; letter-spacing: .02em; line-height: 1.5; }
 .refi-banner { display: none; }

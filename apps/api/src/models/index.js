@@ -91,6 +91,20 @@ export const Property = register(
       customerTerms: String,
       rehabBudget: Number,
       rehabRemaining: Number,
+      // Property Info: taxes, insurance (moved here from loans) and utilities. Owner is ownerEntity and the purchase
+      // date is purchaseDate, the same fields as everywhere else.
+      taxAmount: Number,
+      taxParcel: String,
+      taxDueDate: String,
+      insuranceCarrier: String,
+      insuranceAmount: Number,
+      insuranceFrequency: String,
+      insuranceDue: String,
+      insurancePolicy: String,
+      // The last time Mark paid recorded the insurance or the tax (the payment itself is a cost on the cost sheet).
+      insurancePaidOn: String,
+      taxPaidOn: String,
+      utilities: [{ name: String, provider: String, account: String, _id: false }],
       // BRRRR refinance stage (Ready to Start, In Process, Closed), and the loans closing it marked Paid off (with the
       // status each had, so reopening the refinance can put them back).
       refinanceStage: String,

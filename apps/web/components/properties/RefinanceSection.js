@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { REFINANCE, refinancePlan } from "@synergifund/shared"
+import { REFINANCE, refinancePlan, yearlyInsurance } from "@synergifund/shared"
 import { FormSheet } from "../ui/FormSheet"
 import { StatusPill } from "../ui/StatusPill"
 import { api } from "../../lib/api"
@@ -24,9 +24,10 @@ function today() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
 }
 
-export function RefinanceSection({ property, loans, writable, onChanged }) {
+export function RefinanceSection({ property, loans, writable, onChanged, onAddLoan }) {
   const plan = refinancePlan(property, today())
   const [pending, setPending] = useState(false)
+  const [copied, setCopied] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
   const [dating, setDating] = useState(false)
@@ -63,6 +64,28 @@ export function RefinanceSection({ property, loans, writable, onChanged }) {
 
   const leverage = plan.leverage
   const storedDate = String(property.purchaseDate || "")
+  const insurance = yearlyInsurance(property)
+  const rent = property.marketRent ?? property.actualRent ?? null
+  const place = [property.address, property.city].filter(Boolean).join(", ")
+
+  // What the lender asks for, ready to paste into an email or text.
+  async function copyForLender() {
+    const lines = [
+      `Address: ${place}`,
+      `Purchase date: ${leverage.missing ? "not entered" : dayLabel(storedDate)}`,
+      `Yearly taxes: ${property.taxAmount == null ? "not entered" : money(property.taxAmount)}`,
+      `Yearly insurance: ${insurance == null ? "not entered" : money(insurance)}`,
+      `Rental estimate: ${rent == null ? "not entered" : `${money(rent)}/month`}`,
+      `Leverage desired: ${leverage.missing ? "purchase date needed" : leverage.text}`,
+    ]
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"))
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2500)
+    } catch {
+      setError("Copying is blocked in this browser. Select the details below and copy them yourself.")
+    }
+  }
   return (
     <section className="panel property-card refinance" id="refinance">
       <div className="property-card-head">
@@ -81,7 +104,7 @@ export function RefinanceSection({ property, loans, writable, onChanged }) {
         ) : <StatusPill>Not Ready for Refinance</StatusPill>}
       </div>
       {!plan.eligible && <p className="refinance-note">Not Ready for Refinance: the property is {property.stage || "not set"}. The refinance starts once it is {readyList}.</p>}
-      {message && <p className="refinance-done">{message}</p>}
+      {message && <p className="refinance-done">{message}{plan.stage === DONE && writable && onAddLoan && <> <button type="button" className="tool" onClick={onAddLoan}>Add new loan</button></>}</p>}
       {error && <p className="banner">{error}</p>}
 
       <dl className="loan-facts refinance-facts">
@@ -95,12 +118,31 @@ export function RefinanceSection({ property, loans, writable, onChanged }) {
           <dd>{leverage.missing ? (storedDate ? `${storedDate} (not a full date)` : "Not entered") : dayLabel(storedDate)}</dd>
           {writable && <button type="button" className="tool refinance-inline" onClick={() => setDating(true)}>{leverage.missing ? "Enter Purchase Date" : "Change"}</button>}
         </div>
+        <div>
+          <dt>Yearly taxes</dt>
+          <dd>{property.taxAmount == null ? "Not entered" : money(property.taxAmount)}</dd>
+          <small><a href={`/properties/${property.id}?tab=info`}>On Property Info</a></small>
+        </div>
+        <div>
+          <dt>Yearly insurance</dt>
+          <dd>{insurance == null ? "Not entered" : money(insurance)}</dd>
+          <small>{insurance != null && property.insuranceFrequency !== "Yearly" ? `${money(property.insuranceAmount)} ${String(property.insuranceFrequency).toLowerCase()} · ` : ""}<a href={`/properties/${property.id}?tab=info`}>On Property Info</a></small>
+        </div>
+        <div>
+          <dt>Rental estimate</dt>
+          <dd>{rent == null ? "Not entered" : `${money(rent)}/month`}</dd>
+          <small>{property.marketRent != null ? "Market rent" : property.actualRent != null ? "Actual rent" : "Enter market rent with Modify"}</small>
+        </div>
         <div className={leverage.missing ? "is-missing" : "is-key"}>
           <dt>Leverage desired</dt>
           <dd>{leverage.text}</dd>
           {!leverage.missing && <small>{leverage.seasoned ? `Owned more than ${REFINANCE.seasoningMonths} months` : `${REFINANCE.seasoningMonths} months or less; seasoned after ${dayLabel(leverage.seasonedAfter)}`}</small>}
         </div>
       </dl>
+      <div className="refinance-actions">
+        <button type="button" className="tool" onClick={copyForLender}>{copied ? "Copied" : "Copy for lender"}</button>
+        {plan.stage === DONE && writable && onAddLoan && open.length === 0 && <button type="button" className="primary" onClick={onAddLoan}>Add new loan</button>}
+      </div>
 
       {dating && <PurchaseDateForm property={property} onClose={() => setDating(false)} onSaved={() => { setDating(false); onChanged?.() }} />}
     </section>

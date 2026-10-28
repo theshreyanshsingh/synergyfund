@@ -17,6 +17,7 @@ const KINDS = [
   { id: "event", label: "Events" },
   { id: "bill", label: "Bills" },
   { id: "loan", label: "Loans" },
+  { id: "property", label: "Insurance & taxes" },
   { id: "draw", label: "Draws" },
   { id: "task", label: "Tasks" },
   { id: "expense", label: "Posted costs" },
@@ -24,7 +25,7 @@ const KINDS = [
 const VIEWS = [{ id: "month", label: "Month" }, { id: "week", label: "Week" }, { id: "day", label: "Day" }]
 const VIEW_KEY = "synergifund-calendar-view"
 const HOUR = 48
-const OPEN_LABELS = { bill: "Open in Payments", loan: "Open the loan", draw: "Open the draws", task: "Open the task", expense: "Open in Expenses" }
+const OPEN_LABELS = { bill: "Open in Payments", loan: "Open the loan", property: "Open Property Info", draw: "Open the draws", task: "Open the task", expense: "Open in Expenses" }
 
 export default function CalendarPage() {
   return (
@@ -46,7 +47,7 @@ function CalendarScreen() {
   const [editor, setEditor] = useState(null)
   const [creating, setCreating] = useState(false)
   const createBox = useRef(null)
-  const [kinds, setKinds] = useState({ event: true, bill: true, loan: true, draw: true, task: true, expense: true })
+  const [kinds, setKinds] = useState({ event: true, bill: true, loan: true, property: true, draw: true, task: true, expense: true })
   const canSeeAllTasks = Boolean(data.data?.canSeeAllTasks)
   const canTask = Boolean(session?.user && can(session.user, PERMISSIONS.tasksManage))
   const events = (data.data?.events || []).filter((event) => kinds[event.kind])
@@ -621,13 +622,14 @@ function MiniMonth({ cursor, today, events, onPick }) {
 }
 
 function kindLabel(kind) {
-  return { event: "Event", bill: "Bill", loan: "Loan", draw: "Draw", task: "Task", expense: "Posted cost" }[kind] || "Item"
+  return { event: "Event", bill: "Bill", loan: "Loan", property: "Insurance & taxes", draw: "Draw", task: "Task", expense: "Posted cost" }[kind] || "Item"
 }
 
 function kindTone(kind) {
   if (kind === "event") return "event"
   if (kind === "bill") return "warn"
   if (kind === "loan") return "bad"
+  if (kind === "property") return "warn"
   if (kind === "draw") return "info"
   if (kind === "task") return "neutral"
   return "good"

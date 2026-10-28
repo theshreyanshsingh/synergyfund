@@ -1,10 +1,10 @@
-import { COMPANY_FOLDERS, EXPENSE_CATEGORIES, LOAN_STATUSES, PERMISSIONS, PROPERTY_FOLDERS, TASK_LABELS, documentType, drawFigures, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
+import { COMPANY_FOLDERS, EXPENSE_CATEGORIES, refinancePlan, yearlyInsurance, LOAN_STATUSES, PERMISSIONS, PROPERTY_FOLDERS, TASK_LABELS, documentType, drawFigures, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
 import { Bill, Company, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, Property, Task, User } from "../../models/index.js"
 import { presentProperty } from "../../lib/serialize.js"
 import { propertyFilter } from "../access.js"
 import { presentContractorDraw, presentDraw } from "../../routes/draws.js"
 import { matchScore, rank } from "./match.js"
-import { insuranceDates, loanPaymentDates, paymentDates } from "../schedule.js"
+import { insuranceDates, loanPaymentDates, paymentDates, taxDates } from "../schedule.js"
 import { geocode, nearbyZips } from "../geocode.js"
 import { analyzeArv, milesBetween } from "./arv.js"
 import { teamToday } from "../../lib/dates.js"
@@ -155,9 +155,6 @@ function presentLoanRow(loan, names, lenders) {
     property: names.get(String(loan.propertyId || "")) || "",
     lender: lenderName(lender?.name || loan.lender),
     status: loan.status || "Current",
-    insurancePayment: loan.insurancePayment ?? null,
-    insuranceFrequency: loan.insurancePayment != null ? loan.insuranceFrequency || "Yearly" : "",
-    insuranceDue: loan.insuranceDue || "",
     label: loan.label || "Financed",
     loanNumber: loan.loanNumber || "",
     balance: loan.balance ?? null,
@@ -555,6 +552,13 @@ export const TOOLS = [
           marketRent: property.marketRent ?? null,
           health: property.health || "",
           nextStep: property.nextAction || "",
+          // Property Info and the refinance.
+          yearlyTaxes: property.taxAmount ?? null,
+          taxDueDate: property.taxDueDate || "",
+          insuranceCarrier: property.insuranceCarrier || "",
+          yearlyInsurance: yearlyInsurance(property),
+          insuranceDueDate: property.insuranceDue || "",
+          refinance: refinancePlan(property, todayKey()).eligible ? refinancePlan(property, todayKey()).stage : "",
         })
       return {
         success: true,
@@ -840,7 +844,7 @@ export const TOOLS = [
     label: "Checking upcoming payments",
     permission: PERMISSIONS.expensesRead,
     staffOnly: true,
-    description: "Money due in the next N days (default 30): unpaid bills including overdue ones, monthly mortgage payments with their due dates when a payment day is on file, loan maturities, open draws with a forecast date, and payment tasks such as EMD, insurance or taxes.",
+    description: "Money due in the next N days (default 30): unpaid bills including overdue ones, monthly mortgage payments with their due dates when a payment day is on file, insurance and property tax due dates, loan maturities, open draws with a forecast date, and payment tasks such as EMD, insurance or taxes.",
     parameters: {
       type: "object",
       properties: { days: { type: "number", description: "How many days ahead to look, 1 to 365." } },
@@ -879,8 +883,12 @@ export const TOOLS = [
         paymentDay: loan.paymentDay ?? null,
         dueDates: loanPaymentDates(loan, today, until),
       }))
-      const insurance = open
-        .map((loan) => ({ property: place(loan.propertyId), lender: lenderName(loan.lender), amount: loan.insurancePayment ?? null, repeats: loan.insuranceFrequency || "Yearly", dueDates: insuranceDates(loan, today, until) }))
+      // Insurance and property taxes are on each property (Property Info).
+      const insurance = properties
+        .map((property) => ({ property: property.address, carrier: property.insuranceCarrier || "", amount: property.insuranceAmount ?? null, repeats: property.insuranceFrequency || "Yearly", dueDates: insuranceDates(property, today, until) }))
+        .filter((row) => row.dueDates.length)
+      const taxes = properties
+        .map((property) => ({ property: property.address, amount: property.taxAmount ?? null, dueDates: taxDates(property, today, until) }))
         .filter((row) => row.dueDates.length)
       const maturities = open
         .filter((loan) => dateKey(loan.maturity) && dateKey(loan.maturity) <= until)
@@ -894,6 +902,7 @@ export const TOOLS = [
         monthlyMortgages: mortgages,
         monthlyMortgageTotal: sum(mortgages, (row) => row.monthlyPayment),
         insurancePayments: insurance,
+        propertyTaxes: taxes,
         loanMaturities: maturities,
         paymentTasks: tasks
           .filter((task) => dateKey(task.due) && dateKey(task.due) <= until)

@@ -7,6 +7,7 @@ import { LINE_STATUSES, PROPERTY_LABELS, STAGES, STRATEGIES, can } from "@synerg
 import { FormSheet } from "../../../../components/ui/FormSheet"
 import { DrawEditor } from "../../../../components/draws/DrawEditor"
 import { FinancingSection } from "../../../../components/properties/FinancingSection"
+import { PropertyInfoSection } from "../../../../components/properties/PropertyInfoSection"
 import { ArvSection } from "../../../../components/properties/ArvSection"
 import { DocumentsSection } from "../../../../components/properties/DocumentsSection"
 import { ReportSheet } from "../../../../components/properties/ReportSheet"
@@ -29,7 +30,7 @@ export default function PropertyDetailPage({ params }) {
   const search = useSearchParams()
   const session = useSession()
   const detail = useApi(`/properties/${id}`)
-  const [section, setSection] = useState(() => (["overview", "draws", "expenses", "arv", "financing", "documents"].includes(search.get("tab")) ? search.get("tab") : "overview"))
+  const [section, setSection] = useState(() => (["overview", "info", "draws", "expenses", "arv", "financing", "documents"].includes(search.get("tab")) ? search.get("tab") : "overview"))
   const [note, setNote] = useState("")
   const [files, setFiles] = useState([])
   const [message, setMessage] = useState("")
@@ -94,7 +95,7 @@ export default function PropertyDetailPage({ params }) {
     { id: "overview", label: "Overview" },
   ]
   // The Documents tab shows the same files the property's company shows under Documents › Properties.
-  if (internal) tabs.push({ id: "draws", label: "Draws" }, ...(seesExpenses ? [{ id: "expenses", label: "Expenses" }] : []), { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" }, { id: "documents", label: "Documents" })
+  if (internal) tabs.push({ id: "info", label: "Property Info" }, { id: "draws", label: "Draws" }, ...(seesExpenses ? [{ id: "expenses", label: "Expenses" }] : []), { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" }, { id: "documents", label: "Documents" })
 
   if (!internal) {
     return (
@@ -371,6 +372,10 @@ export default function PropertyDetailPage({ params }) {
 
       {section === "documents" && (
         <DocumentsSection property={property} company={company} writable={Boolean(session?.user && can(session.user, "documents.write"))} canDelete={Boolean(session?.user && can(session.user, "documents.delete"))} initialFolder={search.get("folder") || ""} />
+      )}
+
+      {section === "info" && (
+        <PropertyInfoSection property={property} writable={Boolean(canWrite)} canPay={Boolean(canPost)} onChanged={() => { detail.reload(); setCostVersion((value) => value + 1); setTrackingVersion((value) => value + 1) }} />
       )}
 
       {section === "financing" && (

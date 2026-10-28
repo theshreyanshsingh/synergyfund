@@ -29,6 +29,7 @@ import { teammateRouter } from "./routes/teammate.js"
 import { backupsRouter } from "./routes/backups.js"
 import { receiptsRouter } from "./routes/receipts.js"
 import { restoreRunning, startBackupSchedule } from "./services/backup.js"
+import { moveLoanInsurance } from "./services/insuranceMove.js"
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../..")
 dotenv.config({ path: path.join(repoRoot, ".env"), quiet: true })
@@ -87,6 +88,7 @@ const port = Number(process.env.PORT || 4000)
 await mongoose.connect(process.env.MONGODB_URI)
 await seedIfEmpty()
 await closeStaleCalls()
+await moveLoanInsurance().catch((error) => console.error("Moving loan insurance to Property Info failed", error))
 await recoverNotes().catch((error) => console.error("Call notes recovery failed", error))
 await startTeammate().catch((error) => console.error("AI teammate failed to start", error))
 startBackupSchedule()

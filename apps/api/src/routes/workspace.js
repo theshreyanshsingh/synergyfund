@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { can, drawFigures, TASK_LABELS, drawPulled, ensureTaskPermissions, resolveBudget, INSURANCE_FREQUENCIES, isRole, LOAN_STATUSES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
+import { can, drawFigures, TASK_LABELS, drawPulled, ensureTaskPermissions, resolveBudget, isRole, NOT_OWNED_STAGES, LOAN_STATUSES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
 import {
   NativeDevice,
   Activity,
@@ -24,7 +24,7 @@ import { asyncHandler, blockContractors, requireAnyPermission, requirePermission
 import { publicUser } from "../lib/serialize.js"
 import { propertyFilter } from "../services/access.js"
 import { presentDraw, refreshRehabRemaining } from "./draws.js"
-import { insuranceDates, loanPaymentDates, nextPaymentDate, paymentDates } from "../services/schedule.js"
+import { insuranceDates, loanPaymentDates, nextPaymentDate, paymentDates, taxDates } from "../services/schedule.js"
 import { saveUploadedFile, upload } from "../services/files.js"
 import { ensureLenders, lenderForName, presentLender } from "../services/lenders.js"
 import { loanFields } from "../services/loans.js"
@@ -47,9 +47,6 @@ const LOAN_FIELDS = [
   ["originalAmount", "Total loan", true],
   ["maturity", "Maturity"],
   ["status", "Loan status"],
-  ["insurancePayment", "Insurance payment", true],
-  ["insuranceFrequency", "Insurance repeats"],
-  ["insuranceDue", "Insurance due"],
   ["termsStatus", "Terms"],
   ["terms", "Property terms"],
 ]
@@ -631,9 +628,6 @@ workspaceRouter.post(
       maturity: String(req.body.maturity || ""),
       termsStatus: req.body.termsStatus === "Verified" ? "Verified" : "Needs verification",
       status: loanStatus(req.body.status),
-      insurancePayment: optionalNumber(req.body.insurancePayment),
-      insuranceFrequency: insuranceFrequency(req.body.insuranceFrequency),
-      insuranceDue: dateKey(req.body.insuranceDue),
     })
     await recordActivity({ user: req.user, title: "Loan recorded", detail: [lender?.name || "No lender", money(loan.originalAmount ?? loan.balance), property.address].filter(Boolean).join(" · "), propertyId: property._id })
     res.status(201).json({ loan: presentLoan(loan, new Map([[String(property._id), property]]), lender ? [lender] : []) })
@@ -699,9 +693,6 @@ workspaceRouter.patch(
     }
     if ("termsStatus" in req.body) loan.termsStatus = req.body.termsStatus === "Verified" ? "Verified" : "Needs verification"
     if ("status" in req.body) loan.status = loanStatus(req.body.status)
-    if ("insurancePayment" in req.body) loan.insurancePayment = optionalNumber(req.body.insurancePayment)
-    if ("insuranceFrequency" in req.body) loan.insuranceFrequency = insuranceFrequency(req.body.insuranceFrequency)
-    if ("insuranceDue" in req.body) loan.insuranceDue = dateKey(req.body.insuranceDue)
     if (moveTo) loan.propertyId = moveTo._id
     await loan.save()
     const lender = loan.lenderId ? await Lender.findById(loan.lenderId) : null
@@ -1089,7 +1080,7 @@ workspaceRouter.get(
   requirePermission("expenses.read"),
   blockContractors,
   asyncHandler(async (req, res) => {
-    const properties = await Property.find(propertyFilter(req.user)).select("_id address")
+    const properties = await Property.find(propertyFilter(req.user)).select("_id address stage insuranceCarrier insuranceAmount insuranceFrequency insuranceDue taxAmount taxDueDate")
     const propertyIds = properties.map((property) => property._id)
     const names = new Map(properties.map((property) => [String(property._id), property.address]))
     const canSeeAllTasks = req.permissions.includes(PERMISSIONS.tasksAssign) || req.permissions.includes(PERMISSIONS.tasksManage)
@@ -1172,22 +1163,40 @@ workspaceRouter.get(
           href: loan.propertyId ? `/properties/${loan.propertyId}?tab=financing` : "/loans",
         }
       })),
-      ...loans.flatMap((loan) => insuranceDates(loan, shiftKey(today, -60), shiftKey(today, 365)).map((date) => {
+      // Insurance and property taxes from Property Info (contractors don't see them).
+      ...(req.user.role === "contractor" ? [] : properties.filter((property) => !NOT_OWNED_STAGES.includes(property.stage)).flatMap((property) => insuranceDates(property, shiftKey(today, -60), shiftKey(today, 365)).map((date) => {
         const dueSoon = date >= today && date <= soon
+        const often = String(property.insuranceFrequency || "Yearly").toLowerCase()
         return {
-          id: `loan-insurance-${loan._id}-${date}`,
-          kind: "loan",
-          title: "Insurance payment",
+          id: `property-insurance-${property._id}-${date}`,
+          kind: "property",
+          title: property.insuranceCarrier ? `${property.insuranceCarrier} insurance` : "Insurance payment",
           date,
-          amount: loan.insurancePayment ?? null,
+          amount: property.insuranceAmount ?? null,
           status: "Scheduled",
-          property: names.get(String(loan.propertyId || "")) || "",
+          property: property.address,
           urgent: dueSoon,
           tone: dueSoon ? "warn" : "neutral",
-          detail: date < today ? `Insurance, ${String(loan.insuranceFrequency || "Yearly").toLowerCase()}, past` : dueSoon ? "Insurance due this week" : `Insurance, ${String(loan.insuranceFrequency || "Yearly").toLowerCase()}`,
-          href: loan.propertyId ? `/properties/${loan.propertyId}?tab=financing` : "/loans",
+          detail: date < today ? `Insurance, ${often}, past` : dueSoon ? "Insurance due this week" : `Insurance, ${often}`,
+          href: `/properties/${property._id}?tab=info`,
         }
-      })),
+      }))),
+      ...(req.user.role === "contractor" ? [] : properties.filter((property) => !NOT_OWNED_STAGES.includes(property.stage)).flatMap((property) => taxDates(property, shiftKey(today, -60), shiftKey(today, 365)).map((date) => {
+        const dueSoon = date >= today && date <= soon
+        return {
+          id: `property-tax-${property._id}-${date}`,
+          kind: "property",
+          title: "Property tax due",
+          date,
+          amount: property.taxAmount ?? null,
+          status: "Scheduled",
+          property: property.address,
+          urgent: dueSoon,
+          tone: dueSoon ? "warn" : "neutral",
+          detail: date < today ? "Property tax, yearly, past" : dueSoon ? "Property tax due this week" : "Property tax, yearly",
+          href: `/properties/${property._id}?tab=info`,
+        }
+      }))),
       ...draws.flatMap((item) => {
         const draw = presentDraw(item)
         const property = names.get(String(item.propertyId || "")) || ""
@@ -1517,7 +1526,7 @@ function presentLoan(loan, names, lenders = []) {
   }
 }
 
-const LOAN_MONEY = [["balance", "Balance"], ["payment", "Monthly payment"], ["originalAmount", "Total loan"], ["insurancePayment", "Insurance payment"]]
+const LOAN_MONEY = [["balance", "Balance"], ["payment", "Monthly payment"], ["originalAmount", "Total loan"]]
 
 // Returns a message for the first field that cannot be saved as entered, so nothing is dropped silently.
 function loanProblem(body, loan = null) {
@@ -1527,12 +1536,7 @@ function loanProblem(body, loan = null) {
     if (number === undefined || number < 0) return `Enter ${label.toLowerCase()} as a dollar amount.`
   }
   if ("paymentDay" in body && body.paymentDay !== "" && body.paymentDay != null && dayOfMonth(body.paymentDay) == null) return "Payment due day must be a day of the month from 1 to 31."
-  for (const [key, label] of [["insuranceDue", "Insurance due date"], ["maturity", "Maturity"]]) {
-    if (key in body && body[key] && !/^\d{4}-\d{2}-\d{2}$/.test(String(body[key]))) return `${label} must be a date.`
-  }
-  const insurance = "insurancePayment" in body ? optionalNumber(body.insurancePayment) : loan?.insurancePayment
-  const insuranceDue = "insuranceDue" in body ? dateKey(body.insuranceDue) : loan?.insuranceDue
-  if (insurance > 0 && !insuranceDue) return "Add the insurance due date so the payment shows on the calendar."
+  if ("maturity" in body && body.maturity && !/^\d{4}-\d{2}-\d{2}$/.test(String(body.maturity))) return "Maturity must be a date."
   return ""
 }
 
@@ -1552,10 +1556,6 @@ function realLender(lender) {
 
 function loanStatus(value) {
   return LOAN_STATUSES.includes(value) ? value : "Current"
-}
-
-function insuranceFrequency(value) {
-  return INSURANCE_FREQUENCIES.includes(value) ? value : "Yearly"
 }
 
 function cleanLoanLabel(value) {
@@ -1759,6 +1759,25 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
       detail: due < today ? "Payment overdue" : "Payment due",
       href: "/payments",
     })
+  }
+  // Insurance and property tax from Property Info: overdue (not marked paid), or due within 30 days.
+  for (const property of properties) {
+    if (NOT_OWNED_STAGES.includes(property.stage)) continue
+    for (const [kind, due, amount, label] of [["Insurance", dateKey(property.insuranceDue), property.insuranceAmount, property.insuranceCarrier ? `${property.insuranceCarrier} insurance` : "Insurance payment"], ["Tax", dateKey(property.taxDueDate), property.taxAmount, "Property tax"]]) {
+      if (!due || due > month) continue
+      const overdue = due < today
+      items.push({
+        id: `${kind.toLowerCase()}-${property._id}`,
+        kind,
+        title: label,
+        property: property.address,
+        date: due,
+        amount: amount ?? null,
+        tone: overdue ? "bad" : "warn",
+        detail: overdue ? "Mark it paid on Property Info" : due <= week ? "Due this week" : "Due within 30 days",
+        href: `/properties/${property._id}?tab=info`,
+      })
+    }
   }
   for (const task of tasks) {
     const due = dateKey(task.due)
