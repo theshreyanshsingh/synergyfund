@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { PAID_OFF, REFINANCE, cityLine, fullAddress, insurancePolicies, isPaidOff, refinancePlan, yearlyInsurance } from "@synergifund/shared"
+import { PAID_OFF, REFINANCE, cityLine, fullAddress, isPaidOff, latestPropertyTaxes, refinancePlan, yearlyInsurance, yearlyPolicies } from "@synergifund/shared"
 import { FormSheet } from "../ui/FormSheet"
 import { StatusPill } from "../ui/StatusPill"
 import { api } from "../../lib/api"
@@ -65,8 +65,9 @@ export function RefinanceSection({ property, loans, writable, onChanged, onAddLo
   const leverage = plan.leverage
   const storedDate = String(property.purchaseDate || "")
   const insurance = yearlyInsurance(property)
-  const policies = insurancePolicies(property)
-  const yearlyPolicies = policies.filter((policy) => policy.premium != null && policy.billing !== "One-time").length
+  // The newest year with property taxes entered on Property Info.
+  const taxes = latestPropertyTaxes(property)
+  const policyCount = yearlyPolicies(property).length
   const rent = property.marketRent ?? property.actualRent ?? null
   const place = fullAddress(property)
 
@@ -75,7 +76,7 @@ export function RefinanceSection({ property, loans, writable, onChanged, onAddLo
     const lines = [
       `Address: ${place}`,
       `Purchase date: ${leverage.missing ? "not entered" : dayLabel(storedDate)}`,
-      `Yearly taxes: ${property.taxAmount == null ? "not entered" : money(property.taxAmount)}`,
+      `Yearly taxes: ${taxes ? `${money(taxes.amount)} (${taxes.year})` : "not entered"}`,
       `Yearly insurance: ${insurance == null ? "not entered" : money(insurance)}`,
       `Rental estimate: ${rent == null ? "not entered" : `${money(rent)}/month`}`,
       `Leverage desired: ${leverage.missing ? "purchase date needed" : leverage.text}`,
@@ -122,13 +123,13 @@ export function RefinanceSection({ property, loans, writable, onChanged, onAddLo
         </div>
         <div>
           <dt>Yearly taxes</dt>
-          <dd>{property.taxAmount == null ? "Not entered" : money(property.taxAmount)}</dd>
-          <small><a href={`/properties/${property.id}?tab=info`}>On Property Info</a></small>
+          <dd>{taxes ? money(taxes.amount) : "Not entered"}</dd>
+          <small>{taxes ? `${taxes.year} · ` : ""}<a href={`/properties/${property.id}?tab=info`}>On Property Info</a></small>
         </div>
         <div>
           <dt>Yearly insurance</dt>
           <dd>{insurance == null ? "Not entered" : money(insurance)}</dd>
-          <small>{yearlyPolicies > 1 ? `${yearlyPolicies} policies · ` : ""}<a href={`/properties/${property.id}?tab=info`}>On Property Info</a></small>
+          <small>{policyCount > 1 ? `${policyCount} policies · ` : ""}<a href={`/properties/${property.id}?tab=info`}>On Property Info</a></small>
         </div>
         <div>
           <dt>Rental estimate</dt>

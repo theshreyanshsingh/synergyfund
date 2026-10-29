@@ -688,8 +688,10 @@ export function rateLabel(rate) {
 export const INSURANCE_PER_YEAR = { Monthly: 12, Quarterly: 4, "Semi-Annually": 2, Yearly: 1 }
 
 // Insurance policies on Property Info (most properties carry two or three, e.g. Builder's Risk, Liability and Flood).
+// POLICY_TYPES is the Category list (saved as `type`).
 export const POLICY_TYPES = ["Builder's Risk", "Homeowners", "Vacant", "Liability", "Flood", "Other"]
 export const POLICY_BILLING = ["Annual", "Monthly", "One-time"]
+export const POLICY_STATUSES = ["Active", "Expired", "Cancelled"]
 // The id of a property's insurance from before the list, until it is saved as a policy.
 export const EARLIER_POLICY = "earlier"
 
@@ -701,26 +703,48 @@ const dayWords = (key) => {
   return match && MONTH_NAMES[Number(match[2]) - 1] ? `${MONTH_NAMES[Number(match[2]) - 1]} ${Number(match[3])}, ${match[1]}` : key
 }
 
-// A property's insurance policies. A property saved before the list had one carrier, amount, due date and policy #:
-// that shows as its first policy until a policy is saved. A yearly payment's due date is when the policy renews, so
-// it is the expiration date; a monthly, quarterly or semi-annual one is only the next payment, so it goes in the notes
-// (it would otherwise show as expired a month later). A quarterly or semi-annual amount is the yearly premium, with
-// what was paid each time in the notes.
+// A monthly payment is kept to a hundredth of a cent, so twelve of an annual premium's ($1,640 / 12) add back up to it.
+export const monthlyAmount = (value) => Math.round(Number(value) * 10000) / 10000
+
+// Policies used to keep a premium for the billing period; they keep a Monthly Payment now. An annual premium is a
+// twelfth a month; a monthly or one-time one stays as it was.
+export function monthlyFromPremium(premium, billing) {
+  if (premium == null || premium === "" || !Number.isFinite(Number(premium))) return null
+  return billing === "Monthly" || billing === "One-time" ? monthlyAmount(premium) : monthlyAmount(Number(premium) / 12)
+}
+
+const count = (value) => (Number.isInteger(Number(value)) && Number(value) > 0 ? Number(value) : 0)
+
+// A property's insurance policies, with No. of Payments Left (No. of Payments less those paid, never below 0) and the
+// Account Balance (the payments left times the monthly payment). A property saved before the list had one carrier,
+// amount, due date and policy #: that shows as its first policy until a policy is saved. A yearly payment's due date
+// is when the policy renews, so it is the expiration date; a monthly, quarterly or semi-annual one is only the next
+// payment, so it goes in the notes (it would otherwise show as expired a month later). A quarterly or semi-annual
+// amount is paid toward a yearly premium, with what was paid each time in the notes.
 export function insurancePolicies(property = {}) {
   const list = Array.isArray(property.insurancePolicies) ? property.insurancePolicies : []
   if (list.length) {
-    return list.map((policy) => ({
-      id: String(policy._id || policy.id || ""),
-      type: policy.type || "",
-      carrier: policy.carrier || "",
-      policyNumber: policy.policyNumber || "",
-      premium: policy.premium ?? null,
-      billing: POLICY_BILLING.includes(policy.billing) ? policy.billing : "Annual",
-      effectiveDate: policy.effectiveDate || "",
-      expirationDate: policy.expirationDate || "",
-      notes: policy.notes || "",
-      paidOn: policy.paidOn || "",
-    }))
+    return list.map((policy) => {
+      const billing = POLICY_BILLING.includes(policy.billing) ? policy.billing : "Annual"
+      return withBalance({
+        id: String(policy._id || policy.id || ""),
+        type: policy.type || "",
+        borrowerEntity: policy.borrowerEntity || "",
+        payee: policy.payee || "",
+        carrier: policy.carrier || "",
+        policyNumber: policy.policyNumber || "",
+        accountCode: policy.accountCode || "",
+        monthlyPayment: policy.monthlyPayment ?? monthlyFromPremium(policy.premium, billing),
+        billing,
+        effectiveDate: policy.effectiveDate || "",
+        expirationDate: policy.expirationDate || "",
+        notes: policy.notes || "",
+        status: POLICY_STATUSES.includes(policy.status) ? policy.status : "",
+        paymentsTotal: count(policy.paymentsTotal),
+        paymentsPaid: count(policy.paymentsPaid),
+        paidOn: policy.paidOn || "",
+      })
+    })
   }
   const amount = property.insuranceAmount == null || property.insuranceAmount === "" ? null : Number(property.insuranceAmount)
   if (!property.insuranceCarrier && amount == null && !property.insuranceDue && !property.insurancePolicy) return []
@@ -728,21 +752,45 @@ export function insurancePolicies(property = {}) {
   const split = frequency === "Quarterly" || frequency === "Semi-Annually"
   const due = String(property.insuranceDue || "").slice(0, 10)
   const yearly = frequency === "Yearly"
-  return [{
+  const billing = frequency === "Monthly" ? "Monthly" : "Annual"
+  return [withBalance({
     id: EARLIER_POLICY,
     type: "",
+    borrowerEntity: "",
+    payee: "",
     carrier: property.insuranceCarrier || "",
     policyNumber: property.insurancePolicy || "",
-    premium: amount == null ? null : split ? cents(amount * INSURANCE_PER_YEAR[frequency]) : amount,
-    billing: frequency === "Monthly" ? "Monthly" : "Annual",
+    accountCode: "",
+    monthlyPayment: amount == null ? null : frequency === "Monthly" ? monthlyAmount(amount) : monthlyFromPremium(amount * INSURANCE_PER_YEAR[frequency], "Annual"),
+    billing,
     effectiveDate: "",
     expirationDate: yearly ? due : "",
     notes: [
       split && amount != null ? `Paid ${frequency.toLowerCase()}, $${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} each time.` : "",
       !yearly && due ? `Next payment was due ${dayWords(due)}.` : "",
     ].filter(Boolean).join(" "),
+    status: "",
+    paymentsTotal: 0,
+    paymentsPaid: 0,
     paidOn: property.insurancePaidOn || "",
-  }]
+  })]
+}
+
+function withBalance(policy) {
+  const paymentsLeft = Math.max(0, policy.paymentsTotal - policy.paymentsPaid)
+  return { ...policy, paymentsLeft, accountBalance: policy.monthlyPayment == null ? null : cents(paymentsLeft * policy.monthlyPayment) }
+}
+
+// A policy that is not marked Expired or Cancelled (one with no status yet counts): only these get expiration
+// reminders and count toward the yearly insurance.
+export function policyActive(policy = {}) {
+  return policy.status !== "Expired" && policy.status !== "Cancelled"
+}
+
+// What one payment of a policy usually is, for Mark paid: the monthly payment, or a year of them for an annual policy.
+export function policyPaymentAmount(policy = {}) {
+  if (policy.monthlyPayment == null) return null
+  return policy.billing === "Annual" ? cents(policy.monthlyPayment * 12) : cents(policy.monthlyPayment)
 }
 
 // A policy's name in lists and on the calendar: "Coastal Mutual · Flood".
@@ -756,15 +804,68 @@ export function policyTitle(policy = {}) {
   return name ? `${name} insurance` : "Insurance"
 }
 
-// The insurance for a whole year: annual premiums plus monthly ones times 12 (one-time policies, like a builder's
-// risk policy for the rehab, are not yearly). Blank when no yearly premium is entered.
-export function yearlyInsurance(property = {}) {
-  const yearly = insurancePolicies(property).filter((policy) => policy.premium != null && policy.billing !== "One-time")
-  if (!yearly.length) return null
-  return cents(yearly.reduce((total, policy) => total + Number(policy.premium) * (policy.billing === "Monthly" ? 12 : 1), 0))
+// The policies that make up the yearly insurance: active ones with a monthly payment, not one-time ones (like a
+// builder's risk policy for the rehab).
+export function yearlyPolicies(property = {}) {
+  return insurancePolicies(property).filter((policy) => policyActive(policy) && policy.monthlyPayment != null && policy.billing !== "One-time")
 }
 
-// Properties that are no longer owned: no insurance or tax reminders for them.
+// The insurance for a whole year: their monthly payments times 12. Blank when none is entered.
+export function yearlyInsurance(property = {}) {
+  const yearly = yearlyPolicies(property)
+  if (!yearly.length) return null
+  return cents(yearly.reduce((total, policy) => total + Number(policy.monthlyPayment) * 12, 0))
+}
+
+// Property taxes on Property Info, one row per year: the property taxes and the tax assessment. The parcel/account #
+// is the property's, not a year's. This year and the two before it always show, blank until entered.
+export const TAX_YEARS_SHOWN = 3
+export const TAX_YEAR_MIN = 1900
+export const TAX_YEAR_MAX = 2100
+
+// This year where the team works (New York), not the device's or the server's.
+export function teamYear(now = new Date()) {
+  return Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric" }).format(now))
+}
+
+const taxMoney = (value) => (value == null || value === "" || !Number.isFinite(Number(value)) ? null : cents(value))
+
+// A property's tax years, newest first. A property saved before the rows had one yearly tax amount and a due date:
+// the amount shows as the property taxes for the due date's year (this year when no due date was entered) until it
+// is saved as a row (at start-up, see taxMove.js in the API, or when the taxes are saved).
+export function taxYears(property = {}) {
+  const list = Array.isArray(property.taxYears) ? property.taxYears : []
+  if (list.length || property.taxAmount == null || property.taxAmount === "") {
+    return list
+      .filter((row) => Number.isInteger(Number(row?.year)) && Number(row.year) > 0)
+      .map((row) => ({ year: Number(row.year), propertyTaxes: taxMoney(row.propertyTaxes), taxAssessment: taxMoney(row.taxAssessment), paidOn: row.paidOn || "" }))
+      .sort((a, b) => b.year - a.year)
+  }
+  return [{ year: earlierTaxYear(property), propertyTaxes: taxMoney(property.taxAmount), taxAssessment: null, paidOn: "" }]
+}
+
+// The year the tax amount from before the rows goes under: the tax due date's, or this year with none.
+export function earlierTaxYear(property = {}, now = new Date()) {
+  const due = /^(\d{4})-\d{2}-\d{2}$/.exec(String(property.taxDueDate || "").slice(0, 10))
+  return due ? Number(due[1]) : teamYear(now)
+}
+
+// The rows Property Info shows: the saved years, and this year and the two before it even when they are blank.
+export function taxRows(property = {}, year = teamYear()) {
+  const rows = taxYears(property)
+  for (let back = 0; back < TAX_YEARS_SHOWN; back += 1) {
+    if (!rows.some((row) => row.year === year - back)) rows.push({ year: year - back, propertyTaxes: null, taxAssessment: null, paidOn: "" })
+  }
+  return rows.sort((a, b) => b.year - a.year)
+}
+
+// The latest property taxes entered (the newest year that has them), e.g. for the refinance: { year, amount } or null.
+export function latestPropertyTaxes(property = {}) {
+  const row = taxYears(property).find((item) => item.propertyTaxes != null)
+  return row ? { year: row.year, amount: row.propertyTaxes } : null
+}
+
+// Properties that are no longer owned: no insurance reminders for them.
 export const NOT_OWNED_STAGES = ["Sold", "Exit"]
 
 // Utilities on Property Info: Water and Electric are on every property and can't be removed; others can be added.

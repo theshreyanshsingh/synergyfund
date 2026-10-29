@@ -97,22 +97,35 @@ export const Property = register(
       rehabRemaining: Number,
       // Property Info: taxes, insurance (moved here from loans) and utilities. Owner is ownerEntity and the purchase
       // date is purchaseDate, the same fields as everywhere else.
-      taxAmount: Number,
       taxParcel: String,
+      // Property taxes and the tax assessment, one row per year (newest first). paidOn is the last Mark paid for it.
+      taxYears: [{ year: Number, propertyTaxes: Number, taxAssessment: Number, paidOn: String, _id: false }],
+      // The one yearly tax amount and due date from before the rows: moved into taxYears at start-up (taxMove.js),
+      // and shown as a row until then (taxYears in the shared package).
+      taxAmount: Number,
       taxDueDate: String,
-      // Insurance policies (Builder's Risk, Liability, Flood…). Each expiration date shows on the calendar and in Needs
-      // attention; paidOn is the last time Mark paid put its premium on the cost sheet.
+      // Insurance policies (Builder's Risk, Liability, Flood…). An Active policy's expiration date shows on the calendar
+      // and in Needs attention; each Mark paid puts a payment on the cost sheet, counts it in paymentsPaid and sets paidOn.
       insurancePolicies: [
         {
-          // Spelled out: a bare `type: String` here would make the whole policy a string.
+          // The Category. Spelled out: a bare `type: String` here would make the whole policy a string.
           type: { type: String },
+          borrowerEntity: String,
+          payee: String,
           carrier: String,
           policyNumber: String,
+          accountCode: String,
+          monthlyPayment: Number,
+          // The premium for the billing period, from before Monthly Payment: it is read as the monthly payment (a
+          // twelfth of an annual one) and saved as that the next time the property's policies change.
           premium: Number,
           billing: String,
           effectiveDate: String,
           expirationDate: String,
           notes: String,
+          status: String,
+          paymentsTotal: Number,
+          paymentsPaid: Number,
           paidOn: String,
         },
       ],
@@ -124,7 +137,7 @@ export const Property = register(
       insuranceDue: String,
       insurancePolicy: String,
       insurancePaidOn: String,
-      // The last time Mark paid recorded the tax (the payment itself is a cost on the cost sheet).
+      // The last time Mark paid recorded the tax, from before the tax years (each year keeps its own paidOn now).
       taxPaidOn: String,
       utilities: [{ name: String, provider: String, account: String, _id: false }],
       // BRRRR refinance stage (Ready to Start, In Process, Closed), and the loans closing it marked Paid off (with the

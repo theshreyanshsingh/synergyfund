@@ -158,7 +158,6 @@ function attentionIcon(kind) {
   if (kind === "Draw") return "layers"
   if (kind === "Mortgage" || kind === "Loan") return "bank"
   if (kind === "Insurance") return "file"
-  if (kind === "Tax") return "receipt"
   if (kind === "Verify") return "alert"
   return "check"
 }

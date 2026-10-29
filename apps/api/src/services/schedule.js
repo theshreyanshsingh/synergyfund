@@ -85,7 +85,7 @@ function repeating(due, step, from, to) {
   return dates
 }
 
-// The due date after this one, for insurance (by how often it is paid) or taxes (yearly).
+// The due date after this one (a renewed policy's expiration date moves on a year).
 export function nextDueAfter(due, frequency = "Yearly") {
   const day = String(due || "").slice(0, 10)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return ""
@@ -96,9 +96,4 @@ export function nextDueAfter(due, frequency = "Yearly") {
 // moving insurance off the loans, see insuranceMove.js).
 export function insuranceDates(property, from, to) {
   return repeating(property?.insuranceDue, STEPS[property?.insuranceFrequency] || STEPS.Yearly, from, to)
-}
-
-// Property taxes repeat yearly from the tax due date, when one is entered.
-export function taxDates(property, from, to) {
-  return repeating(property?.taxDueDate, STEPS.Yearly, from, to)
 }

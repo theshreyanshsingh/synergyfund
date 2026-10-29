@@ -15,6 +15,8 @@ const tones = {
   Exit: "warn",
   Complete: "good",
   Active: "good",
+  Expired: "bad",
+  Cancelled: "neutral",
   New: "good",
   Submitted: "good",
   Approved: "good",

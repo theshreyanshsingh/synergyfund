@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { BEHIND_STATUSES, can, drawFigures, TASK_LABELS, drawPulled, ensureTaskPermissions, insurancePolicies, isPaidOff, loanStatus, loanType, LOAN_TYPES, resolveBudget, isRole, NOT_OWNED_STAGES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, policyName, policyTitle, ROLES } from "@synergifund/shared"
+import { BEHIND_STATUSES, can, drawFigures, TASK_LABELS, drawPulled, ensureTaskPermissions, insurancePolicies, isPaidOff, loanStatus, loanType, LOAN_TYPES, resolveBudget, isRole, NOT_OWNED_STAGES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, policyActive, policyName, policyPaymentAmount, policyTitle, ROLES } from "@synergifund/shared"
 import {
   NativeDevice,
   Activity,
@@ -24,7 +24,7 @@ import { asyncHandler, blockContractors, requireAnyPermission, requirePermission
 import { publicUser } from "../lib/serialize.js"
 import { propertyFilter } from "../services/access.js"
 import { presentDraw, refreshRehabRemaining } from "./draws.js"
-import { loanPaymentDates, nextPaymentDate, paymentDates, taxDates } from "../services/schedule.js"
+import { loanPaymentDates, nextPaymentDate, paymentDates } from "../services/schedule.js"
 import { saveUploadedFile, upload } from "../services/files.js"
 import { ensureLenders, lenderForName, presentLender } from "../services/lenders.js"
 import { liftTermsParts, loanFields } from "../services/loans.js"
@@ -1107,7 +1107,7 @@ workspaceRouter.get(
   requirePermission("expenses.read"),
   blockContractors,
   asyncHandler(async (req, res) => {
-    const properties = await Property.find(propertyFilter(req.user)).select("_id address stage insurancePolicies insuranceCarrier insuranceAmount insuranceFrequency insuranceDue insurancePolicy taxAmount taxDueDate")
+    const properties = await Property.find(propertyFilter(req.user)).select("_id address stage insurancePolicies insuranceCarrier insuranceAmount insuranceFrequency insuranceDue insurancePolicy")
     const propertyIds = properties.map((property) => property._id)
     const names = new Map(properties.map((property) => [String(property._id), property.address]))
     const canSeeAllTasks = req.permissions.includes(PERMISSIONS.tasksAssign) || req.permissions.includes(PERMISSIONS.tasksManage)
@@ -1190,8 +1190,9 @@ workspaceRouter.get(
           href: loan.propertyId ? `/properties/${loan.propertyId}?tab=financing` : "/loans",
         }
       })),
-      // Each insurance policy's expiration date and property taxes, from Property Info (contractors don't see them).
-      ...(req.user.role === "contractor" ? [] : properties.filter((property) => !NOT_OWNED_STAGES.includes(property.stage)).flatMap((property) => insurancePolicies(property).flatMap((policy) => {
+      // Each active insurance policy's expiration date, from Property Info (contractors don't see them). A policy marked
+      // Expired or Cancelled has no reminder. Property taxes are kept by year, with no due date, so they are not here.
+      ...(req.user.role === "contractor" ? [] : properties.filter((property) => !NOT_OWNED_STAGES.includes(property.stage)).flatMap((property) => insurancePolicies(property).filter(policyActive).flatMap((policy) => {
         const date = dateKey(policy.expirationDate)
         if (!date || date < shiftKey(today, -60) || date > shiftKey(today, 365)) return []
         const expired = date < today
@@ -1201,30 +1202,14 @@ workspaceRouter.get(
           kind: "property",
           title: `${policyName(policy)} expires`,
           date,
-          amount: policy.premium ?? null,
+          amount: policyPaymentAmount(policy),
           status: expired ? "Expired" : "Scheduled",
           property: property.address,
           urgent: expired || dueSoon,
           tone: expired ? "bad" : dueSoon ? "warn" : "neutral",
-          detail: expired ? "Insurance expired · renew it or update the dates" : dueSoon ? "Insurance expires this week" : `Insurance expires${policy.policyNumber ? ` · Policy ${policy.policyNumber}` : ""}`,
+          detail: expired ? "Insurance expired · renew it, fix the dates or set its status to Expired" : dueSoon ? "Insurance expires this week" : `Insurance expires${policy.policyNumber ? ` · Policy ${policy.policyNumber}` : ""}`,
           href: `/properties/${property._id}?tab=info`,
         }]
-      }))),
-      ...(req.user.role === "contractor" ? [] : properties.filter((property) => !NOT_OWNED_STAGES.includes(property.stage)).flatMap((property) => taxDates(property, shiftKey(today, -60), shiftKey(today, 365)).map((date) => {
-        const dueSoon = date >= today && date <= soon
-        return {
-          id: `property-tax-${property._id}-${date}`,
-          kind: "property",
-          title: "Property tax due",
-          date,
-          amount: property.taxAmount ?? null,
-          status: "Scheduled",
-          property: property.address,
-          urgent: dueSoon,
-          tone: dueSoon ? "warn" : "neutral",
-          detail: date < today ? "Property tax, yearly, past" : dueSoon ? "Property tax due this week" : "Property tax, yearly",
-          href: `/properties/${property._id}?tab=info`,
-        }
       }))),
       ...draws.flatMap((item) => {
         const draw = presentDraw(item)
@@ -1815,11 +1800,10 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
       href: loan.propertyId ? `/properties/${loan.propertyId}?tab=financing` : "/loans",
     })
   }
-  // Insurance policies that have expired or expire within 30 days, and property tax overdue (not marked paid) or due
-  // within 30 days, from Property Info.
+  // Active insurance policies that have expired or expire within 30 days, from Property Info.
   for (const property of properties) {
     if (NOT_OWNED_STAGES.includes(property.stage)) continue
-    for (const policy of insurancePolicies(property)) {
+    for (const policy of insurancePolicies(property).filter(policyActive)) {
       const expires = dateKey(policy.expirationDate)
       if (!expires || expires > month) continue
       const expired = expires < today
@@ -1829,26 +1813,12 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
         title: policyTitle(policy),
         property: property.address,
         date: expires,
-        amount: policy.premium ?? null,
+        amount: policyPaymentAmount(policy),
         tone: expired ? "bad" : "warn",
-        detail: expired ? "Expired · renew it or update the dates on Property Info" : expires <= week ? "Expires this week" : "Expires within 30 days",
+        detail: expired ? "Expired · renew it, fix the dates or set its status to Expired on Property Info" : expires <= week ? "Expires this week" : "Expires within 30 days",
         href: `/properties/${property._id}?tab=info`,
       })
     }
-    const due = dateKey(property.taxDueDate)
-    if (!due || due > month) continue
-    const overdue = due < today
-    items.push({
-      id: `tax-${property._id}`,
-      kind: "Tax",
-      title: "Property tax",
-      property: property.address,
-      date: due,
-      amount: property.taxAmount ?? null,
-      tone: overdue ? "bad" : "warn",
-      detail: overdue ? "Mark it paid on Property Info" : due <= week ? "Due this week" : "Due within 30 days",
-      href: `/properties/${property._id}?tab=info`,
-    })
   }
   for (const task of tasks) {
     const due = dateKey(task.due)

@@ -30,6 +30,7 @@ import { backupsRouter } from "./routes/backups.js"
 import { receiptsRouter } from "./routes/receipts.js"
 import { restoreRunning, startBackupSchedule } from "./services/backup.js"
 import { moveLoanInsurance } from "./services/insuranceMove.js"
+import { moveTaxYears } from "./services/taxMove.js"
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../..")
 dotenv.config({ path: path.join(repoRoot, ".env"), quiet: true })
@@ -89,6 +90,7 @@ await mongoose.connect(process.env.MONGODB_URI)
 await seedIfEmpty()
 await closeStaleCalls()
 await moveLoanInsurance().catch((error) => console.error("Moving loan insurance to Property Info failed", error))
+await moveTaxYears().catch((error) => console.error("Moving tax amounts into tax years failed", error))
 await recoverNotes().catch((error) => console.error("Call notes recovery failed", error))
 await startTeammate().catch((error) => console.error("AI teammate failed to start", error))
 startBackupSchedule()

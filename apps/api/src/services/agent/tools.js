@@ -1,10 +1,10 @@
-import { cityLine, COMPANY_FOLDERS, EXPENSE_CATEGORIES, insurancePolicies, isPaidOff, loanStatus, refinancePlan, yearlyInsurance, LOAN_STATUSES, LOAN_TYPES, NOT_OWNED_STAGES, PERMISSIONS, policyName, PROPERTY_FOLDERS, TASK_LABELS, documentType, drawFigures, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
+import { cityLine, COMPANY_FOLDERS, EXPENSE_CATEGORIES, insurancePolicies, isPaidOff, latestPropertyTaxes, loanStatus, refinancePlan, taxYears, yearlyInsurance, LOAN_STATUSES, LOAN_TYPES, NOT_OWNED_STAGES, PERMISSIONS, policyActive, policyName, PROPERTY_FOLDERS, TASK_LABELS, documentType, drawFigures, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
 import { Bill, Company, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, Property, Task, User } from "../../models/index.js"
 import { presentProperty } from "../../lib/serialize.js"
 import { propertyFilter } from "../access.js"
 import { presentContractorDraw, presentDraw } from "../../routes/draws.js"
 import { matchScore, rank } from "./match.js"
-import { loanPaymentDates, paymentDates, taxDates } from "../schedule.js"
+import { loanPaymentDates, paymentDates } from "../schedule.js"
 import { loanFields } from "../loans.js"
 import { geocode, nearbyZips } from "../geocode.js"
 import { analyzeArv, milesBetween } from "./arv.js"
@@ -470,7 +470,7 @@ export const TOOLS = [
     name: "list_properties",
     label: "Reading properties",
     permission: PERMISSIONS.propertiesRead,
-    description: "List properties the person can see, filtered by words, status, goal, city, owning company, price, purchase date and missing figures. Totals cover every match. Each row has address, city, status, goal, owning company, purchase price and date, ARV, rehab budget, rents, health and next step. For \"under 200 grand\" pass maxPrice 200000 (purchase price unless the person means ARV, rehab or rent); for \"under Revive Jax\" pass company \"Revive Jax\".",
+    description: "List properties the person can see, filtered by words, status, goal, city, owning company, price, purchase date and missing figures. Totals cover every match. Each row has address, city, status, goal, owning company, purchase price and date, ARV, rehab budget, rents, health and next step, and from Property Info the tax parcel, the property taxes and tax assessment by year, and the insurance policies. For \"under 200 grand\" pass maxPrice 200000 (purchase price unless the person means ARV, rehab or rent); for \"under Revive Jax\" pass company \"Revive Jax\".",
     parameters: {
       type: "object",
       properties: {
@@ -561,9 +561,11 @@ export const TOOLS = [
           health: property.health || "",
           nextStep: property.nextAction || "",
           // Property Info and the refinance.
-          yearlyTaxes: property.taxAmount ?? null,
-          taxDueDate: property.taxDueDate || "",
-          insurancePolicies: insurancePolicies(property).map((policy) => ({ type: policy.type, carrier: policy.carrier, premium: policy.premium, billing: policy.billing, expirationDate: policy.expirationDate })),
+          taxParcel: property.taxParcel || "",
+          // One row per year, newest first; latestPropertyTaxes is the newest year that has them (for the refinance).
+          taxYears: taxYears(property).map(({ year, propertyTaxes, taxAssessment, paidOn }) => ({ year, propertyTaxes, taxAssessment, lastPaid: paidOn })),
+          latestPropertyTaxes: latestPropertyTaxes(property),
+          insurancePolicies: insurancePolicies(property).map((policy) => ({ category: policy.type, borrowerEntity: policy.borrowerEntity, payee: policy.payee, carrier: policy.carrier, policyNumber: policy.policyNumber, accountCode: policy.accountCode, monthlyPayment: policy.monthlyPayment, billing: policy.billing, effectiveDate: policy.effectiveDate, expirationDate: policy.expirationDate, status: policy.status || "Not set", paymentsTotal: policy.paymentsTotal, paymentsPaid: policy.paymentsPaid, paymentsLeft: policy.paymentsLeft, accountBalance: policy.accountBalance })),
           yearlyInsurance: yearlyInsurance(property),
           refinance: refinancePlan(property, todayKey()).eligible ? refinancePlan(property, todayKey()).stage : "",
         })
@@ -856,7 +858,7 @@ export const TOOLS = [
     label: "Checking upcoming payments",
     permission: PERMISSIONS.expensesRead,
     staffOnly: true,
-    description: "Money due in the next N days (default 30): unpaid bills including overdue ones, monthly mortgage payments with their due dates when a payment day is on file, insurance policies that expire (or have expired), property tax due dates, loan maturities, open draws with a forecast date, and payment tasks such as EMD, insurance or taxes.",
+    description: "Money due in the next N days (default 30): unpaid bills including overdue ones, monthly mortgage payments with their due dates when a payment day is on file, insurance policies that expire (or have expired), loan maturities, open draws with a forecast date, and payment tasks such as EMD, insurance or taxes.",
     parameters: {
       type: "object",
       properties: { days: { type: "number", description: "How many days ahead to look, 1 to 365." } },
@@ -895,15 +897,13 @@ export const TOOLS = [
         paymentDay: loan.paymentDay ?? null,
         dueDates: loanPaymentDates(loan, today, until),
       }))
-      // Insurance policies and property taxes are on each property (Property Info); a policy shows by when it expires.
-      // Like the calendar, a property that was sold or exited has neither.
+      // Insurance policies are on each property (Property Info); a policy shows by when it expires. Like the calendar, a
+      // property that was sold or exited has none, and a policy marked Expired or Cancelled is left out. Property taxes
+      // are kept by year with no due date (see list_properties).
       const owned = properties.filter((property) => !NOT_OWNED_STAGES.includes(property.stage))
       const insurance = owned.flatMap((property) => insurancePolicies(property)
-        .filter((policy) => dateKey(policy.expirationDate) && dateKey(policy.expirationDate) <= until)
-        .map((policy) => ({ property: property.address, policy: policyName(policy), policyNumber: policy.policyNumber, premium: policy.premium, billing: policy.billing, expires: dateKey(policy.expirationDate), expired: dateKey(policy.expirationDate) < today })))
-      const taxes = owned
-        .map((property) => ({ property: property.address, amount: property.taxAmount ?? null, dueDates: taxDates(property, today, until) }))
-        .filter((row) => row.dueDates.length)
+        .filter((policy) => policyActive(policy) && dateKey(policy.expirationDate) && dateKey(policy.expirationDate) <= until)
+        .map((policy) => ({ property: property.address, policy: policyName(policy), policyNumber: policy.policyNumber, monthlyPayment: policy.monthlyPayment, billing: policy.billing, expires: dateKey(policy.expirationDate), expired: dateKey(policy.expirationDate) < today, paymentsLeft: policy.paymentsLeft, accountBalance: policy.accountBalance })))
       const maturities = open
         .filter((loan) => dateKey(loan.maturity) && dateKey(loan.maturity) <= until)
         .map((loan) => ({ property: place(loan.propertyId), lender: lenderName(loan.lender), maturity: dateKey(loan.maturity), balance: loan.balance ?? null, passed: dateKey(loan.maturity) < today }))
@@ -916,7 +916,6 @@ export const TOOLS = [
         monthlyMortgages: mortgages,
         monthlyMortgageTotal: sum(mortgages, (row) => row.monthlyPayment),
         insuranceExpiring: insurance,
-        propertyTaxes: taxes,
         loanMaturities: maturities,
         paymentTasks: tasks
           .filter((task) => dateKey(task.due) && dateKey(task.due) <= until)

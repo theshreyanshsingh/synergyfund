@@ -1,6 +1,6 @@
 import { Router } from "express"
 import { z } from "zod"
-import { BEHIND_STATUSES, cityLine, drawPulled, lineTracking, loanStatus, loanSummary, PAID_OFF, PAID_OFF_SAVED, policyName, policyTitle, propertyUtilities, REFINANCE, resolveBudget, STAGES, US_STATES } from "@synergifund/shared"
+import { BEHIND_STATUSES, cityLine, drawPulled, lineTracking, loanStatus, loanSummary, PAID_OFF, PAID_OFF_SAVED, policyName, policyPaymentAmount, policyTitle, propertyUtilities, REFINANCE, resolveBudget, STAGES, taxYears, US_STATES } from "@synergifund/shared"
 import { Activity, Bill, CalendarEvent, Company, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
@@ -9,6 +9,7 @@ import { deleteStoredFile, publicFileUrl, saveUploadedFile, upload, withProofUrl
 import { ensureLenders } from "../services/lenders.js"
 import { loanFields } from "../services/loans.js"
 import { clearLoanInsurance, findPolicy, keepEarlierPolicy, POLICY_FIELDS, readPolicy } from "../services/insurance.js"
+import { keepEarlierTaxes, readTaxYears, taxYearChanges } from "../services/taxes.js"
 import { removePropertyRoom } from "../services/chat.js"
 import { orderProperties } from "../services/propertyOrder.js"
 import { geocode } from "../services/geocode.js"
@@ -47,9 +48,7 @@ const PROPERTY_FIELDS = [
   ["accessInfo", "Access info"],
   ["customerTerms", "Customer terms"],
   ["labels", "Labels"],
-  ["taxAmount", "Tax amount", true],
   ["taxParcel", "Tax parcel/account #"],
-  ["taxDueDate", "Tax due"],
 ]
 
 const writable = z.object({
@@ -81,10 +80,8 @@ const writable = z.object({
   customerTerms: z.string().optional(),
   rehabBudget: z.number().nullable().optional(),
   rehabRemaining: z.number().nullable().optional(),
-  // Property Info
-  taxAmount: z.number().nonnegative().nullable().optional(),
+  // Property Info (the tax years are read on their own, see readTaxYears)
   taxParcel: z.string().max(120).optional(),
-  taxDueDate: z.string().max(10).optional(),
   utilities: z.array(z.object({ name: z.string().max(40), provider: z.string().max(120).optional(), account: z.string().max(120).optional() }).passthrough()).max(20).optional(),
 })
 
@@ -593,8 +590,14 @@ propertiesRouter.patch(
       return
     }
     if (!req.permissions.includes("internal.pricing")) delete parsed.data.houseBoughtPrice
-    if ("taxDueDate" in parsed.data && !dayOrBlank(parsed.data.taxDueDate)) {
-      sendError(res, 400, "Enter the tax due date as a date.")
+    // A page from before the tax years sends one tax amount and a due date: it has to be reloaded first.
+    if ("taxAmount" in req.body || "taxDueDate" in req.body) {
+      sendError(res, 400, "Taxes are kept by year now. Reload the page and enter them again.")
+      return
+    }
+    const taxRead = "taxYears" in req.body ? readTaxYears(req.body.taxYears, taxYears(property)) : null
+    if (taxRead?.error) {
+      sendError(res, 400, taxRead.error)
       return
     }
     if ("taxParcel" in parsed.data) parsed.data.taxParcel = String(parsed.data.taxParcel || "").trim()
@@ -617,6 +620,10 @@ propertiesRouter.patch(
     }
     const before = property.toObject()
     Object.assign(property, parsed.data, { updatedBy: req.user.name })
+    if (taxRead) {
+      keepEarlierTaxes(property)
+      property.taxYears = taxRead.rows
+    }
     // An ARV typed over one from comps or the Agent is no longer that analysis.
     if ("arv" in parsed.data && parsed.data.arv !== before.arv && !("arvMethod" in parsed.data)) {
       property.arvMethod = parsed.data.arv == null ? undefined : "Entered by hand"
@@ -644,6 +651,7 @@ propertiesRouter.patch(
     const after = property.toObject()
     const changes = [
       changeSummary(before, after, PROPERTY_FIELDS),
+      taxRead ? taxYearChanges(before, after) : "",
       companyChange,
       before.houseBoughtPrice !== after.houseBoughtPrice ? "Internal pricing changed" : "",
       "scopeLines" in req.body ? `Scope of work now ${after.scopeLines.length} lines` : "",
@@ -655,9 +663,9 @@ propertiesRouter.patch(
   }),
 )
 
-// Mark an insurance policy or the property tax paid (Property Info): the payment goes on the cost sheet as a holding
-// cost. The tax due date moves on a year; an annual policy that was renewed moves its dates on a year (the old
-// expiration date becomes the effective date).
+// Mark an insurance policy or a year's property taxes paid (Property Info): the payment goes on the cost sheet as a
+// holding cost. The tax year keeps the day it was paid. A policy counts one more payment in No. of Payments Paid; an
+// annual policy that was renewed moves its dates on a year (the old expiration date becomes the effective date).
 propertiesRouter.post(
   "/:id/paid",
   requirePermission("expenses.approve"),
@@ -677,7 +685,18 @@ propertiesRouter.post(
       sendError(res, 404, "That insurance policy was not found. Reload the page and try again.")
       return
     }
-    const stored = kind === "tax" ? property.taxAmount : policy.premium
+    // The tax year paid: the one chosen, or the newest year with property taxes entered.
+    let taxRow = null
+    if (kind === "tax") {
+      const rows = keepEarlierTaxes(property)
+      const year = req.body?.year == null || req.body.year === "" ? null : Number(req.body.year)
+      taxRow = year == null ? rows.find((row) => row.propertyTaxes != null) : rows.find((row) => row.year === year)
+      if (!taxRow) {
+        sendError(res, 400, `Enter the property taxes${year == null ? "" : ` for ${year}`} on Property Info first.`)
+        return
+      }
+    }
+    const stored = kind === "tax" ? taxRow.propertyTaxes : policyPaymentAmount(policy)
     const amount = req.body?.amount == null || req.body.amount === "" ? stored : Number(String(req.body.amount).replace(/[$,\s]/g, ""))
     if (!(Number(amount) > 0)) {
       sendError(res, 400, `Enter the ${kind === "tax" ? "tax" : "insurance"} amount paid.`)
@@ -689,10 +708,10 @@ propertiesRouter.post(
       return
     }
     const renew = kind === "insurance" && req.body?.renew === true && policy.billing === "Annual" && Boolean(policy.expirationDate)
-    const next = kind === "tax" ? (property.taxDueDate ? nextDueAfter(property.taxDueDate, "Yearly") : "") : renew ? nextDueAfter(policy.expirationDate, "Yearly") : ""
+    const next = renew ? nextDueAfter(policy.expirationDate, "Yearly") : ""
     const expense = await Expense.create({
       propertyId: property._id,
-      title: kind === "tax" ? `Property taxes${property.taxParcel ? ` · Parcel ${property.taxParcel}` : ""}` : `${policyTitle(policy)}${policy.policyNumber ? ` · Policy ${policy.policyNumber}` : ""}`,
+      title: kind === "tax" ? `Property taxes ${taxRow.year}${property.taxParcel ? ` · Parcel ${property.taxParcel}` : ""}` : `${policyTitle(policy)}${policy.policyNumber ? ` · Policy ${policy.policyNumber}` : ""}`,
       amount: Math.round(Number(amount) * 100) / 100,
       category: kind === "tax" ? "Property taxes" : "Insurance",
       vendor: kind === "tax" ? "" : policy.carrier || "",
@@ -702,10 +721,10 @@ propertiesRouter.post(
       postedBy: req.user._id,
     })
     if (kind === "tax") {
-      property.taxPaidOn = paidOn
-      if (next) property.taxDueDate = next
+      taxRow.paidOn = paidOn
     } else {
       policy.paidOn = paidOn
+      policy.paymentsPaid = (Number(policy.paymentsPaid) || 0) + 1
       if (next) {
         policy.effectiveDate = policy.expirationDate
         policy.expirationDate = next
@@ -716,16 +735,22 @@ propertiesRouter.post(
     if (kind === "insurance") await clearLoanInsurance(property._id)
     await refreshRehabRemaining(property._id)
     const money = `$${expense.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    await recordActivity({ user: req.user, title: kind === "tax" ? "Property tax paid" : "Insurance paid", detail: [expense.title, money, `Paid ${paidOn}`, next ? (kind === "tax" ? `Next due ${next}` : `Renewed, now expires ${next}`) : ""].filter(Boolean).join(" · "), propertyId: property._id })
-    res.status(201).json({ property: presentProperty(property, req.user), expense: { id: String(expense._id), amount: expense.amount, date: expense.date, title: expense.title }, nextDue: kind === "tax" ? next : "", expires: kind === "insurance" ? next : "" })
+    const count = kind === "insurance" ? `Payment ${policy.paymentsPaid}${policy.paymentsTotal > 0 ? ` of ${policy.paymentsTotal}` : ""}` : ""
+    await recordActivity({ user: req.user, title: kind === "tax" ? "Property tax paid" : "Insurance paid", detail: [expense.title, money, `Paid ${paidOn}`, count, next ? `Renewed, now expires ${next}` : ""].filter(Boolean).join(" · "), propertyId: property._id })
+    res.status(201).json({
+      property: presentProperty(property, req.user),
+      expense: { id: String(expense._id), amount: expense.amount, date: expense.date, title: expense.title },
+      expires: next,
+      ...(kind === "tax" ? { year: taxRow.year } : { paymentsPaid: policy.paymentsPaid, paymentsTotal: policy.paymentsTotal || 0 }),
+    })
   }),
 )
 
 // Insurance policies (Property Info), added, changed and removed one at a time. Each one's expiration date shows on
 // the calendar and in Needs attention.
 function policyLine(policy) {
-  const premium = policy.premium == null ? "" : `$${Number(policy.premium).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${policy.billing === "One-time" ? "one-time" : policy.billing === "Monthly" ? "a month" : "a year"}`
-  return [policyName(policy), policy.policyNumber ? `Policy ${policy.policyNumber}` : "", premium, policy.expirationDate ? `expires ${policy.expirationDate}` : ""].filter(Boolean).join(" · ")
+  const monthly = policy.monthlyPayment == null ? "" : `$${Number(policy.monthlyPayment).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / month`
+  return [policyName(policy), policy.policyNumber ? `Policy ${policy.policyNumber}` : "", monthly, policy.expirationDate ? `expires ${policy.expirationDate}` : ""].filter(Boolean).join(" · ")
 }
 
 async function insuranceProperty(req, res) {
@@ -771,12 +796,12 @@ propertiesRouter.patch(
       sendError(res, 404, "That insurance policy was not found. Reload the page and try again.")
       return
     }
-    const read = readPolicy(req.body)
+    const before = policy.toObject()
+    const read = readPolicy(req.body, before)
     if (read.error) {
       sendError(res, 400, read.error)
       return
     }
-    const before = policy.toObject()
     policy.set(read.policy)
     property.updatedBy = req.user.name
     await property.save()
