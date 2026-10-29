@@ -1,9 +1,11 @@
+import { isPaidOff } from "@synergifund/shared"
+
 function key(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
 }
 
 export function loanPaymentDates(loan, from, to) {
-  if (loan?.status === "Paid off") return []
+  if (isPaidOff(loan)) return []
   const day = Number(loan?.paymentDay)
   if (!Number.isInteger(day) || day < 1 || day > 31 || !(Number(loan?.payment) > 0)) return []
   const [fromYear, fromMonth] = from.split("-").map(Number)
@@ -90,7 +92,8 @@ export function nextDueAfter(due, frequency = "Yearly") {
   return occurrence(day, STEPS[frequency] || STEPS.Yearly, 1)
 }
 
-// A property's insurance (Property Info) repeats from its next due date, as often as it is paid.
+// The insurance from before the policy list repeated from its next due date, as often as it was paid (used when
+// moving insurance off the loans, see insuranceMove.js).
 export function insuranceDates(property, from, to) {
   return repeating(property?.insuranceDue, STEPS[property?.insuranceFrequency] || STEPS.Yearly, from, to)
 }

@@ -37,6 +37,8 @@ export function WorkspacePage({
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const [picked, setPicked] = useState({})
+  // Columns with a `sort` (the value to order by) sort from their header, or the Sort list on a phone.
+  const [sort, setSort] = useState(null)
   const filterRef = useRef(null)
 
   const visibleColumns = (columns || []).filter((column) => !hidden.includes(column.key))
@@ -56,6 +58,8 @@ export function WorkspacePage({
       return searchText(row).includes(needle)
     })
   }, [rows, query, view, important, filters, picked])
+  const sortable = (columns || []).filter((column) => column.sort && column.label)
+  const ordered = sortRows(shown, columns, sort)
 
   useEffect(() => {
     if (!filtersOpen) return
@@ -80,6 +84,10 @@ export function WorkspacePage({
   function clearFilters() {
     setView("default")
     setPicked({})
+  }
+
+  function sortBy(key) {
+    setSort((current) => (current?.key !== key ? { key, dir: "asc" } : current.dir === "asc" ? { key, dir: "desc" } : null))
   }
 
   function toggle(id) {
@@ -175,6 +183,21 @@ export function WorkspacePage({
                   <Icon name="search" size={14} />
                   <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search" />
                 </label>
+                {sortable.length > 0 && (
+                  <label className="sort-select">
+                    <span>Sort</span>
+                    <select value={sort ? `${sort.key}:${sort.dir}` : ""} onChange={(event) => { const [key, dir] = event.target.value.split(":"); setSort(key ? { key, dir } : null) }}>
+                      <option value="">Default order</option>
+                      {sortable.flatMap((column) => {
+                        const words = rows.some((row) => typeof column.sort(row) === "string" && column.sort(row) !== "")
+                        return [
+                          <option key={`${column.key}:asc`} value={`${column.key}:asc`}>{column.label}, {words ? "A to Z" : "low to high"}</option>,
+                          <option key={`${column.key}:desc`} value={`${column.key}:desc`}>{column.label}, {words ? "Z to A" : "high to low"}</option>,
+                        ]
+                      })}
+                    </select>
+                  </label>
+                )}
               </div>
               {customize && (
                 <div className="toolbar-right">
@@ -199,12 +222,30 @@ export function WorkspacePage({
               )}
             </div>
           )}
-          {reorder && shown.length !== rows.length && rows.length > 1 && <p className="reorder-note">Clear the search and filters to drag properties into a new order.</p>}
-          <DataTable columns={visibleColumns} rows={shown} selected={selected} onToggle={toggle} onRow={onRow} empty={rows.length > 0 ? "Nothing matches your search or filters." : empty} loading={loading} selectable={selectable} compact={compact} collapsible={collapsible} openLabel={openLabel} onMove={reorder && shown.length === rows.length ? reorder.onMove : null} />
+          {reorder && (shown.length !== rows.length || sort) && rows.length > 1 && <p className="reorder-note">Clear the search{sort ? ", the sort" : ""} and filters to drag properties into a new order.</p>}
+          <DataTable columns={visibleColumns} rows={ordered} selected={selected} onToggle={toggle} onRow={onRow} empty={rows.length > 0 ? "Nothing matches your search or filters." : empty} loading={loading} selectable={selectable} compact={compact} collapsible={collapsible} openLabel={openLabel} onMove={reorder && shown.length === rows.length && !sort ? reorder.onMove : null} sort={sort} onSort={sortable.length ? sortBy : null} />
         </section>
       )}
     </div>
   )
+}
+
+// Rows in the order of one column (blank values last either way), or as given when nothing is sorted.
+function sortRows(rows, columns, sort) {
+  const column = sort && (columns || []).find((item) => item.key === sort.key && item.sort)
+  if (!column) return rows
+  const value = (row) => {
+    const result = column.sort(row)
+    return result == null || result === "" || (typeof result === "number" && !Number.isFinite(result)) ? null : result
+  }
+  const factor = sort.dir === "desc" ? -1 : 1
+  return [...rows].sort((a, b) => {
+    const left = value(a)
+    const right = value(b)
+    if (left == null || right == null) return left == null && right == null ? 0 : left == null ? 1 : -1
+    if (typeof left === "number" && typeof right === "number") return (left - right) * factor
+    return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" }) * factor
+  })
 }
 
 function searchText(value) {

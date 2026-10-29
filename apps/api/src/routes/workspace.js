@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { can, drawFigures, TASK_LABELS, drawPulled, ensureTaskPermissions, resolveBudget, isRole, NOT_OWNED_STAGES, LOAN_STATUSES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, ROLES } from "@synergifund/shared"
+import { BEHIND_STATUSES, can, drawFigures, TASK_LABELS, drawPulled, ensureTaskPermissions, insurancePolicies, isPaidOff, loanStatus, loanType, LOAN_TYPES, resolveBudget, isRole, NOT_OWNED_STAGES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, policyName, policyTitle, ROLES } from "@synergifund/shared"
 import {
   NativeDevice,
   Activity,
@@ -24,10 +24,10 @@ import { asyncHandler, blockContractors, requireAnyPermission, requirePermission
 import { publicUser } from "../lib/serialize.js"
 import { propertyFilter } from "../services/access.js"
 import { presentDraw, refreshRehabRemaining } from "./draws.js"
-import { insuranceDates, loanPaymentDates, nextPaymentDate, paymentDates, taxDates } from "../services/schedule.js"
+import { loanPaymentDates, nextPaymentDate, paymentDates, taxDates } from "../services/schedule.js"
 import { saveUploadedFile, upload } from "../services/files.js"
 import { ensureLenders, lenderForName, presentLender } from "../services/lenders.js"
-import { loanFields } from "../services/loans.js"
+import { liftTermsParts, loanFields } from "../services/loans.js"
 import { changeSummary, notify, notifyPropertyAccess, recordActivity } from "../services/notify.js"
 import { unreadSplit, usesChat } from "../services/chat.js"
 import { disconnectChat, refreshChat } from "../services/chatHub.js"
@@ -39,14 +39,19 @@ export const workspaceRouter = Router()
 const TASK_FIELDS = [["title", "Task"], ["due", "Due"], ["priority", "Priority"], ["labels", "Labels"], ["owner", "Assignee"], ["notes", "Note"]]
 const LOAN_FIELDS = [
   ["lender", "Lender"],
-  ["label", "Nature"],
   ["loanNumber", "Loan number"],
-  ["balance", "Balance", true],
+  ["loanType", "Loan type"],
+  ["interestRate", "Interest rate"],
+  ["servicer", "Servicer"],
+  ["originalAmount", "Original loan amount", true],
+  ["balance", "Current loan amount", true],
   ["payment", "Monthly payment", true],
   ["paymentDay", "Payment day"],
-  ["originalAmount", "Total loan", true],
-  ["maturity", "Maturity"],
+  ["originationDate", "Origination date"],
+  ["maturity", "Maturity date"],
   ["status", "Loan status"],
+  ["paymentsBehind", "Payments behind"],
+  ["pastDueAmount", "Past-due amount", true],
   ["termsStatus", "Terms"],
   ["terms", "Property terms"],
 ]
@@ -75,7 +80,7 @@ workspaceRouter.get(
     const arv = sum(properties, "arv")
     const rehab = sum(properties, "rehabBudget")
     const rent = sum(properties, "actualRent")
-    const monthlyMortgage = loans.filter((loan) => loan.status !== "Paid off").reduce((total, loan) => total + Number(loan.payment || 0), 0)
+    const monthlyMortgage = loans.filter((loan) => !isPaidOff(loan)).reduce((total, loan) => total + Number(loan.payment || 0), 0)
     const drawTotals = properties.reduce((total, property) => {
       const budget = budgets.find((item) => String(item.propertyId) === String(property._id))
       const own = draws.filter((draw) => String(draw.propertyId) === String(property._id))
@@ -614,20 +619,27 @@ workspaceRouter.post(
     } else if (cleanLenderName(req.body.lender)) {
       lender = await lenderForName(cleanLenderName(req.body.lender))
     }
+    const status = loanStatus(req.body.status)
+    const behind = BEHIND_STATUSES.includes(status)
     const loan = await Loan.create({
       propertyId: property._id,
       lenderId: lender?._id,
       lender: lender?.name || "",
-      label: cleanLoanLabel(req.body.label),
       terms: String(req.body.terms || "").trim(),
       loanNumber: String(req.body.loanNumber || "").trim(),
+      loanType: loanType(req.body.loanType),
+      interestRate: percent(req.body.interestRate),
+      servicer: cleanServicer(req.body.servicer),
       balance: optionalNumber(req.body.balance),
       payment: optionalNumber(req.body.payment),
       paymentDay: dayOfMonth(req.body.paymentDay),
       originalAmount: optionalNumber(req.body.originalAmount),
+      originationDate: String(req.body.originationDate || ""),
       maturity: String(req.body.maturity || ""),
       termsStatus: req.body.termsStatus === "Verified" ? "Verified" : "Needs verification",
-      status: loanStatus(req.body.status),
+      status,
+      paymentsBehind: behind ? wholeNumber(req.body.paymentsBehind) : undefined,
+      pastDueAmount: behind ? optionalNumber(req.body.pastDueAmount) : undefined,
     })
     await recordActivity({ user: req.user, title: "Loan recorded", detail: [lender?.name || "No lender", money(loan.originalAmount ?? loan.balance), property.address].filter(Boolean).join(" · "), propertyId: property._id })
     res.status(201).json({ loan: presentLoan(loan, new Map([[String(property._id), property]]), lender ? [lender] : []) })
@@ -654,6 +666,10 @@ workspaceRouter.patch(
       sendError(res, 400, problem)
       return
     }
+    // What an older loan had written in its terms (rate, type, servicer) is saved into those fields first, and its old
+    // status name read as the new one, so the change log only shows what was changed in the form.
+    liftTermsParts(loan)
+    loan.status = loanStatus(loan.status)
     const before = loan.toObject()
     let moveTo = null
     if (req.body.propertyId && String(req.body.propertyId) !== String(loan.propertyId)) {
@@ -679,9 +695,12 @@ workspaceRouter.patch(
       loan.lenderId = undefined
       loan.lender = ""
     }
-    if ("label" in req.body) loan.label = cleanLoanLabel(req.body.label)
     if ("terms" in req.body) loan.terms = String(req.body.terms || "").trim()
     if ("loanNumber" in req.body) loan.loanNumber = String(req.body.loanNumber || "").trim()
+    if ("loanType" in req.body) loan.loanType = loanType(req.body.loanType)
+    if ("interestRate" in req.body) loan.interestRate = percent(req.body.interestRate)
+    if ("servicer" in req.body) loan.servicer = cleanServicer(req.body.servicer)
+    if ("originationDate" in req.body) loan.originationDate = String(req.body.originationDate || "")
     if ("balance" in req.body) loan.balance = optionalNumber(req.body.balance)
     if ("payment" in req.body) loan.payment = optionalNumber(req.body.payment)
     if ("paymentDay" in req.body) loan.paymentDay = dayOfMonth(req.body.paymentDay)
@@ -693,6 +712,14 @@ workspaceRouter.patch(
     }
     if ("termsStatus" in req.body) loan.termsStatus = req.body.termsStatus === "Verified" ? "Verified" : "Needs verification"
     if ("status" in req.body) loan.status = loanStatus(req.body.status)
+    // Missed payments are kept only while the loan is Late or Delinquent.
+    if (BEHIND_STATUSES.includes(loan.status)) {
+      if ("paymentsBehind" in req.body) loan.paymentsBehind = wholeNumber(req.body.paymentsBehind)
+      if ("pastDueAmount" in req.body) loan.pastDueAmount = optionalNumber(req.body.pastDueAmount)
+    } else {
+      loan.paymentsBehind = undefined
+      loan.pastDueAmount = undefined
+    }
     if (moveTo) loan.propertyId = moveTo._id
     await loan.save()
     const lender = loan.lenderId ? await Lender.findById(loan.lenderId) : null
@@ -1080,7 +1107,7 @@ workspaceRouter.get(
   requirePermission("expenses.read"),
   blockContractors,
   asyncHandler(async (req, res) => {
-    const properties = await Property.find(propertyFilter(req.user)).select("_id address stage insuranceCarrier insuranceAmount insuranceFrequency insuranceDue taxAmount taxDueDate")
+    const properties = await Property.find(propertyFilter(req.user)).select("_id address stage insurancePolicies insuranceCarrier insuranceAmount insuranceFrequency insuranceDue insurancePolicy taxAmount taxDueDate")
     const propertyIds = properties.map((property) => property._id)
     const names = new Map(properties.map((property) => [String(property._id), property.address]))
     const canSeeAllTasks = req.permissions.includes(PERMISSIONS.tasksAssign) || req.permissions.includes(PERMISSIONS.tasksManage)
@@ -1128,7 +1155,7 @@ workspaceRouter.get(
           }
         })
       }),
-      ...loans.filter((loan) => loan.maturity && loan.status !== "Paid off").map((loan) => {
+      ...loans.filter((loan) => loan.maturity && !isPaidOff(loan)).map((loan) => {
         const date = dateKey(loan.maturity)
         const passed = date < today
         const dueSoon = !passed && date <= monthOut
@@ -1163,23 +1190,25 @@ workspaceRouter.get(
           href: loan.propertyId ? `/properties/${loan.propertyId}?tab=financing` : "/loans",
         }
       })),
-      // Insurance and property taxes from Property Info (contractors don't see them).
-      ...(req.user.role === "contractor" ? [] : properties.filter((property) => !NOT_OWNED_STAGES.includes(property.stage)).flatMap((property) => insuranceDates(property, shiftKey(today, -60), shiftKey(today, 365)).map((date) => {
-        const dueSoon = date >= today && date <= soon
-        const often = String(property.insuranceFrequency || "Yearly").toLowerCase()
-        return {
-          id: `property-insurance-${property._id}-${date}`,
+      // Each insurance policy's expiration date and property taxes, from Property Info (contractors don't see them).
+      ...(req.user.role === "contractor" ? [] : properties.filter((property) => !NOT_OWNED_STAGES.includes(property.stage)).flatMap((property) => insurancePolicies(property).flatMap((policy) => {
+        const date = dateKey(policy.expirationDate)
+        if (!date || date < shiftKey(today, -60) || date > shiftKey(today, 365)) return []
+        const expired = date < today
+        const dueSoon = !expired && date <= soon
+        return [{
+          id: `property-insurance-${property._id}-${policy.id}`,
           kind: "property",
-          title: property.insuranceCarrier ? `${property.insuranceCarrier} insurance` : "Insurance payment",
+          title: `${policyName(policy)} expires`,
           date,
-          amount: property.insuranceAmount ?? null,
-          status: "Scheduled",
+          amount: policy.premium ?? null,
+          status: expired ? "Expired" : "Scheduled",
           property: property.address,
-          urgent: dueSoon,
-          tone: dueSoon ? "warn" : "neutral",
-          detail: date < today ? `Insurance, ${often}, past` : dueSoon ? "Insurance due this week" : `Insurance, ${often}`,
+          urgent: expired || dueSoon,
+          tone: expired ? "bad" : dueSoon ? "warn" : "neutral",
+          detail: expired ? "Insurance expired · renew it or update the dates" : dueSoon ? "Insurance expires this week" : `Insurance expires${policy.policyNumber ? ` · Policy ${policy.policyNumber}` : ""}`,
           href: `/properties/${property._id}?tab=info`,
-        }
+        }]
       }))),
       ...(req.user.role === "contractor" ? [] : properties.filter((property) => !NOT_OWNED_STAGES.includes(property.stage)).flatMap((property) => taxDates(property, shiftKey(today, -60), shiftKey(today, 365)).map((date) => {
         const dueSoon = date >= today && date <= soon
@@ -1512,13 +1541,9 @@ function presentLoan(loan, names, lenders = []) {
     lenderId: lender ? String(lender._id) : "",
     lender: lender?.name || (loan.lender && loan.lender !== "Not provided" ? loan.lender : "No lender"),
     lenderTerms: lender?.terms || "",
-    label: loan.label || "Financed",
-    terms: loan.terms || "",
     loanNumber: loan.loanNumber || "",
     balance: loan.balance ?? null,
     payment: loan.payment ?? null,
-    paymentDay: loan.paymentDay ?? null,
-    originalAmount: loan.originalAmount ?? null,
     maturity: loan.maturity || "",
     termsStatus: loan.termsStatus,
     ...loanFields(loan),
@@ -1526,18 +1551,40 @@ function presentLoan(loan, names, lenders = []) {
   }
 }
 
-const LOAN_MONEY = [["balance", "Balance"], ["payment", "Monthly payment"], ["originalAmount", "Total loan"]]
+const LOAN_MONEY = [["originalAmount", "Original loan amount"], ["balance", "Current loan amount"], ["payment", "Monthly payment"], ["pastDueAmount", "Past-due amount"]]
 
 // Returns a message for the first field that cannot be saved as entered, so nothing is dropped silently.
 function loanProblem(body, loan = null) {
+  const given = (key) => key in body && body[key] !== "" && body[key] != null
   for (const [key, label] of LOAN_MONEY) {
-    if (!(key in body) || body[key] === "" || body[key] == null) continue
+    if (!given(key)) continue
     const number = optionalNumber(body[key])
-    if (number === undefined || number < 0) return `Enter ${label.toLowerCase()} as a dollar amount.`
+    if (number === undefined || number < 0) return `Enter the ${label.toLowerCase()} as a dollar amount.`
   }
-  if ("paymentDay" in body && body.paymentDay !== "" && body.paymentDay != null && dayOfMonth(body.paymentDay) == null) return "Payment due day must be a day of the month from 1 to 31."
-  if ("maturity" in body && body.maturity && !/^\d{4}-\d{2}-\d{2}$/.test(String(body.maturity))) return "Maturity must be a date."
+  if (given("loanType") && !loanType(body.loanType)) return `Choose the loan type: ${LOAN_TYPES.join(", ").replace(/, ([^,]*)$/, " or $1")}.`
+  if (given("interestRate") && percent(body.interestRate) === undefined) return "Enter the interest rate as a percent, like 8.90."
+  if (given("paymentsBehind") && wholeNumber(body.paymentsBehind) === undefined) return "Enter the payments behind as a whole number, like 2."
+  if (given("paymentDay") && dayOfMonth(body.paymentDay) == null) return "Payment due day must be a day of the month from 1 to 31."
+  if (given("originationDate") && !/^\d{4}-\d{2}-\d{2}$/.test(String(body.originationDate))) return "Origination date must be a date."
+  if (given("maturity") && !/^\d{4}-\d{2}-\d{2}$/.test(String(body.maturity))) return "Maturity date must be a date."
   return ""
+}
+
+// An interest rate as a percent from 0 to 100 ("8.90%" or 8.9), or undefined when blank or not a rate.
+function percent(value) {
+  if (value === "" || value == null) return undefined
+  const number = Number(String(value).replace(/[%\s]/g, ""))
+  return Number.isFinite(number) && number >= 0 && number <= 100 ? number : undefined
+}
+
+function wholeNumber(value) {
+  if (value === "" || value == null) return undefined
+  const number = Number(String(value).trim())
+  return Number.isInteger(number) && number >= 0 && number <= 600 ? number : undefined
+}
+
+function cleanServicer(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ").slice(0, 120)
 }
 
 function isId(value) {
@@ -1552,15 +1599,6 @@ function cleanLenderName(value) {
 // The old "Not provided" placeholder lender counts as no lender.
 function realLender(lender) {
   return lender && lender.name !== "Not provided" ? lender : null
-}
-
-function loanStatus(value) {
-  return LOAN_STATUSES.includes(value) ? value : "Current"
-}
-
-function cleanLoanLabel(value) {
-  const label = String(value || "").trim().replace(/\s+/g, " ").slice(0, 40)
-  return label || "Financed"
 }
 
 function dayOfMonth(value) {
@@ -1721,7 +1759,7 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
     })
   }
   for (const loan of loans) {
-    if (loan.status === "Paid off" || !(Number(loan.payment) > 0)) continue
+    if (isPaidOff(loan) || !(Number(loan.payment) > 0)) continue
     const hasDatedBill = bills.some((bill) => {
       const mortgage = bill.category === "Mortgage" || /mortgage/i.test(bill.title || "")
       const due = dateKey(bill.due)
@@ -1760,24 +1798,57 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
       href: "/payments",
     })
   }
-  // Insurance and property tax from Property Info: overdue (not marked paid), or due within 30 days.
+  // Loans with missed payments (Payments Behind on a Late or Delinquent loan).
+  for (const loan of loans) {
+    const status = loanStatus(loan.status)
+    const behind = Number(loan.paymentsBehind)
+    if (!BEHIND_STATUSES.includes(status) || !(behind > 0)) continue
+    items.push({
+      id: `loan-behind-${loan._id}`,
+      kind: "Loan",
+      title: `${loan.lender && loan.lender !== "Not provided" ? loan.lender : "Loan"}${loan.loanNumber ? ` #${loan.loanNumber}` : ""} · ${behind} ${behind === 1 ? "payment" : "payments"} behind`,
+      property: names.get(String(loan.propertyId || "")) || "",
+      date: "",
+      amount: loan.pastDueAmount ?? null,
+      tone: "bad",
+      detail: `${status}${loan.pastDueAmount != null ? ` · ${money(loan.pastDueAmount)} past due` : ""}`,
+      href: loan.propertyId ? `/properties/${loan.propertyId}?tab=financing` : "/loans",
+    })
+  }
+  // Insurance policies that have expired or expire within 30 days, and property tax overdue (not marked paid) or due
+  // within 30 days, from Property Info.
   for (const property of properties) {
     if (NOT_OWNED_STAGES.includes(property.stage)) continue
-    for (const [kind, due, amount, label] of [["Insurance", dateKey(property.insuranceDue), property.insuranceAmount, property.insuranceCarrier ? `${property.insuranceCarrier} insurance` : "Insurance payment"], ["Tax", dateKey(property.taxDueDate), property.taxAmount, "Property tax"]]) {
-      if (!due || due > month) continue
-      const overdue = due < today
+    for (const policy of insurancePolicies(property)) {
+      const expires = dateKey(policy.expirationDate)
+      if (!expires || expires > month) continue
+      const expired = expires < today
       items.push({
-        id: `${kind.toLowerCase()}-${property._id}`,
-        kind,
-        title: label,
+        id: `insurance-${property._id}-${policy.id}`,
+        kind: "Insurance",
+        title: policyTitle(policy),
         property: property.address,
-        date: due,
-        amount: amount ?? null,
-        tone: overdue ? "bad" : "warn",
-        detail: overdue ? "Mark it paid on Property Info" : due <= week ? "Due this week" : "Due within 30 days",
+        date: expires,
+        amount: policy.premium ?? null,
+        tone: expired ? "bad" : "warn",
+        detail: expired ? "Expired · renew it or update the dates on Property Info" : expires <= week ? "Expires this week" : "Expires within 30 days",
         href: `/properties/${property._id}?tab=info`,
       })
     }
+    const due = dateKey(property.taxDueDate)
+    if (!due || due > month) continue
+    const overdue = due < today
+    items.push({
+      id: `tax-${property._id}`,
+      kind: "Tax",
+      title: "Property tax",
+      property: property.address,
+      date: due,
+      amount: property.taxAmount ?? null,
+      tone: overdue ? "bad" : "warn",
+      detail: overdue ? "Mark it paid on Property Info" : due <= week ? "Due this week" : "Due within 30 days",
+      href: `/properties/${property._id}?tab=info`,
+    })
   }
   for (const task of tasks) {
     const due = dateKey(task.due)
@@ -1798,7 +1869,8 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
     })
   }
   items.sort((left, right) => {
-    const late = (item) => item.date && item.date < today ? 0 : 1
+    // Overdue first: past its date, or a loan with missed payments (no date of its own).
+    const late = (item) => item.tone === "bad" || (item.date && item.date < today) ? 0 : 1
     const undated = (item) => item.date ? 0 : 1
     return late(left) - late(right) || undated(left) - undated(right) || left.date.localeCompare(right.date)
   })

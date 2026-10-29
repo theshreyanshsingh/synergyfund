@@ -462,7 +462,6 @@ export const TASK_LABELS = ["EMD", "Mortgage payment", "Draw", "Verify", "Inspec
 
 export const PROPERTY_LABELS = ["Financed", "Refinanced", "Flip", "Hold", "Rent"]
 
-export const LOAN_LABELS = ["Financed", "Refinanced", "Construction", "Bridge", "Seller financing"]
 // The first five are the Quick Access documents on a property (see QUICK_ACCESS).
 export const DOCUMENT_LABELS = ["Purchase Contract", "Reassignment Contract", "Closing Contract", "Settlement Statement (ALTA)", "Scope of Work (SOW)", "Closing Statement", "Title", "Insurance", "Loan", "Appraisal", "Inspection", "Permit", "Invoice", "Lease", "Tax", "Other"]
 
@@ -651,15 +650,105 @@ export function cleanSounds(value = {}) {
   }
 }
 
-export const LOAN_STATUSES = ["Current", "Late", "In default", "Paid off"]
-// How often a property's insurance is paid (Property Info). Loans used to hold insurance with "Every 6 months".
-export const INSURANCE_FREQUENCIES = ["Monthly", "Quarterly", "Semi-Annually", "Yearly"]
+export const LOAN_STATUSES = ["Current", "Late", "Delinquent", "Matured – Past Due", "Payoff Requested", "Paid Off"]
+export const PAID_OFF = "Paid Off"
+// Both spellings of Paid Off, for database queries: loans saved before these statuses say "Paid off".
+export const PAID_OFF_SAVED = ["Paid Off", "Paid off"]
+// Payments Behind and Past-Due Amount are kept only while a loan is Late or Delinquent.
+export const BEHIND_STATUSES = ["Late", "Delinquent"]
+export const LOAN_TYPES = ["Hard Money", "Bridge", "DSCR", "Conventional", "Other"]
 
-// Insurance payments a year for each frequency, and a property's insurance for a whole year (blank when not entered).
+const squashWords = (value) => String(value ?? "").toLowerCase().replace(/[\s\-–—_]+/g, " ").trim()
+// Statuses saved before: In default is now Delinquent, Paid off is Paid Off.
+const OLD_LOAN_STATUSES = { "in default": "Delinquent" }
+
+// A loan's status as one of LOAN_STATUSES (any case or dash; the old ones read as their new names; blank is Current).
+export function loanStatus(value) {
+  const key = squashWords(value)
+  return LOAN_STATUSES.find((status) => squashWords(status) === key) || OLD_LOAN_STATUSES[key] || "Current"
+}
+
+export function isPaidOff(loan) {
+  return loanStatus(loan?.status) === PAID_OFF
+}
+
+// A loan type as one of LOAN_TYPES, or "" when it is not one of them.
+export function loanType(value) {
+  const key = squashWords(value)
+  return LOAN_TYPES.find((type) => squashWords(type) === key) || ""
+}
+
+// "8.90%" (at least two decimals, as lenders quote them).
+export function rateLabel(rate) {
+  if (rate == null || rate === "" || !Number.isFinite(Number(rate))) return ""
+  return `${Number(rate).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 3 })}%`
+}
+
+// Payments a year for how often a property's insurance was paid before the policy list (Property Info).
 export const INSURANCE_PER_YEAR = { Monthly: 12, Quarterly: 4, "Semi-Annually": 2, Yearly: 1 }
+
+// Insurance policies on Property Info (most properties carry two or three, e.g. Builder's Risk, Liability and Flood).
+export const POLICY_TYPES = ["Builder's Risk", "Homeowners", "Vacant", "Liability", "Flood", "Other"]
+export const POLICY_BILLING = ["Annual", "Monthly", "One-time"]
+// The id of a property's insurance from before the list, until it is saved as a policy.
+export const EARLIER_POLICY = "earlier"
+
+const cents = (value) => Math.round(Number(value) * 100) / 100
+
+// A property's insurance policies. A property saved before the list had one carrier, amount, due date and policy #:
+// that shows as its first policy (the due date as the expiration date; a quarterly or semi-annual amount as the
+// yearly premium, with what was paid each time in the notes) until a policy is saved.
+export function insurancePolicies(property = {}) {
+  const list = Array.isArray(property.insurancePolicies) ? property.insurancePolicies : []
+  if (list.length) {
+    return list.map((policy) => ({
+      id: String(policy._id || policy.id || ""),
+      type: policy.type || "",
+      carrier: policy.carrier || "",
+      policyNumber: policy.policyNumber || "",
+      premium: policy.premium ?? null,
+      billing: POLICY_BILLING.includes(policy.billing) ? policy.billing : "Annual",
+      effectiveDate: policy.effectiveDate || "",
+      expirationDate: policy.expirationDate || "",
+      notes: policy.notes || "",
+      paidOn: policy.paidOn || "",
+    }))
+  }
+  const amount = property.insuranceAmount == null || property.insuranceAmount === "" ? null : Number(property.insuranceAmount)
+  if (!property.insuranceCarrier && amount == null && !property.insuranceDue && !property.insurancePolicy) return []
+  const frequency = INSURANCE_PER_YEAR[property.insuranceFrequency] ? property.insuranceFrequency : "Yearly"
+  const split = frequency === "Quarterly" || frequency === "Semi-Annually"
+  return [{
+    id: EARLIER_POLICY,
+    type: "",
+    carrier: property.insuranceCarrier || "",
+    policyNumber: property.insurancePolicy || "",
+    premium: amount == null ? null : split ? cents(amount * INSURANCE_PER_YEAR[frequency]) : amount,
+    billing: frequency === "Monthly" ? "Monthly" : "Annual",
+    effectiveDate: "",
+    expirationDate: String(property.insuranceDue || "").slice(0, 10),
+    notes: split && amount != null ? `Paid ${frequency.toLowerCase()}, $${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} each time.` : "",
+    paidOn: property.insurancePaidOn || "",
+  }]
+}
+
+// A policy's name in lists and on the calendar: "Coastal Mutual · Flood".
+export function policyName(policy = {}) {
+  return [policy.carrier, policy.type].filter(Boolean).join(" · ") || "Insurance policy"
+}
+
+// The same as a payment or a reminder: "Coastal Mutual · Flood insurance", or just "Insurance" with no name.
+export function policyTitle(policy = {}) {
+  const name = [policy.carrier, policy.type].filter(Boolean).join(" · ")
+  return name ? `${name} insurance` : "Insurance"
+}
+
+// The insurance for a whole year: annual premiums plus monthly ones times 12 (one-time policies, like a builder's
+// risk policy for the rehab, are not yearly). Blank when no yearly premium is entered.
 export function yearlyInsurance(property = {}) {
-  if (property.insuranceAmount == null || property.insuranceAmount === "") return null
-  return Math.round(Number(property.insuranceAmount) * (INSURANCE_PER_YEAR[property.insuranceFrequency] || 1) * 100) / 100
+  const yearly = insurancePolicies(property).filter((policy) => policy.premium != null && policy.billing !== "One-time")
+  if (!yearly.length) return null
+  return cents(yearly.reduce((total, policy) => total + Number(policy.premium) * (policy.billing === "Monthly" ? 12 : 1), 0))
 }
 
 // Properties that are no longer owned: no insurance or tax reminders for them.
@@ -683,14 +772,15 @@ export function propertyUtilities(list = []) {
   return [...fixed, ...clean.filter((item) => !DEFAULT_UTILITIES.some((name) => name.toLowerCase() === item.name.toLowerCase())).map((item) => ({ ...item, fixed: false }))]
 }
 
-// One status and one open balance per property, from its loans. Paid-off loans carry no balance.
+// One status and one open balance per property, from its loans (the worst status of the open ones). Paid-off loans
+// carry no balance.
 export function loanSummary(loans = []) {
   if (!loans.length) return { count: 0, status: "No loan", balance: null, payment: null }
-  const open = loans.filter((loan) => (loan.status || "Current") !== "Paid off")
-  if (!open.length) return { count: loans.length, status: "Paid off", balance: 0, payment: 0 }
-  const rank = ["Current", "Late", "In default"]
+  const open = loans.filter((loan) => !isPaidOff(loan))
+  if (!open.length) return { count: loans.length, status: PAID_OFF, balance: 0, payment: 0 }
+  const rank = ["Current", "Payoff Requested", "Late", "Delinquent", "Matured – Past Due"]
   const status = open.reduce((worst, loan) => {
-    const current = rank.includes(loan.status) ? loan.status : "Current"
+    const current = loanStatus(loan.status)
     return rank.indexOf(current) > rank.indexOf(worst) ? current : worst
   }, "Current")
   const known = open.filter((loan) => loan.balance != null && loan.balance !== "")

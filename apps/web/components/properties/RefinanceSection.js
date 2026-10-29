@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { REFINANCE, cityLine, fullAddress, refinancePlan, yearlyInsurance } from "@synergifund/shared"
+import { PAID_OFF, REFINANCE, cityLine, fullAddress, insurancePolicies, isPaidOff, refinancePlan, yearlyInsurance } from "@synergifund/shared"
 import { FormSheet } from "../ui/FormSheet"
 import { StatusPill } from "../ui/StatusPill"
 import { api } from "../../lib/api"
@@ -31,7 +31,7 @@ export function RefinanceSection({ property, loans, writable, onChanged, onAddLo
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
   const [dating, setDating] = useState(false)
-  const open = loans.filter((loan) => loan.status !== "Paid off")
+  const open = loans.filter((loan) => !isPaidOff(loan))
 
   // Opened from the banner on the Properties list (…?tab=financing#refinance): bring this section into view.
   useEffect(() => {
@@ -45,14 +45,14 @@ export function RefinanceSection({ property, loans, writable, onChanged, onAddLo
     if (stage === DONE) {
       const list = open.map((loan) => `${loan.lender}${loan.loanNumber ? ` #${loan.loanNumber}` : ""}${loan.balance != null ? ` (${money(loan.balance)} balance)` : ""}`)
       const note = list.length
-        ? `Marking it ${DONE} marks the old ${list.length === 1 ? "loan" : "loans"} Paid off:\n${list.join("\n")}\n\nThen add the new loan with Add loan.`
-        : `Marking it ${DONE}. There is no open loan to mark Paid off. Add the new loan with Add loan.`
+        ? `Marking it ${DONE} marks the old ${list.length === 1 ? "loan" : "loans"} ${PAID_OFF}:\n${list.join("\n")}\n\nThen add the new loan with Add loan.`
+        : `Marking it ${DONE}. There is no open loan to mark ${PAID_OFF}. Add the new loan with Add loan.`
       if (!window.confirm(note)) return
     }
     setPending(true)
     try {
       const data = await api(`/properties/${property.id}/refinance`, { method: "PATCH", body: { stage } })
-      if (stage === DONE) setMessage(data.paidOff.length ? `${DONE}. ${data.paidOff.length === 1 ? "The old loan is" : `${data.paidOff.length} old loans are`} now Paid off. Add the new loan with Add loan above.` : `${DONE}. Add the new loan with Add loan above.`)
+      if (stage === DONE) setMessage(data.paidOff.length ? `${DONE}. ${data.paidOff.length === 1 ? "The old loan is" : `${data.paidOff.length} old loans are`} now ${PAID_OFF}. Add the new loan with Add loan above.` : `${DONE}. Add the new loan with Add loan above.`)
       else if (data.restored.length) setMessage(`Back to ${stage}. ${data.restored.length === 1 ? "The loan that was paid off is" : "The loans that were paid off are"} back as before.`)
       onChanged?.()
     } catch (err) {
@@ -65,6 +65,8 @@ export function RefinanceSection({ property, loans, writable, onChanged, onAddLo
   const leverage = plan.leverage
   const storedDate = String(property.purchaseDate || "")
   const insurance = yearlyInsurance(property)
+  const policies = insurancePolicies(property)
+  const yearlyPolicies = policies.filter((policy) => policy.premium != null && policy.billing !== "One-time").length
   const rent = property.marketRent ?? property.actualRent ?? null
   const place = fullAddress(property)
 
@@ -126,7 +128,7 @@ export function RefinanceSection({ property, loans, writable, onChanged, onAddLo
         <div>
           <dt>Yearly insurance</dt>
           <dd>{insurance == null ? "Not entered" : money(insurance)}</dd>
-          <small>{insurance != null && property.insuranceFrequency !== "Yearly" ? `${money(property.insuranceAmount)} ${String(property.insuranceFrequency).toLowerCase()} · ` : ""}<a href={`/properties/${property.id}?tab=info`}>On Property Info</a></small>
+          <small>{yearlyPolicies > 1 ? `${yearlyPolicies} policies · ` : ""}<a href={`/properties/${property.id}?tab=info`}>On Property Info</a></small>
         </div>
         <div>
           <dt>Rental estimate</dt>

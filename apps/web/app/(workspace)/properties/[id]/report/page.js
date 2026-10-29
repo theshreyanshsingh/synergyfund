@@ -263,12 +263,12 @@ export default function PropertyReport({ params }) {
           <section className="report-section">
             <h2>Financing</h2>
             <table className="report-table">
-              <thead><tr><th>Lender</th><th>Type</th><th className="num">Balance</th><th className="num">Monthly payment</th><th>Matures</th></tr></thead>
+              <thead><tr><th>Lender</th><th>Loan type</th><th className="num">Current loan amount</th><th className="num">Monthly payment</th><th>Matures</th></tr></thead>
               <tbody>
                 {loans.map((loan) => (
                   <tr key={loan.id}>
                     <td><b>{loan.lender || loan.lenderName || "Lender"}</b>{loan.loanNumber ? <small>#{loan.loanNumber}</small> : null}</td>
-                    <td>{loan.label || "—"}</td>
+                    <td>{loan.loanType || "—"}</td>
                     <td className="num">{money(loan.balance)}</td>
                     <td className="num">{money(loan.payment)}</td>
                     <td>{shortDate(loan.maturity)}</td>

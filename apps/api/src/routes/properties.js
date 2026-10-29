@@ -1,13 +1,14 @@
 import { Router } from "express"
 import { z } from "zod"
-import { cityLine, drawPulled, INSURANCE_FREQUENCIES, lineTracking, loanSummary, propertyUtilities, REFINANCE, resolveBudget, STAGES, US_STATES } from "@synergifund/shared"
+import { cityLine, drawPulled, lineTracking, loanStatus, loanSummary, PAID_OFF, PAID_OFF_SAVED, policyName, policyTitle, propertyUtilities, REFINANCE, resolveBudget, STAGES, US_STATES } from "@synergifund/shared"
 import { Activity, Bill, CalendarEvent, Company, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
-import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
+import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
 import { propertyFilter, ownsProperty } from "../services/access.js"
 import { deleteStoredFile, publicFileUrl, saveUploadedFile, upload, withProofUrls } from "../services/files.js"
 import { ensureLenders } from "../services/lenders.js"
 import { loanFields } from "../services/loans.js"
+import { findPolicy, keepEarlierPolicy, POLICY_FIELDS, readPolicy } from "../services/insurance.js"
 import { removePropertyRoom } from "../services/chat.js"
 import { orderProperties } from "../services/propertyOrder.js"
 import { geocode } from "../services/geocode.js"
@@ -49,11 +50,6 @@ const PROPERTY_FIELDS = [
   ["taxAmount", "Tax amount", true],
   ["taxParcel", "Tax parcel/account #"],
   ["taxDueDate", "Tax due"],
-  ["insuranceCarrier", "Insurance carrier"],
-  ["insuranceAmount", "Insurance amount", true],
-  ["insuranceFrequency", "Insurance paid"],
-  ["insuranceDue", "Insurance due"],
-  ["insurancePolicy", "Policy #"],
 ]
 
 const writable = z.object({
@@ -89,11 +85,6 @@ const writable = z.object({
   taxAmount: z.number().nonnegative().nullable().optional(),
   taxParcel: z.string().max(120).optional(),
   taxDueDate: z.string().max(10).optional(),
-  insuranceCarrier: z.string().max(120).optional(),
-  insuranceAmount: z.number().nonnegative().nullable().optional(),
-  insuranceFrequency: z.enum(INSURANCE_FREQUENCIES).optional(),
-  insuranceDue: z.string().max(10).optional(),
-  insurancePolicy: z.string().max(120).optional(),
   utilities: z.array(z.object({ name: z.string().max(40), provider: z.string().max(120).optional(), account: z.string().max(120).optional() }).passthrough()).max(20).optional(),
 })
 
@@ -602,13 +593,11 @@ propertiesRouter.patch(
       return
     }
     if (!req.permissions.includes("internal.pricing")) delete parsed.data.houseBoughtPrice
-    for (const [key, label] of [["taxDueDate", "tax due date"], ["insuranceDue", "insurance due date"]]) {
-      if (key in parsed.data && !dayOrBlank(parsed.data[key])) {
-        sendError(res, 400, `Enter the ${label} as a date.`)
-        return
-      }
+    if ("taxDueDate" in parsed.data && !dayOrBlank(parsed.data.taxDueDate)) {
+      sendError(res, 400, "Enter the tax due date as a date.")
+      return
     }
-    for (const key of ["taxParcel", "insuranceCarrier", "insurancePolicy"]) if (key in parsed.data) parsed.data[key] = String(parsed.data[key] || "").trim()
+    if ("taxParcel" in parsed.data) parsed.data.taxParcel = String(parsed.data.taxParcel || "").trim()
     // Water and Electric always stay; the rest are kept as entered (one per name).
     if ("utilities" in parsed.data) parsed.data.utilities = propertyUtilities(parsed.data.utilities).map(({ fixed, ...utility }) => utility)
     let companyChange = ""
@@ -666,8 +655,9 @@ propertiesRouter.patch(
   }),
 )
 
-// Mark the insurance or the property tax paid (Property Info): the payment goes on the cost sheet as a holding cost,
-// and the due date moves to the next one (insurance by how often it is paid, taxes a year on).
+// Mark an insurance policy or the property tax paid (Property Info): the payment goes on the cost sheet as a holding
+// cost. The tax due date moves on a year; an annual policy that was renewed moves its dates on a year (the old
+// expiration date becomes the effective date).
 propertiesRouter.post(
   "/:id/paid",
   requirePermission("expenses.approve"),
@@ -682,7 +672,12 @@ propertiesRouter.post(
       sendError(res, 400, "Say whether the insurance or the tax was paid.")
       return
     }
-    const stored = kind === "tax" ? property.taxAmount : property.insuranceAmount
+    const policy = kind === "insurance" ? findPolicy(property, req.body?.policyId) : null
+    if (kind === "insurance" && !policy) {
+      sendError(res, 404, "That insurance policy was not found. Reload the page and try again.")
+      return
+    }
+    const stored = kind === "tax" ? property.taxAmount : policy.premium
     const amount = req.body?.amount == null || req.body.amount === "" ? stored : Number(String(req.body.amount).replace(/[$,\s]/g, ""))
     if (!(Number(amount) > 0)) {
       sendError(res, 400, `Enter the ${kind === "tax" ? "tax" : "insurance"} amount paid.`)
@@ -693,14 +688,14 @@ propertiesRouter.post(
       sendError(res, 400, "Enter the day it was paid as a date.")
       return
     }
-    const due = kind === "tax" ? property.taxDueDate : property.insuranceDue
-    const next = due ? nextDueAfter(due, kind === "tax" ? "Yearly" : property.insuranceFrequency) : ""
+    const renew = kind === "insurance" && req.body?.renew === true && policy.billing === "Annual" && Boolean(policy.expirationDate)
+    const next = kind === "tax" ? (property.taxDueDate ? nextDueAfter(property.taxDueDate, "Yearly") : "") : renew ? nextDueAfter(policy.expirationDate, "Yearly") : ""
     const expense = await Expense.create({
       propertyId: property._id,
-      title: kind === "tax" ? `Property taxes${property.taxParcel ? ` · Parcel ${property.taxParcel}` : ""}` : `${property.insuranceCarrier || "Insurance"} insurance${property.insurancePolicy ? ` · Policy ${property.insurancePolicy}` : ""}`,
+      title: kind === "tax" ? `Property taxes${property.taxParcel ? ` · Parcel ${property.taxParcel}` : ""}` : `${policyTitle(policy)}${policy.policyNumber ? ` · Policy ${policy.policyNumber}` : ""}`,
       amount: Math.round(Number(amount) * 100) / 100,
       category: kind === "tax" ? "Property taxes" : "Insurance",
-      vendor: kind === "tax" ? "" : property.insuranceCarrier || "",
+      vendor: kind === "tax" ? "" : policy.carrier || "",
       date: paidOn,
       entity: "Investment company",
       costTreatment: "Exclude from construction margin",
@@ -710,15 +705,103 @@ propertiesRouter.post(
       property.taxPaidOn = paidOn
       if (next) property.taxDueDate = next
     } else {
-      property.insurancePaidOn = paidOn
-      if (next) property.insuranceDue = next
+      policy.paidOn = paidOn
+      if (next) {
+        policy.effectiveDate = policy.expirationDate
+        policy.expirationDate = next
+      }
     }
     property.updatedBy = req.user.name
     await property.save()
     await refreshRehabRemaining(property._id)
     const money = `$${expense.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    await recordActivity({ user: req.user, title: kind === "tax" ? "Property tax paid" : "Insurance paid", detail: [expense.title, money, `Paid ${paidOn}`, next ? `Next due ${next}` : ""].filter(Boolean).join(" · "), propertyId: property._id })
-    res.status(201).json({ property: presentProperty(property, req.user), expense: { id: String(expense._id), amount: expense.amount, date: expense.date, title: expense.title }, nextDue: next })
+    await recordActivity({ user: req.user, title: kind === "tax" ? "Property tax paid" : "Insurance paid", detail: [expense.title, money, `Paid ${paidOn}`, next ? (kind === "tax" ? `Next due ${next}` : `Renewed, now expires ${next}`) : ""].filter(Boolean).join(" · "), propertyId: property._id })
+    res.status(201).json({ property: presentProperty(property, req.user), expense: { id: String(expense._id), amount: expense.amount, date: expense.date, title: expense.title }, nextDue: kind === "tax" ? next : "", expires: kind === "insurance" ? next : "" })
+  }),
+)
+
+// Insurance policies (Property Info), added, changed and removed one at a time. Each one's expiration date shows on
+// the calendar and in Needs attention.
+function policyLine(policy) {
+  const premium = policy.premium == null ? "" : `$${Number(policy.premium).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${policy.billing === "One-time" ? "one-time" : policy.billing === "Monthly" ? "a month" : "a year"}`
+  return [policyName(policy), policy.policyNumber ? `Policy ${policy.policyNumber}` : "", premium, policy.expirationDate ? `expires ${policy.expirationDate}` : ""].filter(Boolean).join(" · ")
+}
+
+async function insuranceProperty(req, res) {
+  const property = await Property.findById(req.params.id).catch(() => null)
+  if (!property || !ownsProperty(req.user, property)) {
+    sendError(res, 404, "That property is not available.")
+    return null
+  }
+  return property
+}
+
+propertiesRouter.post(
+  "/:id/insurance",
+  requirePermission("properties.write"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const property = await insuranceProperty(req, res)
+    if (!property) return
+    const read = readPolicy(req.body)
+    if (read.error) {
+      sendError(res, 400, read.error)
+      return
+    }
+    keepEarlierPolicy(property)
+    property.insurancePolicies.push(read.policy)
+    property.updatedBy = req.user.name
+    await property.save()
+    await recordActivity({ user: req.user, title: "Property updated", detail: `Insurance policy added: ${policyLine(read.policy)}`, propertyId: property._id })
+    res.status(201).json({ property: presentProperty(property, req.user) })
+  }),
+)
+
+propertiesRouter.patch(
+  "/:id/insurance/:policyId",
+  requirePermission("properties.write"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const property = await insuranceProperty(req, res)
+    if (!property) return
+    const policy = findPolicy(property, req.params.policyId)
+    if (!policy) {
+      sendError(res, 404, "That insurance policy was not found. Reload the page and try again.")
+      return
+    }
+    const read = readPolicy(req.body)
+    if (read.error) {
+      sendError(res, 400, read.error)
+      return
+    }
+    const before = policy.toObject()
+    policy.set(read.policy)
+    property.updatedBy = req.user.name
+    await property.save()
+    const changes = changeSummary(before, policy.toObject(), POLICY_FIELDS)
+    await recordActivity({ user: req.user, title: "Property updated", detail: `Insurance policy ${policyName(policy)}: ${changes || "saved with no changes"}`, propertyId: property._id })
+    res.json({ property: presentProperty(property, req.user) })
+  }),
+)
+
+propertiesRouter.delete(
+  "/:id/insurance/:policyId",
+  requirePermission("properties.write"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const property = await insuranceProperty(req, res)
+    if (!property) return
+    const policy = findPolicy(property, req.params.policyId)
+    if (!policy) {
+      sendError(res, 404, "That insurance policy was not found. Reload the page and try again.")
+      return
+    }
+    const line = policyLine(policy)
+    property.insurancePolicies.pull(policy._id)
+    property.updatedBy = req.user.name
+    await property.save()
+    await recordActivity({ user: req.user, title: "Property updated", detail: `Insurance policy removed: ${line}`, propertyId: property._id })
+    res.json({ property: presentProperty(property, req.user) })
   }),
 )
 
@@ -749,15 +832,15 @@ propertiesRouter.patch(
     let paidOff = []
     let restored = []
     if (stage === done && before !== done) {
-      paidOff = await Loan.find({ propertyId: property._id, status: { $ne: "Paid off" } }).sort({ createdAt: 1, _id: 1 })
-      property.refinanceClosedLoans = paidOff.map((loan) => ({ loanId: loan._id, status: loan.status || "Current" }))
+      paidOff = await Loan.find({ propertyId: property._id, status: { $nin: PAID_OFF_SAVED } }).sort({ createdAt: 1, _id: 1 })
+      property.refinanceClosedLoans = paidOff.map((loan) => ({ loanId: loan._id, status: loanStatus(loan.status) }))
       property.refinanceClosedAt = new Date()
-      if (paidOff.length) await Loan.updateMany({ _id: { $in: paidOff.map((loan) => loan._id) } }, { $set: { status: "Paid off" } })
+      if (paidOff.length) await Loan.updateMany({ _id: { $in: paidOff.map((loan) => loan._id) } }, { $set: { status: PAID_OFF }, $unset: { paymentsBehind: 1, pastDueAmount: 1 } })
     } else if (stage !== done && before === done) {
       const closed = property.refinanceClosedLoans || []
-      const still = closed.length ? await Loan.find({ _id: { $in: closed.map((entry) => entry.loanId) }, status: "Paid off" }).sort({ createdAt: 1, _id: 1 }) : []
+      const still = closed.length ? await Loan.find({ _id: { $in: closed.map((entry) => entry.loanId) }, status: { $in: PAID_OFF_SAVED } }).sort({ createdAt: 1, _id: 1 }) : []
       for (const loan of still) {
-        loan.status = closed.find((entry) => String(entry.loanId) === String(loan._id))?.status || "Current"
+        loan.status = loanStatus(closed.find((entry) => String(entry.loanId) === String(loan._id))?.status)
         await loan.save()
       }
       restored = still
@@ -850,8 +933,6 @@ async function presentPropertyLoans(loans) {
       lenderId: lender ? String(lender._id) : "",
       lender: lender?.name || (loan.lender && loan.lender !== "Not provided" ? loan.lender : "No lender"),
       lenderTerms: lender?.terms || "",
-      label: loan.label || "Financed",
-      terms: loan.terms || "",
       loanNumber: loan.loanNumber || "",
       balance: loan.balance ?? null,
       payment: loan.payment ?? null,

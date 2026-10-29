@@ -100,13 +100,31 @@ export const Property = register(
       taxAmount: Number,
       taxParcel: String,
       taxDueDate: String,
+      // Insurance policies (Builder's Risk, Liability, Flood…). Each expiration date shows on the calendar and in Needs
+      // attention; paidOn is the last time Mark paid put its premium on the cost sheet.
+      insurancePolicies: [
+        {
+          // Spelled out: a bare `type: String` here would make the whole policy a string.
+          type: { type: String },
+          carrier: String,
+          policyNumber: String,
+          premium: Number,
+          billing: String,
+          effectiveDate: String,
+          expirationDate: String,
+          notes: String,
+          paidOn: String,
+        },
+      ],
+      // The one set of insurance fields from before the policy list. It shows as the first policy and is cleared when
+      // that is saved into insurancePolicies (see insurancePolicies in the shared package).
       insuranceCarrier: String,
       insuranceAmount: Number,
       insuranceFrequency: String,
       insuranceDue: String,
       insurancePolicy: String,
-      // The last time Mark paid recorded the insurance or the tax (the payment itself is a cost on the cost sheet).
       insurancePaidOn: String,
+      // The last time Mark paid recorded the tax (the payment itself is a cost on the cost sheet).
       taxPaidOn: String,
       utilities: [{ name: String, provider: String, account: String, _id: false }],
       // BRRRR refinance stage (Ready to Start, In Process, Closed), and the loans closing it marked Paid off (with the
@@ -371,16 +389,29 @@ export const Loan = register(
       propertyId: { type: Schema.Types.ObjectId, ref: "Property" },
       lenderId: { type: Schema.Types.ObjectId, ref: "Lender" },
       lender: String,
+      // "Nature" (Financed, Refinanced…), no longer shown: Loan Type replaced it.
       label: { type: String, default: "Financed" },
       terms: { type: String, default: "" },
       loanNumber: String,
+      loanType: String,
+      // A percent, e.g. 8.9 for 8.90%.
+      interestRate: Number,
+      // Who the payments go to; can differ from the lender.
+      servicer: String,
+      // Shown as Current Loan Amount.
       balance: Number,
       payment: Number,
       paymentDay: Number,
+      originationDate: String,
+      // Shown as Maturity Date.
       maturity: String,
       termsStatus: { type: String, default: "Needs verification" },
+      // Shown as Original Loan Amount.
       originalAmount: Number,
       status: { type: String, default: "Current" },
+      // Missed payments, kept only while the loan is Late or Delinquent.
+      paymentsBehind: Number,
+      pastDueAmount: Number,
       insurancePayment: Number,
       insuranceFrequency: { type: String, default: "Yearly" },
       insuranceDue: String,

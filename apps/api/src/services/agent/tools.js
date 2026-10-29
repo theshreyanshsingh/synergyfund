@@ -1,10 +1,11 @@
-import { cityLine, COMPANY_FOLDERS, EXPENSE_CATEGORIES, refinancePlan, yearlyInsurance, LOAN_STATUSES, PERMISSIONS, PROPERTY_FOLDERS, TASK_LABELS, documentType, drawFigures, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
+import { cityLine, COMPANY_FOLDERS, EXPENSE_CATEGORIES, insurancePolicies, isPaidOff, loanStatus, refinancePlan, yearlyInsurance, LOAN_STATUSES, LOAN_TYPES, PERMISSIONS, policyName, PROPERTY_FOLDERS, TASK_LABELS, documentType, drawFigures, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
 import { Bill, Company, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, Property, Task, User } from "../../models/index.js"
 import { presentProperty } from "../../lib/serialize.js"
 import { propertyFilter } from "../access.js"
 import { presentContractorDraw, presentDraw } from "../../routes/draws.js"
 import { matchScore, rank } from "./match.js"
-import { insuranceDates, loanPaymentDates, paymentDates, taxDates } from "../schedule.js"
+import { loanPaymentDates, paymentDates, taxDates } from "../schedule.js"
+import { loanFields } from "../loans.js"
 import { geocode, nearbyZips } from "../geocode.js"
 import { analyzeArv, milesBetween } from "./arv.js"
 import { teamToday } from "../../lib/dates.js"
@@ -150,20 +151,26 @@ function lenderName(value) {
 
 function presentLoanRow(loan, names, lenders) {
   const lender = lenders.find((item) => String(item._id) === String(loan.lenderId || ""))
+  const fields = loanFields(loan)
   return {
     id: String(loan._id),
     property: names.get(String(loan.propertyId || "")) || "",
     lender: lenderName(lender?.name || loan.lender),
-    status: loan.status || "Current",
-    label: loan.label || "Financed",
+    status: fields.status,
+    loanType: fields.loanType,
+    interestRatePercent: fields.interestRate,
+    servicer: fields.servicer,
     loanNumber: loan.loanNumber || "",
-    balance: loan.balance ?? null,
+    originalLoanAmount: fields.originalAmount,
+    currentLoanAmount: loan.balance ?? null,
     monthlyPayment: loan.payment ?? null,
-    paymentDayOfMonth: loan.paymentDay ?? null,
-    originalAmount: loan.originalAmount ?? null,
+    paymentDayOfMonth: fields.paymentDay,
+    originationDate: fields.originationDate,
     maturity: loan.maturity || "",
+    ...(fields.paymentsBehind != null ? { paymentsBehind: fields.paymentsBehind } : {}),
+    ...(fields.pastDueAmount != null ? { pastDueAmount: fields.pastDueAmount } : {}),
     termsStatus: loan.termsStatus || "",
-    terms: loan.terms || "",
+    terms: fields.terms,
     lenderTerms: lender?.terms || "",
   }
 }
@@ -434,7 +441,7 @@ export const TOOLS = [
       }
       if (context.user.role !== "contractor") {
         const loans = await Loan.find({ propertyId: { $in: ids } })
-        const open = loans.filter((loan) => (loan.status || "Current") !== "Paid off")
+        const open = loans.filter((loan) => !isPaidOff(loan))
         Object.assign(result, {
           purchaseTotal: sum(properties, (property) => property.purchasePrice),
           arvTotal: sum(properties, (property) => property.arv),
@@ -556,9 +563,8 @@ export const TOOLS = [
           // Property Info and the refinance.
           yearlyTaxes: property.taxAmount ?? null,
           taxDueDate: property.taxDueDate || "",
-          insuranceCarrier: property.insuranceCarrier || "",
+          insurancePolicies: insurancePolicies(property).map((policy) => ({ type: policy.type, carrier: policy.carrier, premium: policy.premium, billing: policy.billing, expirationDate: policy.expirationDate })),
           yearlyInsurance: yearlyInsurance(property),
-          insuranceDueDate: property.insuranceDue || "",
           refinance: refinancePlan(property, todayKey()).eligible ? refinancePlan(property, todayKey()).stage : "",
         })
       return {
@@ -662,7 +668,7 @@ export const TOOLS = [
     label: "Reading loans",
     permission: PERMISSIONS.propertiesRead,
     staffOnly: true,
-    description: "Loans on the properties the person can see: lender, status, balance, monthly payment, maturity, terms and whether the terms are verified. Filter by lender, property, owning company, status and maturity date (for \"loans maturing in the next 90 days\" pass maturesBy as today plus 90 days). The balance and monthly payment totals count open loans only, like the Loans page; paid-off loans are listed but not counted.",
+    description: "Loans on the properties the person can see: lender, status, loan type, interest rate, servicer (who the payments go to), original and current loan amount (the balance), monthly payment, origination and maturity dates, missed payments (payments behind and the past-due amount, on Late or Delinquent loans), terms and whether the terms are verified. Filter by lender, property, owning company, status, loan type, servicer and maturity date (for \"loans maturing in the next 90 days\" pass maturesBy as today plus 90 days). The balance and monthly payment totals count open loans only, like the Loans page; paid-off loans are listed but not counted.",
     parameters: {
       type: "object",
       properties: {
@@ -670,9 +676,11 @@ export const TOOLS = [
         property: { type: "string", description: "Only loans on this property (address)." },
         company: { type: "string", description: "Only loans on properties owned by this company." },
         status: { type: "string", enum: LOAN_STATUSES, description: "Only loans with this status." },
+        loanType: { type: "string", enum: LOAN_TYPES, description: "Only loans of this type." },
+        servicer: { type: "string", description: "Only loans whose servicer's name contains this." },
         maturesFrom: { type: "string", description: "Only open loans that mature on or after this day, YYYY-MM-DD." },
         maturesBy: { type: "string", description: "Only open loans that mature on or before this day, YYYY-MM-DD." },
-        sort: { type: "string", enum: ["maturity", "balance-desc", "payment-desc", "property"], description: "Order of the rows. Default: by maturity when filtering by maturity, otherwise by property." },
+        sort: { type: "string", enum: ["maturity", "balance-desc", "payment-desc", "rate-desc", "property"], description: "Order of the rows. Default: by maturity when filtering by maturity, otherwise by property." },
       },
     },
     run: async (args, context) => {
@@ -699,12 +707,14 @@ export const TOOLS = [
         }
         rows = matched
       }
-      if (args.status) rows = rows.filter((row) => row.status.toLowerCase() === String(args.status).trim().toLowerCase())
+      if (args.status) rows = rows.filter((row) => row.status === loanStatus(args.status))
+      if (args.loanType) rows = rows.filter((row) => squash(row.loanType) === squash(args.loanType))
+      if (args.servicer) rows = rows.filter((row) => squash(row.servicer).includes(squash(args.servicer)))
       const from = dateKey(args.maturesFrom)
       const to = dateKey(args.maturesBy)
       let noMaturity = []
       if (from || to) {
-        const open = rows.filter((row) => row.status !== "Paid off")
+        const open = rows.filter((row) => !isPaidOff(row))
         noMaturity = open.filter((row) => !dateKey(row.maturity)).map((row) => row.property)
         rows = open.filter((row) => {
           const day = dateKey(row.maturity)
@@ -714,8 +724,9 @@ export const TOOLS = [
       const sort = args.sort || (from || to ? "maturity" : "property")
       const order = {
         maturity: (a, b) => (dateKey(a.maturity) || "9999").localeCompare(dateKey(b.maturity) || "9999"),
-        "balance-desc": (a, b) => (b.balance ?? -1) - (a.balance ?? -1),
+        "balance-desc": (a, b) => (b.currentLoanAmount ?? -1) - (a.currentLoanAmount ?? -1),
         "payment-desc": (a, b) => (b.monthlyPayment ?? -1) - (a.monthlyPayment ?? -1),
+        "rate-desc": (a, b) => (b.interestRatePercent ?? -1) - (a.interestRatePercent ?? -1),
         property: (a, b) => a.property.localeCompare(b.property, undefined, { numeric: true }),
       }[sort]
       if (order) rows = [...rows].sort(order)
@@ -725,16 +736,16 @@ export const TOOLS = [
         if (terms) lenderTerms[row.lender] = terms
         return row
       })
-      const open = rows.filter((row) => row.status !== "Paid off")
+      const open = rows.filter((row) => !isPaidOff(row))
       return {
         success: true,
         total: rows.length,
         open: open.length,
         paidOff: rows.length - open.length,
         ...(company ? { company } : {}),
-        openBalanceTotal: sum(open, (row) => row.balance),
+        openBalanceTotal: sum(open, (row) => row.currentLoanAmount),
         openMonthlyPaymentTotal: sum(open, (row) => row.monthlyPayment),
-        withoutBalance: open.filter((row) => row.balance == null).map((row) => row.property),
+        withoutBalance: open.filter((row) => row.currentLoanAmount == null).map((row) => row.property),
         byStatus: countBy(rows, (row) => row.status),
         ...(from || to ? { maturing: { from: from || "", to: to || "" }, leftOutWithoutMaturity: noMaturity } : {}),
         loans: rows,
@@ -756,14 +767,14 @@ export const TOOLS = [
       const loans = await Loan.find({ propertyId: { $in: properties.map((property) => property._id) } })
       const lenders = await Lender.find({ _id: { $in: loans.map((loan) => loan.lenderId).filter(Boolean) } })
       const row = (name, terms, own) => {
-        const open = own.filter((loan) => (loan.status || "Current") !== "Paid off")
+        const open = own.filter((loan) => !isPaidOff(loan))
         return {
           name,
           terms,
           loans: own.length,
           openLoans: open.length,
           properties: open.map((loan) => names.get(String(loan.propertyId)) || ""),
-          paidOffProperties: own.filter((loan) => loan.status === "Paid off").map((loan) => names.get(String(loan.propertyId)) || ""),
+          paidOffProperties: own.filter((loan) => isPaidOff(loan)).map((loan) => names.get(String(loan.propertyId)) || ""),
           openBalanceTotal: sum(open, (loan) => loan.balance),
           openMonthlyPaymentTotal: sum(open, (loan) => loan.payment),
         }
@@ -845,7 +856,7 @@ export const TOOLS = [
     label: "Checking upcoming payments",
     permission: PERMISSIONS.expensesRead,
     staffOnly: true,
-    description: "Money due in the next N days (default 30): unpaid bills including overdue ones, monthly mortgage payments with their due dates when a payment day is on file, insurance and property tax due dates, loan maturities, open draws with a forecast date, and payment tasks such as EMD, insurance or taxes.",
+    description: "Money due in the next N days (default 30): unpaid bills including overdue ones, monthly mortgage payments with their due dates when a payment day is on file, insurance policies that expire (or have expired), property tax due dates, loan maturities, open draws with a forecast date, and payment tasks such as EMD, insurance or taxes.",
     parameters: {
       type: "object",
       properties: { days: { type: "number", description: "How many days ahead to look, 1 to 365." } },
@@ -876,7 +887,7 @@ export const TOOLS = [
           payee: bill.vendor || "",
         })))
         .sort((left, right) => left.due.localeCompare(right.due))
-      const open = loans.filter((loan) => loan.status !== "Paid off")
+      const open = loans.filter((loan) => !isPaidOff(loan))
       const mortgages = open.filter((loan) => loan.payment).map((loan) => ({
         property: place(loan.propertyId),
         lender: lenderName(loan.lender),
@@ -884,10 +895,10 @@ export const TOOLS = [
         paymentDay: loan.paymentDay ?? null,
         dueDates: loanPaymentDates(loan, today, until),
       }))
-      // Insurance and property taxes are on each property (Property Info).
-      const insurance = properties
-        .map((property) => ({ property: property.address, carrier: property.insuranceCarrier || "", amount: property.insuranceAmount ?? null, repeats: property.insuranceFrequency || "Yearly", dueDates: insuranceDates(property, today, until) }))
-        .filter((row) => row.dueDates.length)
+      // Insurance policies and property taxes are on each property (Property Info); a policy shows by when it expires.
+      const insurance = properties.flatMap((property) => insurancePolicies(property)
+        .filter((policy) => dateKey(policy.expirationDate) && dateKey(policy.expirationDate) <= until)
+        .map((policy) => ({ property: property.address, policy: policyName(policy), policyNumber: policy.policyNumber, premium: policy.premium, billing: policy.billing, expires: dateKey(policy.expirationDate), expired: dateKey(policy.expirationDate) < today })))
       const taxes = properties
         .map((property) => ({ property: property.address, amount: property.taxAmount ?? null, dueDates: taxDates(property, today, until) }))
         .filter((row) => row.dueDates.length)
@@ -902,7 +913,7 @@ export const TOOLS = [
         billsTotal: sum(dueBills, (bill) => bill.amount),
         monthlyMortgages: mortgages,
         monthlyMortgageTotal: sum(mortgages, (row) => row.monthlyPayment),
-        insurancePayments: insurance,
+        insuranceExpiring: insurance,
         propertyTaxes: taxes,
         loanMaturities: maturities,
         paymentTasks: tasks
@@ -1523,7 +1534,7 @@ export const TOOLS = [
         const loans = await Loan.find({ propertyId: { $in: ids } })
         const lenders = await Lender.find({ _id: { $in: loans.map((loan) => loan.lenderId).filter(Boolean) } })
         add("lender", lenders, (lender) => lender.name, (lender) => ({ label: lender.name, detail: `${loans.filter((loan) => String(loan.lenderId) === String(lender._id)).length} loans` }))
-        add("loan", loans, (loan) => [loan.lender, loan.loanNumber, loan.label, names.get(String(loan.propertyId))].filter(Boolean).join(" "), (loan) => ({
+        add("loan", loans, (loan) => [loan.lender, loan.loanNumber, loan.loanType, loan.servicer, names.get(String(loan.propertyId))].filter(Boolean).join(" "), (loan) => ({
           label: `${loan.lender || "Loan"}${loan.loanNumber ? ` #${loan.loanNumber}` : ""}`,
           detail: names.get(String(loan.propertyId)) || "",
         }))

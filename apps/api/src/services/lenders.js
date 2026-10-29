@@ -1,3 +1,4 @@
+import { isPaidOff } from "@synergifund/shared"
 import { Lender, Loan } from "../models/index.js"
 
 export async function ensureLenders() {
@@ -20,7 +21,7 @@ export async function lenderForName(name) {
 }
 
 export function presentLender(lender, loans = []) {
-  const open = loans.filter((loan) => loan.status !== "Paid off")
+  const open = loans.filter((loan) => !isPaidOff(loan))
   const balance = open.reduce((total, loan) => total + Number(loan.balance || 0), 0)
   const payment = open.reduce((total, loan) => total + Number(loan.payment || 0), 0)
   return {

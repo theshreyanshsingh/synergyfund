@@ -2,11 +2,12 @@
 
 import { use, useState } from "react"
 import Link from "next/link"
-import { LOAN_LABELS, can } from "@synergifund/shared"
+import { LOAN_TYPES, can, rateLabel } from "@synergifund/shared"
 import { FormSheet } from "../../../../../components/ui/FormSheet"
 import { StatusPill } from "../../../../../components/ui/StatusPill"
 import { PageSpinner } from "../../../../../components/ui/Spinner"
 import { DetailFrame } from "../../../../../components/ui/DetailFrame"
+import { dayLabel } from "../../../../../components/properties/FinancingSection"
 import { useSession } from "../../../../../components/shell/Providers"
 import { api } from "../../../../../lib/api"
 import { money } from "../../../../../lib/format"
@@ -35,12 +36,15 @@ export default function LenderPage({ params }) {
       await Promise.all(loans.map((item) => api(`/loans/${item.id}`, {
         method: "PATCH",
         body: {
-          label: form.get(`label-${item.id}`),
           loanNumber: form.get(`loanNumber-${item.id}`),
+          loanType: form.get(`loanType-${item.id}`),
+          interestRate: form.get(`interestRate-${item.id}`),
+          servicer: form.get(`servicer-${item.id}`),
           balance: form.get(`balance-${item.id}`),
           payment: form.get(`payment-${item.id}`),
           paymentDay: form.get(`paymentDay-${item.id}`),
           originalAmount: form.get(`originalAmount-${item.id}`),
+          originationDate: form.get(`originationDate-${item.id}`),
           maturity: form.get(`maturity-${item.id}`),
           termsStatus: form.get(`termsStatus-${item.id}`),
           terms: form.get(`deal-${item.id}`),
@@ -91,11 +95,11 @@ export default function LenderPage({ params }) {
               <li key={item.id}>
                 <div>
                   <strong><Link href={`/properties/${item.propertyId}`}>{item.address}</Link></strong>
-                  <em>{[item.city, item.label, item.loanNumber, item.maturity && `Matures ${item.maturity}`, item.payment != null && `${money(item.payment)} a month`, item.terms].filter(Boolean).join(" · ")}</em>
+                  <em>{[item.city, item.loanType, rateLabel(item.interestRate), item.loanNumber && `#${item.loanNumber}`, item.servicer && `Servicer ${item.servicer}`, item.maturity && `Matures ${dayLabel(item.maturity) || item.maturity}`, item.payment != null && `${money(item.payment)} a month`, item.terms].filter(Boolean).join(" · ")}</em>
                   {(item.propertyLabels || []).length > 0 && <span className="label-row">{item.propertyLabels.map((label) => <StatusPill key={label}>{label}</StatusPill>)}</span>}
                 </div>
                 <span>{money(item.balance)}</span>
-                <StatusPill>{item.label}</StatusPill>
+                <StatusPill>{item.status || "Current"}</StatusPill>
               </li>
             ))}
           </ul>
@@ -111,13 +115,23 @@ export default function LenderPage({ params }) {
               <div key={item.id} className="field wide">
                 <span>{item.address}</span>
                 <div className="form-grid">
-                  <label className="field"><span>Nature</span><input name={`label-${item.id}`} list="loan-labels" defaultValue={item.label || "Financed"} /></label>
+                  <label className="field"><span>Loan type</span>
+                    <select name={`loanType-${item.id}`} defaultValue={item.loanType || ""}>
+                      <option value="">Not entered</option>
+                      {LOAN_TYPES.map((type) => <option key={type}>{type}</option>)}
+                    </select>
+                  </label>
+                  <label className="field"><span>Interest rate (%)</span><input name={`interestRate-${item.id}`} inputMode="decimal" placeholder="8.90" defaultValue={item.interestRate ?? ""} /></label>
+                  <label className="field"><span>Servicer</span><input name={`servicer-${item.id}`} maxLength={120} defaultValue={item.servicer || ""} /></label>
                   <label className="field"><span>Loan number</span><input name={`loanNumber-${item.id}`} defaultValue={item.loanNumber || ""} /></label>
-                  <label className="field"><span>Balance</span><input name={`balance-${item.id}`} inputMode="decimal" defaultValue={item.balance ?? ""} /></label>
+                  <label className="field"><span>Original loan amount</span><input name={`originalAmount-${item.id}`} inputMode="decimal" defaultValue={item.originalAmount ?? ""} /></label>
+                  <label className="field"><span>Current loan amount</span><input name={`balance-${item.id}`} inputMode="decimal" defaultValue={item.balance ?? ""} /></label>
                   <label className="field"><span>Monthly payment</span><input name={`payment-${item.id}`} inputMode="decimal" defaultValue={item.payment ?? ""} /></label>
                   <label className="field"><span>Payment day of month</span><input name={`paymentDay-${item.id}`} type="number" min="1" max="31" inputMode="numeric" placeholder="1 to 31" defaultValue={item.paymentDay ?? ""} /></label>
-                  <label className="field"><span>Original amount</span><input name={`originalAmount-${item.id}`} inputMode="decimal" defaultValue={item.originalAmount ?? ""} /></label>
-                  <label className="field"><span>Maturity</span><input name={`maturity-${item.id}`} type="date" defaultValue={item.maturity || ""} /></label>
+                  <div className="field wide date-pair">
+                    <label className="field"><span>Origination date</span><input name={`originationDate-${item.id}`} type="date" defaultValue={item.originationDate || ""} /></label>
+                    <label className="field"><span>Maturity date</span><input name={`maturity-${item.id}`} type="date" defaultValue={item.maturity || ""} /></label>
+                  </div>
                   <label className="field"><span>Terms status</span>
                     <select name={`termsStatus-${item.id}`} defaultValue={item.termsStatus || "Needs verification"}>
                       <option>Needs verification</option>
@@ -128,7 +142,6 @@ export default function LenderPage({ params }) {
                 </div>
               </div>
             ))}
-            <datalist id="loan-labels">{LOAN_LABELS.map((label) => <option key={label} value={label} />)}</datalist>
           </div>
         </FormSheet>
       )}

@@ -9,7 +9,7 @@ const PHONE = "(max-width: 760px)"
 // `collapsible`: on phones each row shows only its name (and any `peek` columns). A tap opens up its details with an
 // Open button; only that button opens it, and a tap anywhere else on the row folds it again. On a computer a click
 // opens it straight away.
-export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loading, selectable = true, compact = false, onMove, collapsible = false, openLabel = "Open" }) {
+export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loading, selectable = true, compact = false, onMove, collapsible = false, openLabel = "Open", sort = null, onSort = null }) {
   const [expanded, setExpanded] = useState("")
   // Only a row that opens something can fold; otherwise its details would be out of reach.
   const folding = collapsible && Boolean(onRow)
@@ -27,9 +27,19 @@ export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loa
           <tr>
             {onMove && <th className="drag-col" aria-label="Reorder" />}
             {selectable && <th className="check-col" />}
-            {columns.map((column) => (
-              <th key={column.key} className={cellClass(column)}>{column.label}</th>
-            ))}
+            {columns.map((column) => {
+              const sorting = column.sort && onSort
+              const on = sorting && sort?.key === column.key
+              return (
+                <th key={column.key} className={cellClass(column)} aria-sort={sorting ? (on ? (sort.dir === "asc" ? "ascending" : "descending") : "none") : undefined}>
+                  {sorting ? (
+                    <button type="button" className={on ? "th-sort is-on" : "th-sort"} onClick={() => onSort(column.key)}>
+                      {column.label}<span aria-hidden="true">{on ? (sort.dir === "asc" ? "↑" : "↓") : "↕"}</span>
+                    </button>
+                  ) : column.label}
+                </th>
+              )
+            })}
           </tr>
         </thead>
         <tbody>

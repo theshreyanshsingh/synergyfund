@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { loanSummary } from "@synergifund/shared"
+import { BEHIND_STATUSES, isPaidOff, loanSummary, rateLabel } from "@synergifund/shared"
 import { LoanFields } from "../loans/LoanFields"
 import { RefinanceSection } from "./RefinanceSection"
 import { FormSheet } from "../ui/FormSheet"
@@ -22,6 +22,12 @@ function ordinal(day) {
   return `${day}${({ 1: "st", 2: "nd", 3: "rd" })[day % 10] || "th"}`
 }
 
+// "2 payments behind · $3,090 past due" on a Late or Delinquent loan.
+export function missedPayments(loan) {
+  const count = Number(loan.paymentsBehind)
+  return [count > 0 ? `${count} ${count === 1 ? "payment" : "payments"} behind` : "", loan.pastDueAmount != null ? `${money(loan.pastDueAmount)} past due` : ""].filter(Boolean).join(" · ")
+}
+
 function earliest(dates) {
   return dates.filter(Boolean).sort()[0] || ""
 }
@@ -32,7 +38,7 @@ export function FinancingSection({ propertyId, property, loans, writable, onChan
   const [error, setError] = useState("")
   const [pending, setPending] = useState(false)
   const summary = loanSummary(loans)
-  const open = loans.filter((loan) => loan.status !== "Paid off")
+  const open = loans.filter((loan) => !isPaidOff(loan))
   const totals = open.filter((loan) => loan.originalAmount != null)
   const totalLoan = totals.length ? totals.reduce((sum, loan) => sum + Number(loan.originalAmount || 0), 0) : null
   const nextPayment = earliest(open.map((loan) => loan.nextPaymentDue))
@@ -72,8 +78,8 @@ export function FinancingSection({ propertyId, property, loans, writable, onChan
     <>
       <section className="property-figures financing-figures">
         <article className="property-figure"><span>Loan status</span><strong><StatusPill>{summary.status}</StatusPill></strong></article>
-        <article className="property-figure"><span>Total loan</span><strong>{money(totalLoan)}</strong></article>
-        <article className="property-figure"><span>Balance</span><strong>{money(summary.balance)}</strong></article>
+        <article className="property-figure"><span>Original loan amount</span><strong>{money(totalLoan)}</strong></article>
+        <article className="property-figure"><span>Current loan amount</span><strong>{money(summary.balance)}</strong></article>
         <article className="property-figure">
           <span>Monthly payment</span>
           <strong>{money(summary.payment)}</strong>
@@ -91,32 +97,42 @@ export function FinancingSection({ propertyId, property, loans, writable, onChan
         </div>
         {loans.length === 0 && <p className="property-missing">No lender is recorded for this house.</p>}
         <div className="loan-cards">
-          {loans.map((loan) => (
-            <article key={loan.id} className={`loan-card${loan.status === "Paid off" ? " is-closed" : ""}`}>
-              <header>
-                <div>
-                  <strong>{loan.lenderId ? <Link href={`/loans/lenders/${loan.lenderId}`}>{loan.lender}</Link> : loan.lender}</strong>
-                  <small>{[loan.label, loan.loanNumber && `#${loan.loanNumber}`].filter(Boolean).join(" · ")}</small>
-                </div>
-                <StatusPill>{loan.status || "Current"}</StatusPill>
-                {writable && <button type="button" className="tool" onClick={() => start(loan)}>Edit</button>}
-              </header>
-              <dl className="loan-facts">
-                <div><dt>Total loan</dt><dd>{money(loan.originalAmount)}</dd></div>
-                <div><dt>Balance</dt><dd>{money(loan.balance)}</dd></div>
-                <div><dt>Monthly payment</dt><dd>{money(loan.payment)}</dd></div>
-                <div>
-                  <dt>Payment due</dt>
-                  <dd>{loan.paymentDay ? `${ordinal(loan.paymentDay)} of the month` : "Not entered"}</dd>
-                  {loan.nextPaymentDue && <small>Next {dayLabel(loan.nextPaymentDue)}</small>}
-                </div>
-                <div><dt>Maturity</dt><dd>{loan.maturity ? dayLabel(loan.maturity) : "Not entered"}</dd></div>
-                <div><dt>Terms</dt><dd>{loan.termsStatus || "Recorded"}</dd></div>
-              </dl>
-              {(loan.terms || loan.lenderTerms) && <p className="loan-terms">{[loan.terms, loan.lenderTerms].filter(Boolean).join(" · ")}</p>}
-              {loan.status !== "Paid off" && loan.payment != null && !loan.paymentDay && <p className="loan-warning">Add the payment due day so monthly payments show on the calendar.</p>}
-            </article>
-          ))}
+          {loans.map((loan) => {
+            const behind = BEHIND_STATUSES.includes(loan.status) ? missedPayments(loan) : ""
+            return (
+              <article key={loan.id} className={`loan-card${isPaidOff(loan) ? " is-closed" : ""}`}>
+                <header>
+                  <div>
+                    <strong>{loan.lenderId ? <Link href={`/loans/lenders/${loan.lenderId}`}>{loan.lender}</Link> : loan.lender}</strong>
+                    {loan.loanNumber && <small>#{loan.loanNumber}</small>}
+                  </div>
+                  <div className="loan-state">
+                    <StatusPill>{loan.status || "Current"}</StatusPill>
+                    {behind && <small>{behind}</small>}
+                  </div>
+                  {writable && <button type="button" className="tool" onClick={() => start(loan)}>Edit</button>}
+                </header>
+                <dl className="loan-facts">
+                  <div><dt>Original loan amount</dt><dd>{money(loan.originalAmount)}</dd></div>
+                  <div><dt>Current loan amount</dt><dd>{money(loan.balance)}</dd></div>
+                  <div><dt>Monthly payment</dt><dd>{money(loan.payment)}</dd></div>
+                  <div>
+                    <dt>Payment due</dt>
+                    <dd>{loan.paymentDay ? `${ordinal(loan.paymentDay)} of the month` : "Not entered"}</dd>
+                    {loan.nextPaymentDue && <small>Next {dayLabel(loan.nextPaymentDue)}</small>}
+                  </div>
+                  <div className="is-row"><dt>Loan type</dt><dd>{loan.loanType || "Not entered"}</dd></div>
+                  <div><dt>Interest rate</dt><dd>{rateLabel(loan.interestRate) || "Not entered"}</dd></div>
+                  <div className="is-wide"><dt>Servicer</dt><dd>{loan.servicer || "Not entered"}</dd></div>
+                  <div className="is-row"><dt>Origination date</dt><dd>{loan.originationDate ? dayLabel(loan.originationDate) : "—"}</dd></div>
+                  <div><dt>Maturity date</dt><dd>{loan.maturity ? dayLabel(loan.maturity) || loan.maturity : "Not entered"}</dd></div>
+                  <div className="is-row"><dt>Terms</dt><dd>{loan.termsStatus || "Recorded"}</dd></div>
+                </dl>
+                {(loan.terms || loan.lenderTerms) && <p className="loan-terms">{[loan.terms, loan.lenderTerms].filter(Boolean).join(" · ")}</p>}
+                {!isPaidOff(loan) && loan.payment != null && !loan.paymentDay && <p className="loan-warning">Add the payment due day so monthly payments show on the calendar.</p>}
+              </article>
+            )
+          })}
         </div>
       </section>
 

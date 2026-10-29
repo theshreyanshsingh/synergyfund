@@ -2,14 +2,14 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { INSURANCE_FREQUENCIES, UTILITY_CHOICES, propertyUtilities, yearlyInsurance } from "@synergifund/shared"
+import { POLICY_BILLING, POLICY_TYPES, UTILITY_CHOICES, insurancePolicies, policyName, policyTitle, propertyUtilities } from "@synergifund/shared"
 import { FormSheet } from "../ui/FormSheet"
 import { api } from "../../lib/api"
 import { dollars } from "../../lib/format"
 import { useApi } from "../../lib/useApi"
 
-// Property Info: the reference details for one property in one place: ownership, taxes, insurance (moved here from
-// the loans) and utilities. The owner is the property's company (Deal › Company), or a name typed for an owner that is
+// Property Info: the reference details for one property in one place: ownership, taxes, insurance policies (moved
+// here from the loans) and utilities. The owner is the property's company (Deal › Company), or a name typed for an owner that is
 // not a company in SynergiFund; the purchase date is the same field used everywhere else.
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/
@@ -41,6 +41,39 @@ function dueState(due) {
   return day <= `${week.getFullYear()}-${String(week.getMonth() + 1).padStart(2, "0")}-${String(week.getDate()).padStart(2, "0")}` ? "soon" : "later"
 }
 
+// A day a year later (Feb 29 becomes Feb 28).
+function yearLater(value) {
+  const [year, month, day] = String(value || "").slice(0, 10).split("-").map(Number)
+  if (!year || !month || !day) return ""
+  const last = new Date(year + 1, month, 0).getDate()
+  return `${year + 1}-${String(month).padStart(2, "0")}-${String(Math.min(day, last)).padStart(2, "0")}`
+}
+
+// Where a policy's expiration date stands today: expired, this week, within 30 days, or later.
+function expiry(policy) {
+  const day = String(policy.expirationDate || "").slice(0, 10)
+  if (!DAY.test(day)) return ""
+  const state = dueState(day)
+  if (state === "overdue") return "expired"
+  if (state === "soon") return "soon"
+  const month = new Date()
+  month.setDate(month.getDate() + 30)
+  return day <= `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}-${String(month.getDate()).padStart(2, "0")}` ? "month" : "later"
+}
+
+function ExpiryNote({ policy }) {
+  const state = expiry(policy)
+  if (state === "expired") return <small className="info-overdue">Expired · renew it or update the dates</small>
+  if (state === "soon") return <small className="info-soon">Expires this week</small>
+  if (state === "month") return <small className="info-soon">Expires within 30 days</small>
+  return null
+}
+
+function premiumText(policy) {
+  if (policy.premium == null) return ""
+  return `${dollars(policy.premium)}${policy.billing === "Monthly" ? " a month" : policy.billing === "One-time" ? " one-time" : " a year"}`
+}
+
 function DueNote({ due, paidOn, label }) {
   const state = dueState(due)
   return (
@@ -65,10 +98,11 @@ const same = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").
 export function PropertyInfoSection({ property, company = null, writable, canPay = false, onChanged }) {
   const [editing, setEditing] = useState("")
   const [utility, setUtility] = useState(null)
-  const [paying, setPaying] = useState("")
+  const [policy, setPolicy] = useState(null)
+  const [paying, setPaying] = useState(null)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
-  const perYear = yearlyInsurance(property)
+  const policies = insurancePolicies(property)
   const utilities = propertyUtilities(property.utilities)
 
   async function save(body) {
@@ -76,6 +110,18 @@ export function PropertyInfoSection({ property, company = null, writable, canPay
     setEditing("")
     setUtility(null)
     onChanged?.()
+  }
+
+  async function removePolicy(item) {
+    if (!window.confirm(`Remove the ${policyName(item)} policy from this property?`)) return
+    setError("")
+    setMessage("")
+    try {
+      await api(`/properties/${property.id}/insurance/${item.id}`, { method: "DELETE" })
+      onChanged?.()
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   async function removeUtility(item) {
@@ -89,9 +135,9 @@ export function PropertyInfoSection({ property, company = null, writable, canPay
   }
 
   const edit = (key) => (writable ? <button type="button" className="tool" onClick={() => setEditing(key)}>Edit</button> : null)
-  // Mark paid: the payment goes on the cost sheet and the due date moves to the next one.
-  const pay = (kind) => (canPay && (kind === "tax" ? property.taxAmount != null || property.taxDueDate : property.insuranceAmount != null || property.insuranceDue)
-    ? <button type="button" className="tool info-pay" onClick={() => { setMessage(""); setPaying(kind) }}>Mark paid</button>
+  // Mark paid: the payment goes on the cost sheet (the tax due date moves on a year; a renewed policy's dates too).
+  const pay = (kind, item = null) => (canPay && (kind === "tax" ? property.taxAmount != null || property.taxDueDate : true)
+    ? <button type="button" className="tool info-pay" onClick={() => { setMessage(""); setPaying({ kind, policy: item }) }}>Mark paid</button>
     : null)
   return (
     <div className="property-info">
@@ -128,19 +174,45 @@ export function PropertyInfoSection({ property, company = null, writable, canPay
         </dl>
       </section>
 
-      <section className="panel property-card info-card">
-        <div className="property-card-head"><h2>Insurance</h2><span className="row-actions">{pay("insurance")}{edit("insurance")}</span></div>
-        <dl className="info-facts">
-          <div><dt>Insurance carrier</dt><dd>{shown(property.insuranceCarrier)}</dd></div>
-          <div>
-            <dt>Insurance amount</dt>
-            <dd>{shown(property.insuranceAmount == null ? "" : `${dollars(property.insuranceAmount)} · ${property.insuranceFrequency || "Yearly"}`)}</dd>
-            {perYear != null && property.insuranceFrequency !== "Yearly" && <small>{dollars(perYear)} a year</small>}
-          </div>
-          <div className={dueState(property.insuranceDue) === "overdue" ? "is-overdue" : undefined}><dt>Insurance due date</dt><dd>{shown(property.insuranceDue ? dayLabel(property.insuranceDue) : "")}</dd><DueNote due={property.insuranceDue} paidOn={property.insurancePaidOn} label="Next payment due" /></div>
-          <div><dt>Policy #</dt><dd>{shown(property.insurancePolicy)}</dd></div>
-        </dl>
-        <p className="info-hint">Insurance and tax due dates show on the calendar automatically. Mark paid puts the payment on the cost sheet and moves the date to the next one.</p>
+      <section className="panel property-card info-card info-insurance">
+        <div className="property-card-head">
+          <h2>Insurance</h2>
+          {writable && <button type="button" className="tool" onClick={() => setPolicy({ adding: true })}>Add policy</button>}
+        </div>
+        {policies.length === 0 && <p className="info-none">No insurance policies yet. Most properties carry two or three, like Builder's Risk, Liability and Flood.</p>}
+        <ul className="info-policies">
+          {policies.map((item) => (
+            <li key={item.id} data-policy={item.id}>
+              <div className="info-policy-head">
+                <div>
+                  <strong>{item.type || "Insurance policy"}</strong>
+                  <span>{item.carrier || <span className="info-empty">Carrier not entered</span>}{item.policyNumber ? ` · Policy # ${item.policyNumber}` : ""}</span>
+                  {!item.type && writable && <small className="info-soon">Choose the policy type with Edit</small>}
+                </div>
+                {(writable || canPay) && (
+                  <span className="row-actions">
+                    {pay("insurance", item)}
+                    {writable && <button type="button" className="tool" onClick={() => setPolicy({ item })}>Edit</button>}
+                    {writable && <button type="button" className="tool danger" onClick={() => removePolicy(item)}>Remove</button>}
+                  </span>
+                )}
+              </div>
+              <dl className="info-facts">
+                <div>
+                  <dt>Premium</dt>
+                  <dd>{shown(premiumText(item))}</dd>
+                  {item.premium != null && item.billing === "Monthly" && <small>{dollars(item.premium * 12)} a year</small>}
+                  {item.paidOn && <small>Last paid {dayLabel(item.paidOn)}</small>}
+                </div>
+                <div><dt>Billing frequency</dt><dd>{item.billing}</dd></div>
+                <div><dt>Effective date</dt><dd>{shown(item.effectiveDate ? dayLabel(item.effectiveDate) : "")}</dd></div>
+                <div className={expiry(item) === "expired" ? "is-overdue" : undefined}><dt>Expiration date</dt><dd>{shown(item.expirationDate ? dayLabel(item.expirationDate) : "")}</dd><ExpiryNote policy={item} /></div>
+                {item.notes && <div className="info-wide"><dt>Notes</dt><dd className="info-notes">{item.notes}</dd></div>}
+              </dl>
+            </li>
+          ))}
+        </ul>
+        <p className="info-hint">Each policy's expiration date shows on the calendar, and in Needs attention on the Overview from 30 days before. Mark paid puts the premium on the cost sheet.</p>
       </section>
 
       <section className="panel property-card info-card">
@@ -168,16 +240,19 @@ export function PropertyInfoSection({ property, company = null, writable, canPay
 
       {editing === "ownership" && <OwnershipForm property={property} company={company} onClose={() => setEditing("")} onSave={save} />}
       {editing === "taxes" && <TaxForm property={property} onClose={() => setEditing("")} onSave={save} />}
-      {editing === "insurance" && <InsuranceForm property={property} onClose={() => setEditing("")} onSave={save} />}
+      {policy && <PolicyForm property={property} target={policy} onClose={() => setPolicy(null)} onSaved={() => { setPolicy(null); onChanged?.() }} />}
       {utility && <UtilityForm utilities={utilities} target={utility} onClose={() => setUtility(null)} onSave={save} />}
       {paying && (
         <PaidForm
           property={property}
-          kind={paying}
-          onClose={() => setPaying("")}
+          kind={paying.kind}
+          policy={paying.policy}
+          onClose={() => setPaying(null)}
           onPaid={(data) => {
-            setPaying("")
-            setMessage(`${paying === "tax" ? "Property tax" : "Insurance"} paid: ${dollars(data.expense.amount)} is on the cost sheet (Expenses tab).${data.nextDue ? ` Next due ${dayLabel(data.nextDue)}.` : ""}`)
+            setPaying(null)
+            setMessage(paying.kind === "tax"
+              ? `Property tax paid: ${dollars(data.expense.amount)} is on the cost sheet (Expenses tab).${data.nextDue ? ` Next due ${dayLabel(data.nextDue)}.` : ""}`
+              : `${policyTitle(paying.policy)} paid: ${dollars(data.expense.amount)} is on the cost sheet (Expenses tab).${data.expires ? ` Renewed, now expires ${dayLabel(data.expires)}.` : ""}`)
             onChanged?.()
           }}
         />
@@ -186,28 +261,39 @@ export function PropertyInfoSection({ property, company = null, writable, canPay
   )
 }
 
-function PaidForm({ property, kind, onClose, onPaid }) {
+function PaidForm({ property, kind, policy, onClose, onPaid }) {
   const tax = kind === "tax"
-  const stored = tax ? property.taxAmount : property.insuranceAmount
+  const stored = tax ? property.taxAmount : policy.premium
   const [cost, setCost] = useState(stored ?? "")
   const [date, setDate] = useState(todayKey())
+  // An annual policy paid near (or after) its expiration date is usually the renewal.
+  const renewable = !tax && policy.billing === "Annual" && DAY.test(String(policy.expirationDate || ""))
+  const [renew, setRenew] = useState(renewable && ["expired", "soon", "month"].includes(expiry(policy)))
   const { error, setError, pending, run } = useSave(async (body) => {
     const data = await api(`/properties/${property.id}/paid`, { method: "POST", body })
     onPaid(data)
   })
-  const due = tax ? property.taxDueDate : property.insuranceDue
+  const hint = tax
+    ? `It goes on the cost sheet as property taxes${property.taxDueDate ? `, and the due date moves on from ${dayLabel(property.taxDueDate)} to the next one` : ""}.`
+    : `The premium goes on the cost sheet as insurance (${policyName(policy)}).`
   return (
-    <FormSheet eyebrow={property.address} title={tax ? "Property tax paid" : "Insurance paid"} hint={`It goes on the cost sheet as ${tax ? "property taxes" : "insurance"}${due ? `, and the due date moves on from ${dayLabel(due)} to the next one` : ""}.`} onClose={onClose} pending={pending} error={error} submitLabel="Mark paid"
+    <FormSheet eyebrow={property.address} title={tax ? "Property tax paid" : "Insurance paid"} hint={hint} onClose={onClose} pending={pending} error={error} submitLabel="Mark paid"
       onSubmit={(event) => {
         event.preventDefault()
         const read = amount(cost)
         if (read.error || !(read.value > 0)) return setError("Enter the amount paid, like 1640.")
         if (!date) return setError("Enter the day it was paid.")
-        run({ kind, amount: read.value, date })
+        run(tax ? { kind, amount: read.value, date } : { kind, policyId: policy.id, amount: read.value, date, renew: renewable && renew })
       }}>
       <div className="form-grid">
         <label className="field"><span>Amount paid</span><input inputMode="decimal" value={cost} onChange={(event) => setCost(event.target.value)} placeholder="$0" /></label>
         <label className="field"><span>Paid on</span><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+        {renewable && (
+          <label className="field-check wide">
+            <input type="checkbox" checked={renew} onChange={(event) => setRenew(event.target.checked)} />
+            <span>Renewed for another year: effective {dayLabel(policy.expirationDate)}, expires {dayLabel(yearLater(policy.expirationDate))}</span>
+          </label>
+        )}
       </div>
     </FormSheet>
   )
@@ -304,31 +390,51 @@ function TaxForm({ property, onClose, onSave }) {
   )
 }
 
-function InsuranceForm({ property, onClose, onSave }) {
-  const [carrier, setCarrier] = useState(property.insuranceCarrier || "")
-  const [cost, setCost] = useState(property.insuranceAmount ?? "")
-  const [often, setOften] = useState(INSURANCE_FREQUENCIES.includes(property.insuranceFrequency) ? property.insuranceFrequency : "Yearly")
-  const [due, setDue] = useState(property.insuranceDue || "")
-  const [policy, setPolicy] = useState(property.insurancePolicy || "")
-  const { error, setError, pending, run } = useSave(onSave)
+// Add or edit one insurance policy.
+function PolicyForm({ property, target, onClose, onSaved }) {
+  const adding = Boolean(target.adding)
+  const start = target.item || {}
+  const [type, setType] = useState(start.type || "")
+  const [carrier, setCarrier] = useState(start.carrier || "")
+  const [number, setNumber] = useState(start.policyNumber || "")
+  const [premium, setPremium] = useState(start.premium ?? "")
+  const [billing, setBilling] = useState(start.billing || "Annual")
+  const [effective, setEffective] = useState(start.effectiveDate || "")
+  const [expires, setExpires] = useState(start.expirationDate || "")
+  const [notes, setNotes] = useState(start.notes || "")
+  const { error, setError, pending, run } = useSave(async (body) => {
+    if (adding) await api(`/properties/${property.id}/insurance`, { method: "POST", body })
+    else await api(`/properties/${property.id}/insurance/${start.id}`, { method: "PATCH", body })
+    onSaved()
+  })
   return (
-    <FormSheet eyebrow={property.address} title="Insurance" hint="The next due date shows on the calendar, and again as often as it is paid." onClose={onClose} pending={pending} error={error} submitLabel="Save"
+    <FormSheet eyebrow={property.address} title={adding ? "Add policy" : `Edit ${start.type || "policy"}`} hint="The expiration date shows on the calendar, and in Needs attention from 30 days before." onClose={onClose} pending={pending} error={error} submitLabel={adding ? "Add policy" : "Save"}
       onSubmit={(event) => {
         event.preventDefault()
-        const read = amount(cost)
-        if (read.error) return setError("Enter the insurance amount in dollars, like 1640.")
-        run({ insuranceCarrier: carrier.trim(), insuranceAmount: read.value, insuranceFrequency: often, insuranceDue: due, insurancePolicy: policy.trim() })
+        if (!type) return setError("Choose the policy type.")
+        const read = amount(premium)
+        if (read.error) return setError("Enter the premium in dollars, like 1640.")
+        if (effective && expires && expires < effective) return setError("The expiration date is before the effective date.")
+        run({ type, carrier: carrier.trim(), policyNumber: number.trim(), premium: read.value, billing, effectiveDate: effective, expirationDate: expires, notes: notes.trim() })
       }}>
       <div className="form-grid">
-        <label className="field wide"><span>Insurance carrier</span><input value={carrier} onChange={(event) => setCarrier(event.target.value)} maxLength={120} placeholder="For example, Coastal Mutual" /></label>
-        <div className="field wide info-amount">
-          <label className="field"><span>Insurance amount</span><input inputMode="decimal" value={cost} onChange={(event) => setCost(event.target.value)} placeholder="$0" /></label>
-          <label className="field"><span>Paid</span>
-            <select value={often} onChange={(event) => setOften(event.target.value)}>{INSURANCE_FREQUENCIES.map((item) => <option key={item}>{item}</option>)}</select>
-          </label>
+        <label className="field"><span>Policy type</span>
+          <select name="type" value={type} onChange={(event) => setType(event.target.value)}>
+            <option value="">Choose</option>
+            {POLICY_TYPES.map((item) => <option key={item}>{item}</option>)}
+          </select>
+        </label>
+        <label className="field"><span>Policy #</span><input name="policyNumber" value={number} onChange={(event) => setNumber(event.target.value)} maxLength={120} /></label>
+        <label className="field wide"><span>Carrier</span><input name="carrier" value={carrier} onChange={(event) => setCarrier(event.target.value)} maxLength={120} placeholder="For example, Coastal Mutual" /></label>
+        <label className="field"><span>Premium ($)</span><input name="premium" inputMode="decimal" value={premium} onChange={(event) => setPremium(event.target.value)} placeholder="$0" /></label>
+        <label className="field"><span>Billing frequency</span>
+          <select name="billing" value={billing} onChange={(event) => setBilling(event.target.value)}>{POLICY_BILLING.map((item) => <option key={item}>{item}</option>)}</select>
+        </label>
+        <div className="field wide date-pair">
+          <label className="field"><span>Effective date</span><input name="effectiveDate" type="date" value={effective} onChange={(event) => setEffective(event.target.value)} /></label>
+          <label className="field"><span>Expiration date</span><input name="expirationDate" type="date" value={expires} onChange={(event) => setExpires(event.target.value)} /></label>
         </div>
-        <label className="field"><span>Insurance due date (next payment)</span><input type="date" value={due} onChange={(event) => setDue(event.target.value)} /></label>
-        <label className="field"><span>Policy #</span><input value={policy} onChange={(event) => setPolicy(event.target.value)} maxLength={120} /></label>
+        <label className="field wide"><span>Notes</span><textarea name="notes" value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={2000} placeholder="Coverage, deductible, agent…" /></label>
       </div>
     </FormSheet>
   )

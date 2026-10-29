@@ -3,7 +3,7 @@
 import { use, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { LINE_STATUSES, PROPERTY_LABELS, STAGES, STRATEGIES, can, cityLine, splitCity } from "@synergifund/shared"
+import { LINE_STATUSES, PROPERTY_LABELS, STAGES, STRATEGIES, can, cityLine, isPaidOff, splitCity } from "@synergifund/shared"
 import { FormSheet } from "../../../../components/ui/FormSheet"
 import { DrawEditor } from "../../../../components/draws/DrawEditor"
 import { FinancingSection } from "../../../../components/properties/FinancingSection"
@@ -86,7 +86,7 @@ export default function PropertyDetailPage({ params }) {
   if (company && !companyChoices.some((item) => item.id === company.id)) companyChoices.unshift({ id: company.id, name: company.name })
   const upcoming = detail.data.upcoming || []
   const openDraws = (draws?.items || []).filter((draw) => draw.status !== "Funded")
-  const monthlyMortgage = loans.filter((loan) => loan.status !== "Paid off").reduce((total, loan) => total + Number(loan.payment || 0), 0)
+  const monthlyMortgage = loans.filter((loan) => !isPaidOff(loan)).reduce((total, loan) => total + Number(loan.payment || 0), 0)
   const missing = [
     property.actualRent == null ? "actual rent" : "",
     !property.rentStatus ? "rent status" : "",
@@ -220,7 +220,7 @@ export default function PropertyDetailPage({ params }) {
                 <ul className="property-draws">
                   {loans.map((loan) => (
                     <li key={loan.id}>
-                      <span>{loan.lenderId ? <Link href={`/loans/lenders/${loan.lenderId}`}>{loan.lender}</Link> : loan.lender}{loan.label ? ` · ${loan.label}` : ""} <StatusPill>{loan.status || "Current"}</StatusPill></span>
+                      <span>{loan.lenderId ? <Link href={`/loans/lenders/${loan.lenderId}`}>{loan.lender}</Link> : loan.lender}{loan.loanType ? ` · ${loan.loanType}` : ""} <StatusPill>{loan.status || "Current"}</StatusPill></span>
                       <b>{money(loan.balance)}</b>
                     </li>
                   ))}

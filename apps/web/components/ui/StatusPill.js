@@ -1,8 +1,10 @@
 const tones = {
   Current: "good",
   Late: "warn",
-  "In default": "bad",
-  "Paid off": "neutral",
+  Delinquent: "bad",
+  "Matured – Past Due": "bad",
+  "Payoff Requested": "info",
+  "Paid Off": "neutral",
   "No loan": "neutral",
   "Under contract": "neutral",
   "Lender search": "warn",
