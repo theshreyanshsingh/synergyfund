@@ -31,7 +31,7 @@ import { liftTermsParts, loanFields } from "../services/loans.js"
 import { changeSummary, notify, notifyPropertyAccess, recordActivity } from "../services/notify.js"
 import { unreadSplit, usesChat } from "../services/chat.js"
 import { disconnectChat, refreshChat } from "../services/chatHub.js"
-import { teamToday } from "../lib/dates.js"
+import { isDay, teamToday } from "../lib/dates.js"
 import { removeDraftReceipts } from "../services/receiptCleanup.js"
 
 export const workspaceRouter = Router()
@@ -1565,8 +1565,8 @@ function loanProblem(body, loan = null) {
   if (given("interestRate") && percent(body.interestRate) === undefined) return "Enter the interest rate as a percent, like 8.90."
   if (given("paymentsBehind") && wholeNumber(body.paymentsBehind) === undefined) return "Enter the payments behind as a whole number, like 2."
   if (given("paymentDay") && dayOfMonth(body.paymentDay) == null) return "Payment due day must be a day of the month from 1 to 31."
-  if (given("originationDate") && !/^\d{4}-\d{2}-\d{2}$/.test(String(body.originationDate))) return "Origination date must be a date."
-  if (given("maturity") && !/^\d{4}-\d{2}-\d{2}$/.test(String(body.maturity))) return "Maturity date must be a date."
+  if (given("originationDate") && !isDay(body.originationDate)) return "Origination date must be a date."
+  if (given("maturity") && !isDay(body.maturity)) return "Maturity date must be a date."
   return ""
 }
 

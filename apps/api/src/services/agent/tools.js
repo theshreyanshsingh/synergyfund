@@ -1,4 +1,4 @@
-import { cityLine, COMPANY_FOLDERS, EXPENSE_CATEGORIES, insurancePolicies, isPaidOff, loanStatus, refinancePlan, yearlyInsurance, LOAN_STATUSES, LOAN_TYPES, PERMISSIONS, policyName, PROPERTY_FOLDERS, TASK_LABELS, documentType, drawFigures, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
+import { cityLine, COMPANY_FOLDERS, EXPENSE_CATEGORIES, insurancePolicies, isPaidOff, loanStatus, refinancePlan, yearlyInsurance, LOAN_STATUSES, LOAN_TYPES, NOT_OWNED_STAGES, PERMISSIONS, policyName, PROPERTY_FOLDERS, TASK_LABELS, documentType, drawFigures, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
 import { Bill, Company, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, Property, Task, User } from "../../models/index.js"
 import { presentProperty } from "../../lib/serialize.js"
 import { propertyFilter } from "../access.js"
@@ -896,10 +896,12 @@ export const TOOLS = [
         dueDates: loanPaymentDates(loan, today, until),
       }))
       // Insurance policies and property taxes are on each property (Property Info); a policy shows by when it expires.
-      const insurance = properties.flatMap((property) => insurancePolicies(property)
+      // Like the calendar, a property that was sold or exited has neither.
+      const owned = properties.filter((property) => !NOT_OWNED_STAGES.includes(property.stage))
+      const insurance = owned.flatMap((property) => insurancePolicies(property)
         .filter((policy) => dateKey(policy.expirationDate) && dateKey(policy.expirationDate) <= until)
         .map((policy) => ({ property: property.address, policy: policyName(policy), policyNumber: policy.policyNumber, premium: policy.premium, billing: policy.billing, expires: dateKey(policy.expirationDate), expired: dateKey(policy.expirationDate) < today })))
-      const taxes = properties
+      const taxes = owned
         .map((property) => ({ property: property.address, amount: property.taxAmount ?? null, dueDates: taxDates(property, today, until) }))
         .filter((row) => row.dueDates.length)
       const maturities = open

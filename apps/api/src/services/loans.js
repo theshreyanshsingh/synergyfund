@@ -26,19 +26,29 @@ const TERM_PARTS = [
 
 const blank = (value) => value == null || value === ""
 
+// The rest of the terms keeps its lines: only a line that was nothing but those parts is dropped.
 export function termsParts(loan) {
   const text = String(loan.terms || "")
   const found = {}
-  const rest = []
-  for (const part of text.split(/\s*[;\n]+\s*/)) {
-    const piece = part.trim()
-    if (!piece) continue
-    const entry = TERM_PARTS.find(([key, pattern]) => found[key] === undefined && blank(loan[key]) && pattern.test(piece))
-    const value = entry ? entry[2](piece.match(entry[1])) : undefined
-    if (value === undefined) rest.push(piece)
-    else found[entry[0]] = value
+  const lines = []
+  for (const line of text.split(/\r?\n/)) {
+    const rest = []
+    let lifted = false
+    for (const part of line.split(";")) {
+      const piece = part.trim()
+      if (!piece) continue
+      const entry = TERM_PARTS.find(([key, pattern]) => found[key] === undefined && blank(loan[key]) && pattern.test(piece))
+      const value = entry ? entry[2](piece.match(entry[1])) : undefined
+      if (value === undefined) rest.push(piece)
+      else {
+        found[entry[0]] = value
+        lifted = true
+      }
+    }
+    if (!lifted) lines.push(line)
+    else if (rest.length) lines.push(rest.join("; "))
   }
-  return { found, terms: Object.keys(found).length ? rest.join("; ") : text }
+  return { found, terms: Object.keys(found).length ? lines.join("\n").trim() : text }
 }
 
 // Saving a loan saves what was read from its terms into the fields, so the terms shown and saved stay the same.

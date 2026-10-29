@@ -1,6 +1,6 @@
 import { Router } from "express"
 import { z } from "zod"
-import { cityLine, drawPulled, lineTracking, loanStatus, loanSummary, PAID_OFF, PAID_OFF_SAVED, policyName, policyTitle, propertyUtilities, REFINANCE, resolveBudget, STAGES, US_STATES } from "@synergifund/shared"
+import { BEHIND_STATUSES, cityLine, drawPulled, lineTracking, loanStatus, loanSummary, PAID_OFF, PAID_OFF_SAVED, policyName, policyTitle, propertyUtilities, REFINANCE, resolveBudget, STAGES, US_STATES } from "@synergifund/shared"
 import { Activity, Bill, CalendarEvent, Company, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
@@ -8,7 +8,7 @@ import { propertyFilter, ownsProperty } from "../services/access.js"
 import { deleteStoredFile, publicFileUrl, saveUploadedFile, upload, withProofUrls } from "../services/files.js"
 import { ensureLenders } from "../services/lenders.js"
 import { loanFields } from "../services/loans.js"
-import { findPolicy, keepEarlierPolicy, POLICY_FIELDS, readPolicy } from "../services/insurance.js"
+import { clearLoanInsurance, findPolicy, keepEarlierPolicy, POLICY_FIELDS, readPolicy } from "../services/insurance.js"
 import { removePropertyRoom } from "../services/chat.js"
 import { orderProperties } from "../services/propertyOrder.js"
 import { geocode } from "../services/geocode.js"
@@ -713,6 +713,7 @@ propertiesRouter.post(
     }
     property.updatedBy = req.user.name
     await property.save()
+    if (kind === "insurance") await clearLoanInsurance(property._id)
     await refreshRehabRemaining(property._id)
     const money = `$${expense.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     await recordActivity({ user: req.user, title: kind === "tax" ? "Property tax paid" : "Insurance paid", detail: [expense.title, money, `Paid ${paidOn}`, next ? (kind === "tax" ? `Next due ${next}` : `Renewed, now expires ${next}`) : ""].filter(Boolean).join(" · "), propertyId: property._id })
@@ -752,6 +753,7 @@ propertiesRouter.post(
     property.insurancePolicies.push(read.policy)
     property.updatedBy = req.user.name
     await property.save()
+    await clearLoanInsurance(property._id)
     await recordActivity({ user: req.user, title: "Property updated", detail: `Insurance policy added: ${policyLine(read.policy)}`, propertyId: property._id })
     res.status(201).json({ property: presentProperty(property, req.user) })
   }),
@@ -778,6 +780,7 @@ propertiesRouter.patch(
     policy.set(read.policy)
     property.updatedBy = req.user.name
     await property.save()
+    await clearLoanInsurance(property._id)
     const changes = changeSummary(before, policy.toObject(), POLICY_FIELDS)
     await recordActivity({ user: req.user, title: "Property updated", detail: `Insurance policy ${policyName(policy)}: ${changes || "saved with no changes"}`, propertyId: property._id })
     res.json({ property: presentProperty(property, req.user) })
@@ -800,6 +803,7 @@ propertiesRouter.delete(
     property.insurancePolicies.pull(policy._id)
     property.updatedBy = req.user.name
     await property.save()
+    await clearLoanInsurance(property._id)
     await recordActivity({ user: req.user, title: "Property updated", detail: `Insurance policy removed: ${line}`, propertyId: property._id })
     res.json({ property: presentProperty(property, req.user) })
   }),
@@ -833,14 +837,20 @@ propertiesRouter.patch(
     let restored = []
     if (stage === done && before !== done) {
       paidOff = await Loan.find({ propertyId: property._id, status: { $nin: PAID_OFF_SAVED } }).sort({ createdAt: 1, _id: 1 })
-      property.refinanceClosedLoans = paidOff.map((loan) => ({ loanId: loan._id, status: loanStatus(loan.status) }))
+      property.refinanceClosedLoans = paidOff.map((loan) => ({ loanId: loan._id, status: loanStatus(loan.status), paymentsBehind: loan.paymentsBehind ?? undefined, pastDueAmount: loan.pastDueAmount ?? undefined }))
       property.refinanceClosedAt = new Date()
       if (paidOff.length) await Loan.updateMany({ _id: { $in: paidOff.map((loan) => loan._id) } }, { $set: { status: PAID_OFF }, $unset: { paymentsBehind: 1, pastDueAmount: 1 } })
     } else if (stage !== done && before === done) {
       const closed = property.refinanceClosedLoans || []
       const still = closed.length ? await Loan.find({ _id: { $in: closed.map((entry) => entry.loanId) }, status: { $in: PAID_OFF_SAVED } }).sort({ createdAt: 1, _id: 1 }) : []
       for (const loan of still) {
-        loan.status = loanStatus(closed.find((entry) => String(entry.loanId) === String(loan._id))?.status)
+        const entry = closed.find((item) => String(item.loanId) === String(loan._id))
+        loan.status = loanStatus(entry?.status)
+        // A Late or Delinquent loan gets its missed payments back too (they are cleared while it is paid off).
+        if (BEHIND_STATUSES.includes(loan.status)) {
+          loan.paymentsBehind = entry?.paymentsBehind ?? undefined
+          loan.pastDueAmount = entry?.pastDueAmount ?? undefined
+        }
         await loan.save()
       }
       restored = still

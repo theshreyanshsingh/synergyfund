@@ -6,8 +6,10 @@ import { insuranceDates } from "./schedule.js"
 // Insurance used to be kept on loans; it now lives on the property (Property Info). At start-up, a loan's insurance
 // (amount, how often, next due date) is moved to its property when the property has none yet (no insurance and no
 // policies), then cleared from the loan, so nothing is lost and nothing is moved twice. An open loan is preferred over
-// a paid-off one. Loans kept one due date and repeated it, so an old date moves as its next payment from today (not as
-// an overdue one). The property shows it as its first policy (insurancePolicies in the shared package).
+// a paid-off one. What other loans of that property still hold is cleared once its policies are changed
+// (clearLoanInsurance), so a property left with no policies doesn't get it back here. Loans kept one due date and
+// repeated it, so an old date moves as its next payment from today (not as an overdue one). The property shows it as
+// its first policy (insurancePolicies in the shared package).
 const FREQUENCY = { Monthly: "Monthly", Quarterly: "Quarterly", "Every 6 months": "Semi-Annually", "Semi-Annually": "Semi-Annually", Yearly: "Yearly" }
 
 export async function moveLoanInsurance() {

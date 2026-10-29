@@ -13,3 +13,11 @@ export function teamHour(date = new Date()) {
 export function teamTimezone() {
   return TEAM_TIMEZONE
 }
+
+// A day written YYYY-MM-DD that is on the calendar (2026-02-31 is not).
+export function isDay(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""))
+  if (!match) return false
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
+  return date.getUTCDate() === Number(match[3]) && date.getUTCMonth() === Number(match[2]) - 1
+}

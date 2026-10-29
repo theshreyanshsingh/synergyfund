@@ -131,7 +131,7 @@ export const Property = register(
       // status each had, so reopening the refinance can put them back).
       refinanceStage: String,
       refinanceClosedAt: Date,
-      refinanceClosedLoans: [{ loanId: { type: Schema.Types.ObjectId, ref: "Loan" }, status: String, _id: false }],
+      refinanceClosedLoans: [{ loanId: { type: Schema.Types.ObjectId, ref: "Loan" }, status: String, paymentsBehind: Number, pastDueAmount: Number, _id: false }],
       labels: [String],
       scopeLines: [
         {

@@ -695,9 +695,17 @@ export const EARLIER_POLICY = "earlier"
 
 const cents = (value) => Math.round(Number(value) * 100) / 100
 
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+const dayWords = (key) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key)
+  return match && MONTH_NAMES[Number(match[2]) - 1] ? `${MONTH_NAMES[Number(match[2]) - 1]} ${Number(match[3])}, ${match[1]}` : key
+}
+
 // A property's insurance policies. A property saved before the list had one carrier, amount, due date and policy #:
-// that shows as its first policy (the due date as the expiration date; a quarterly or semi-annual amount as the
-// yearly premium, with what was paid each time in the notes) until a policy is saved.
+// that shows as its first policy until a policy is saved. A yearly payment's due date is when the policy renews, so
+// it is the expiration date; a monthly, quarterly or semi-annual one is only the next payment, so it goes in the notes
+// (it would otherwise show as expired a month later). A quarterly or semi-annual amount is the yearly premium, with
+// what was paid each time in the notes.
 export function insurancePolicies(property = {}) {
   const list = Array.isArray(property.insurancePolicies) ? property.insurancePolicies : []
   if (list.length) {
@@ -718,6 +726,8 @@ export function insurancePolicies(property = {}) {
   if (!property.insuranceCarrier && amount == null && !property.insuranceDue && !property.insurancePolicy) return []
   const frequency = INSURANCE_PER_YEAR[property.insuranceFrequency] ? property.insuranceFrequency : "Yearly"
   const split = frequency === "Quarterly" || frequency === "Semi-Annually"
+  const due = String(property.insuranceDue || "").slice(0, 10)
+  const yearly = frequency === "Yearly"
   return [{
     id: EARLIER_POLICY,
     type: "",
@@ -726,8 +736,11 @@ export function insurancePolicies(property = {}) {
     premium: amount == null ? null : split ? cents(amount * INSURANCE_PER_YEAR[frequency]) : amount,
     billing: frequency === "Monthly" ? "Monthly" : "Annual",
     effectiveDate: "",
-    expirationDate: String(property.insuranceDue || "").slice(0, 10),
-    notes: split && amount != null ? `Paid ${frequency.toLowerCase()}, $${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} each time.` : "",
+    expirationDate: yearly ? due : "",
+    notes: [
+      split && amount != null ? `Paid ${frequency.toLowerCase()}, $${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} each time.` : "",
+      !yearly && due ? `Next payment was due ${dayWords(due)}.` : "",
+    ].filter(Boolean).join(" "),
     paidOn: property.insurancePaidOn || "",
   }]
 }

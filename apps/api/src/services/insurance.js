@@ -1,4 +1,5 @@
 import { EARLIER_POLICY, POLICY_BILLING, POLICY_TYPES, insurancePolicies } from "@synergifund/shared"
+import { Loan } from "../models/index.js"
 
 const EARLIER_FIELDS = ["insuranceCarrier", "insuranceAmount", "insuranceFrequency", "insuranceDue", "insurancePolicy", "insurancePaidOn"]
 const DAY = /^(\d{4})-(\d{2})-(\d{2})$/
@@ -14,6 +15,16 @@ export function keepEarlierPolicy(property) {
   property.insurancePolicies = [fields]
   for (const key of EARLIER_FIELDS) property[key] = undefined
   return true
+}
+
+// Insurance once kept on loans moves to the property at start-up only while the property has none (insuranceMove.js).
+// Once a property's policies are changed here it may be left with none on purpose, so whatever is still on its loans
+// (other loans than the one moved, which nothing shows) is cleared and can't come back as a policy.
+export function clearLoanInsurance(propertyId) {
+  return Loan.updateMany(
+    { propertyId, $or: [{ insurancePayment: { $ne: null } }, { insuranceDue: { $nin: [null, ""] } }] },
+    { $unset: { insurancePayment: 1, insuranceFrequency: 1, insuranceDue: 1 } },
+  )
 }
 
 // The policy subdocument for an id from the page. The earlier insurance's id works only while it is still unsaved
