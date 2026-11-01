@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { BEHIND_STATUSES, can, drawFigures, TASK_LABELS, drawPulled, ensureTaskPermissions, insurancePolicies, isPaidOff, loanStatus, loanType, LOAN_TYPES, resolveBudget, isRole, NOT_OWNED_STAGES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, policyActive, policyName, policyPaymentAmount, policyTitle, ROLES } from "@synergifund/shared"
+import { BEHIND_STATUSES, can, TASK_LABELS, drawPulled, ensureTaskPermissions, insurancePolicies, isPaidOff, loanStatus, loanType, LOAN_TYPES, isRole, NOT_OWNED_STAGES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, policyActive, policyName, policyPaymentAmount, policyTitle, propertyDrawFigures, ROLES } from "@synergifund/shared"
 import {
   NativeDevice,
   Activity,
@@ -23,7 +23,7 @@ import {
 import { asyncHandler, blockContractors, requireAnyPermission, requirePermission, sendError } from "../lib/http.js"
 import { publicUser } from "../lib/serialize.js"
 import { propertyFilter } from "../services/access.js"
-import { presentDraw, refreshRehabRemaining } from "./draws.js"
+import { presentDraw } from "./draws.js"
 import { loanPaymentDates, nextPaymentDate, paymentDates } from "../services/schedule.js"
 import { saveUploadedFile, upload } from "../services/files.js"
 import { ensureLenders, lenderForName, presentLender } from "../services/lenders.js"
@@ -84,14 +84,7 @@ workspaceRouter.get(
     const drawTotals = properties.reduce((total, property) => {
       const budget = budgets.find((item) => String(item.propertyId) === String(property._id))
       const own = draws.filter((draw) => String(draw.propertyId) === String(property._id))
-      const resolved = resolveBudget({ rehabBudget: property.rehabBudget, recordBudget: budget?.budget, scopeLines: property.scopeLines || [], draws: own })
-      const figures = drawFigures({
-        budget: resolved.budget,
-        lenderFunding: budget?.fundingLimit,
-        fundedPercent: budget?.fundingPercent,
-        draws: own,
-        budgetEstimated: resolved.estimated,
-      })
+      const figures = propertyDrawFigures({ property, budgetRecord: budget, draws: own })
       return { received: total.received + figures.received, remaining: total.remaining + (figures.remaining || 0) }
     }, { received: 0, remaining: 0 })
     const received = drawTotals.received
@@ -477,7 +470,6 @@ workspaceRouter.post(
         status: "Active",
       })
       : null
-    await refreshRehabRemaining(bill.propertyId)
     await recordActivity({
       user: req.user,
       title: "Payment marked paid",
@@ -1072,13 +1064,25 @@ function readAccess(req, res, target = null) {
   return { role, ...permissionOverrides(role, selected) }
 }
 
+const PHOTO_FILE = /^image\/(jpeg|png|webp|gif|heic|heif|avif)$/i
+
 workspaceRouter.post(
   "/photo-sets",
   requirePermission("photos.write"),
   upload.array("photos", 60),
   asyncHandler(async (req, res) => {
-    if (!req.files?.length || !req.body.propertyId || !req.body.weekOf) {
-      sendError(res, 400, "Choose a property, a week, and at least one photo.")
+    if (!req.files?.length || !req.body.propertyId) {
+      sendError(res, 400, "Choose a property and at least one photo.")
+      return
+    }
+    // A contractor files a week's set; photos added without a week count from today.
+    const weekOf = String(req.body.weekOf || "").trim() || teamToday()
+    if (!isDay(weekOf)) {
+      sendError(res, 400, "Enter the week as a date.")
+      return
+    }
+    if (req.files.some((file) => !PHOTO_FILE.test(file.mimetype || "") && !/\.(heic|heif)$/i.test(file.originalname || ""))) {
+      sendError(res, 400, "Only photos can be added here (JPG, PNG, WEBP or HEIC).")
       return
     }
     const property = await Property.findOne({ _id: req.body.propertyId, ...propertyFilter(req.user) })
@@ -1092,12 +1096,12 @@ workspaceRouter.post(
     }
     const set = await PhotoSet.create({
       propertyId: property._id,
-      weekOf: req.body.weekOf,
+      weekOf,
       fileIds: files.map((file) => file._id),
       uploadedBy: req.user._id,
       note: req.body.note || "",
     })
-    await recordActivity({ user: req.user, title: "Weekly photos filed", detail: `${property.address} · ${set.weekOf}`, propertyId: property._id })
+    await recordActivity({ user: req.user, title: "Photos added", detail: `${property.address} · ${files.length} ${files.length === 1 ? "photo" : "photos"}`, propertyId: property._id, href: `/properties/${property._id}?tab=photos` })
     res.status(201).json({ id: String(set._id), count: files.length })
   }),
 )

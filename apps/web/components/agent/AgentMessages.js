@@ -28,6 +28,7 @@ const STATUS_LABELS = {
   search_documents: "Searching documents",
   find_documents: "Finding documents",
   zip_documents: "Zipping documents",
+  propose_property_change: "Preparing the change",
   web_search: "Searching the web",
   read_webpage: "Visiting the website",
   search_records: "Searching records",
@@ -575,6 +576,73 @@ function ArvCard({ analysis }) {
   )
 }
 
+// Changes the Agent prepared in this turn, one card each.
+function proposalsOf(rows) {
+  const found = new Map()
+  for (const row of rows) {
+    const step = row.toolResult
+    if (step?.UsedTool === "propose_property_change" && step.result?.proposal?.id) found.set(step.result.proposal.id, step.result.proposal)
+  }
+  return [...found.values()]
+}
+
+const exactly = (value) => (value == null ? "Not entered" : `$${Number(value).toLocaleString("en-US", { maximumFractionDigits: 2 })}`)
+
+const CHANGE_STATES = {
+  saved: "Saved.",
+  cancelled: "Cancelled. Nothing was changed.",
+  outdated: "Not saved: a figure changed before this was confirmed. Ask the agent again.",
+  expired: "This has expired and nothing was changed. Ask the agent again.",
+}
+
+// Nothing is saved until the person taps Confirm here.
+function ChangeCard({ proposal }) {
+  const session = useSession()
+  const [status, setStatus] = useState(proposal.status)
+  const [pending, setPending] = useState("")
+  const [error, setError] = useState("")
+  const canSave = Boolean(session?.user && can(session.user, PERMISSIONS.propertiesWrite))
+  async function decide(action) {
+    setPending(action)
+    setError("")
+    try {
+      const data = await api(`/agent/proposals/${proposal.id}/${action}`, { method: "POST" })
+      setStatus(data.proposal.status)
+    } catch (err) {
+      setError(err.message)
+      // It can no longer be confirmed (a figure moved, or it was already decided somewhere else).
+      if (err.status === 409 || err.status === 404) setStatus("closed")
+    } finally {
+      setPending("")
+    }
+  }
+  return (
+    <section className="agent-arv agent-change" aria-label="Change to confirm" data-proposal={proposal.id}>
+      <header className="agent-arv-head">
+        <span><Icon name="check" size={15} /> {status === "saved" ? "Change saved" : status === "pending" ? "Change to confirm" : "Change not saved"}</span>
+        <small><Link href={`/properties/${proposal.propertyId}`}>{proposal.address}</Link></small>
+      </header>
+      <ul className="agent-change-list">
+        {proposal.changes.map((change) => (
+          <li key={change.field}>
+            <span>{change.label}</span>
+            <span className="agent-change-figures"><s>{exactly(change.from)}</s><i aria-hidden="true">→</i><b>{exactly(change.to)}</b></span>
+          </li>
+        ))}
+      </ul>
+      {error && <p className="agent-arv-warn">{error}</p>}
+      {status !== "pending" && !error && <p className={status === "saved" ? "agent-change-note is-saved" : "agent-change-note"}>{CHANGE_STATES[status]}</p>}
+      {status === "pending" && !canSave && <p className="agent-change-note">You don't have access to change properties, so this can't be confirmed.</p>}
+      {status === "pending" && (
+        <footer className="agent-draft-foot">
+          <button type="button" className="agent-change-cancel" disabled={Boolean(pending)} onClick={() => decide("cancel")}>Cancel</button>
+          {canSave && <button type="button" className="agent-arv-save" disabled={Boolean(pending)} onClick={() => decide("confirm")}>{pending === "confirm" ? "Saving…" : "Confirm"}</button>}
+        </footer>
+      )}
+    </section>
+  )
+}
+
 export function formatAgentDuration(ms) {
   const seconds = Math.max(1, Math.round((Number(ms) || 0) / 1000))
   if (seconds < 60) return `${seconds}s`
@@ -591,6 +659,7 @@ function stepText(toolResult) {
   if (name === "portfolio_summary") return { verb: "Read", detail: "portfolio totals" }
   if (name === "get_property") return { verb: "Opened", detail: title }
   if (name === "arv_analysis") return { verb: "Worked out", detail: title }
+  if (name === "propose_property_change") return { verb: result.proposal ? "Prepared a change to" : "Checked", detail: title }
   if (name === "upcoming_payments") return { verb: "Checked", detail: title }
   if (name === "web_search") return { verb: "Searched the web for", detail: `“${result.query || ""}” · ${title}` }
   if (name === "read_webpage") return { verb: result.extracted ? "Pulled details from" : "Visited", detail: title || result.url || "a web page" }
@@ -808,6 +877,7 @@ export function AgentMessages({ rows, streaming, emptyHint }) {
                 </div>
               ))}
               {!live && arvOf(turn.replies) && <ArvCard key={`arv-${turn.user?.id || turnIndex}`} analysis={arvOf(turn.replies)} />}
+              {!live && proposalsOf(turn.replies).map((proposal) => <ChangeCard key={proposal.id} proposal={proposal} />)}
               {live && <Shimmer rows={turn.replies} showHeader={!visible} />}
             </div>
           </div>

@@ -6,7 +6,6 @@ import { propertyFilter } from "../services/access.js"
 import { deleteStoredFile, saveUploadedFile, upload, withProofUrls } from "../services/files.js"
 import { notify, recordActivity } from "../services/notify.js"
 import { READ_STALE_MS, readReceiptInBackground, receiptReadingAvailable } from "../services/receiptReader.js"
-import { refreshRehabRemaining } from "./draws.js"
 
 // Receipts: a contractor (or someone in the office) photographs or uploads a receipt, the AI reads it, they check the
 // items and choose the property (or split it between several), and Submit files each property's part. Contractors'
@@ -371,7 +370,6 @@ receiptsRouter.post(
     const spread = groups.length > 1 ? ` across ${groups.length} properties` : ` for ${groups[0].property.address}`
     if (posts(req)) {
       for (const group of groups) {
-        await refreshRehabRemaining(group.property._id)
         await recordActivity({ user: req.user, title: "Cost added", detail: `${receipt.vendor} receipt · ${money(group.totalCents)} (${plural(group.count, "item")})${String(boughtBy) !== String(req.user._id) ? ` · bought by ${boughtByName}` : ""}`, propertyId: group.property._id })
       }
     } else {

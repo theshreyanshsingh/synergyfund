@@ -3,7 +3,7 @@
 import { use, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { LINE_STATUSES, PROPERTY_LABELS, STAGES, STRATEGIES, can, cityLine, isPaidOff, splitCity } from "@synergifund/shared"
+import { LINE_STATUSES, PROPERTY_LABELS, STAGES, STRATEGIES, can, cityLine, isPaidOff, rehabLeft, splitCity } from "@synergifund/shared"
 import { FormSheet } from "../../../../components/ui/FormSheet"
 import { DrawEditor } from "../../../../components/draws/DrawEditor"
 import { FinancingSection } from "../../../../components/properties/FinancingSection"
@@ -11,6 +11,7 @@ import { PropertyInfoSection } from "../../../../components/properties/PropertyI
 import { StateSelect } from "../../../../components/properties/StateSelect"
 import { ArvSection } from "../../../../components/properties/ArvSection"
 import { DocumentsSection } from "../../../../components/properties/DocumentsSection"
+import { FiledPhotos, PhotosSection } from "../../../../components/properties/PhotosSection"
 import { ReportSheet } from "../../../../components/properties/ReportSheet"
 import { money } from "../../../../lib/format"
 import { api } from "../../../../lib/api"
@@ -31,9 +32,8 @@ export default function PropertyDetailPage({ params }) {
   const search = useSearchParams()
   const session = useSession()
   const detail = useApi(`/properties/${id}`)
-  const [section, setSection] = useState(() => (["overview", "info", "draws", "expenses", "arv", "financing", "documents"].includes(search.get("tab")) ? search.get("tab") : "overview"))
+  const [section, setSection] = useState(() => (["overview", "info", "photos", "draws", "expenses", "arv", "financing", "documents"].includes(search.get("tab")) ? search.get("tab") : "overview"))
   const [note, setNote] = useState("")
-  const [files, setFiles] = useState([])
   const [message, setMessage] = useState("")
   const [termsMessage, setTermsMessage] = useState("")
   const [editing, setEditing] = useState(null)
@@ -70,9 +70,11 @@ export default function PropertyDetailPage({ params }) {
   const spent = detail.data.rehabSpent || 0
   const postedCosts = (detail.data.expenses || []).filter((item) => item.costTreatment !== "Exclude from construction margin")
   const draws = detail.data.draws
-  // The budget the Draws page uses: the property's own, or the one on its draw budget record.
-  const budget = property.rehabBudget ?? draws?.recordBudget ?? null
-  const left = budget == null ? null : Math.max(0, Number(budget) - spent)
+  // The same budget and Remaining as the Draws page.
+  const figures = draws?.figures || null
+  const budget = figures?.budget ?? property.rehabBudget ?? null
+  const hasDraws = (draws?.items || []).length > 0
+  const left = rehabLeft({ budget, remaining: figures?.remaining, drawCount: draws?.items?.length, spent })
   const drawProject = property ? {
     id,
     address: property.address,
@@ -96,7 +98,7 @@ export default function PropertyDetailPage({ params }) {
     { id: "overview", label: "Overview" },
   ]
   // The Documents tab shows the same files the property's company shows under Documents › Properties.
-  if (internal) tabs.push({ id: "info", label: "Property Info" }, { id: "draws", label: "Draws" }, ...(seesExpenses ? [{ id: "expenses", label: "Expenses" }] : []), { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" }, { id: "documents", label: "Documents" })
+  if (internal) tabs.push({ id: "info", label: "Property Info" }, { id: "photos", label: "Photos" }, { id: "draws", label: "Draws" }, ...(seesExpenses ? [{ id: "expenses", label: "Expenses" }] : []), { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" }, { id: "documents", label: "Documents" })
 
   if (!internal) {
     return (
@@ -208,8 +210,8 @@ export default function PropertyDetailPage({ params }) {
           <section className="property-figures">
             <Figure label="Purchase" value={money(property.purchasePrice)} />
             <Figure label="ARV" value={money(property.arv)} />
-            <Figure label="Rehab budget" value={money(budget)} hint={property.rehabBudget == null && budget != null ? "From the draw budget" : ""} />
-            <Figure label="Rehab left" value={left == null ? "Not entered" : money(left)} hint={budget == null ? "" : `${money(spent)} posted`} />
+            <Figure label="Rehab budget" value={money(budget)} hint={figures?.budgetEstimated ? "Estimated from line items and draws" : property.rehabBudget == null && budget != null ? (draws?.recordBudget ? "From the draw budget" : "From the line items") : ""} />
+            <Figure label="Rehab left" value={left == null ? "Not entered" : money(left)} hint={budget == null ? "" : hasDraws ? `${money(figures.received)} pulled · ${money(spent)} posted` : `${money(spent)} posted`} />
           </section>
 
           {internal && (
@@ -315,42 +317,11 @@ export default function PropertyDetailPage({ params }) {
             </section>
           )}
 
-          <section className="panel property-card">
-            <h2>Weekly photos</h2>
-            <p className="property-missing">A full set for one week. A draw compares it with the previous set.</p>
-            <FiledPhotos photos={detail.data.photos || []} />
-            {session?.user && can(session.user, "photos.write") && (
-              <form className="photo-form" onSubmit={async (event) => {
-                event.preventDefault()
-                const element = event.currentTarget
-                const form = new FormData(element)
-                form.set("propertyId", id)
-                try {
-                  const result = await api("/photo-sets", { method: "POST", body: form })
-                  setMessage(`${result.count} photos filed.`)
-                  setFiles([])
-                  element.reset()
-                  detail.reload()
-                } catch (err) {
-                  setMessage(err.message)
-                }
-              }}>
-                <label className="field"><span>Week of</span><input name="weekOf" type="date" required /></label>
-                <div className="field">
-                  <span>Photos</span>
-                  <label className="photo-pick">
-                    Choose photos
-                    <input name="photos" type="file" accept="image/*" multiple required onChange={(event) => setFiles([...event.target.files].map((file) => file.name))} />
-                  </label>
-                  <em>{files.length ? files.join(", ") : "None chosen"}</em>
-                </div>
-                <label className="field wide"><span>What changed on site</span><input name="note" value={note} onChange={(event) => setNote(event.target.value)} /></label>
-                <div className="photo-form-actions"><button className="primary" type="submit">File this week</button></div>
-              </form>
-            )}
-            {message && <p className="property-missing">{message}</p>}
-          </section>
         </>
+      )}
+
+      {section === "photos" && (
+        <PhotosSection property={property} photos={detail.data.photos || []} canAdd={Boolean(session?.user && can(session.user, "photos.write"))} onAdded={() => detail.reload()} />
       )}
 
       {section === "expenses" && seesExpenses && (
@@ -694,22 +665,6 @@ function blankNumber(value) {
   if (value == null || String(value).trim() === "") return null
   const number = Number(String(value).replace(/[$,\s]/g, ""))
   return Number.isFinite(number) ? number : NaN
-}
-
-function FiledPhotos({ photos }) {
-  if (!photos.length) return <p className="property-missing">No photos filed yet.</p>
-  return (
-    <div className="property-photos">
-      {photos.map((photo) => {
-        const href = photo.url || `/api/documents/${photo.id}/raw`
-        return (
-          <a key={photo.id} href={href} target="_blank" rel="noreferrer">
-            <img src={href} alt={photo.name} />
-          </a>
-        )
-      })}
-    </div>
-  )
 }
 
 function ProofPhotos({ ids, urls = {} }) {

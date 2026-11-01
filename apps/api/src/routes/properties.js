@@ -1,6 +1,6 @@
 import { Router } from "express"
 import { z } from "zod"
-import { BEHIND_STATUSES, cityLine, drawPulled, lineTracking, loanStatus, loanSummary, PAID_OFF, PAID_OFF_SAVED, policyName, policyPaymentAmount, policyTitle, propertyUtilities, REFINANCE, resolveBudget, STAGES, taxYears, US_STATES } from "@synergifund/shared"
+import { BEHIND_STATUSES, cityLine, lineTracking, loanStatus, loanSummary, PAID_OFF, PAID_OFF_SAVED, policyName, policyPaymentAmount, policyTitle, propertyDrawFigures, propertyUtilities, REFINANCE, STAGES, taxYears, US_STATES } from "@synergifund/shared"
 import { Activity, Bill, CalendarEvent, Company, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
@@ -17,7 +17,7 @@ import { fillAddressParts } from "../services/addressParts.js"
 import { recheckCalls } from "../services/calls.js"
 import { emitToUsers } from "../services/chatHub.js"
 import { changeSummary, notifyPropertyAccess, recordActivity } from "../services/notify.js"
-import { presentContractorDraw, presentDraw, refreshRehabRemaining } from "./draws.js"
+import { presentContractorDraw, presentDraw } from "./draws.js"
 import { teamToday } from "../lib/dates.js"
 import { nextDueAfter } from "../services/schedule.js"
 import { forgetPropertyOnReceipts } from "../services/receiptCleanup.js"
@@ -79,7 +79,6 @@ const writable = z.object({
   rentMarket: z.string().optional().default(""),
   customerTerms: z.string().optional(),
   rehabBudget: z.number().nullable().optional(),
-  rehabRemaining: z.number().nullable().optional(),
   // Property Info (the tax years are read on their own, see readTaxYears)
   taxParcel: z.string().max(120).optional(),
   utilities: z.array(z.object({ name: z.string().max(40), provider: z.string().max(120).optional(), account: z.string().max(120).optional() }).passthrough()).max(20).optional(),
@@ -452,9 +451,8 @@ propertiesRouter.get(
       canDraws ? DrawBudget.find({ propertyId: property._id }) : [],
     ])
     const rehabSpent = spent[0]?.total || 0
-    // Same figures as the Draws page: money pulled on funded and part-funded draws, and the property's own budget first.
-    const received = draws.reduce((total, draw) => total + drawPulled(draw), 0)
-    const schedule = resolveBudget({ rehabBudget: property.rehabBudget, recordBudget: budgets.find((item) => Number(item.budget) > 0)?.budget, scopeLines: property.scopeLines || [], draws }).budget || 0
+    // The same figures as the Draws page.
+    const figures = propertyDrawFigures({ property, budgetRecord: budgets[0], draws })
     const internal = req.user.role !== "contractor"
     if (internal) await ensureLenders()
     const [expenseDocs, requestDocs, photos, people, loans, bills, company] = await Promise.all([
@@ -496,10 +494,11 @@ propertiesRouter.get(
         category: bill.category || "",
       })),
       draws: canDraws ? {
-        received,
+        figures,
+        received: figures.received,
         // A total kept on the draw budget record (from a draw sheet import) when the property has none of its own.
         recordBudget: Number(budgets.find((item) => Number(item.budget) > 0)?.budget) || null,
-        undrawn: schedule ? Math.max(0, schedule - received) : null,
+        undrawn: figures.available,
         items: draws.map(presentDraw),
       } : null,
     })
@@ -733,7 +732,6 @@ propertiesRouter.post(
     property.updatedBy = req.user.name
     await property.save()
     if (kind === "insurance") await clearLoanInsurance(property._id)
-    await refreshRehabRemaining(property._id)
     const money = `$${expense.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     const count = kind === "insurance" ? `Payment ${policy.paymentsPaid}${policy.paymentsTotal > 0 ? ` of ${policy.paymentsTotal}` : ""}` : ""
     await recordActivity({ user: req.user, title: kind === "tax" ? "Property tax paid" : "Insurance paid", detail: [expense.title, money, `Paid ${paidOn}`, count, next ? `Renewed, now expires ${next}` : ""].filter(Boolean).join(" · "), propertyId: property._id })
@@ -934,8 +932,9 @@ propertiesRouter.delete(
   }),
 )
 
+// addedOn is the day it was added on the team's clock, so everyone sees the same date.
 function presentPhoto(file) {
-  return { id: String(file._id), name: file.name, url: publicFileUrl(file) }
+  return { id: String(file._id), name: file.name, url: publicFileUrl(file), addedOn: file.createdAt ? teamToday(file.createdAt) : "" }
 }
 
 function presentCost(item) {

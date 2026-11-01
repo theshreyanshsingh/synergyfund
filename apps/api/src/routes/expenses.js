@@ -6,7 +6,6 @@ import { asyncHandler, blockContractors, requirePermission, sendError } from "..
 import { ownsProperty, propertyFilter } from "../services/access.js"
 import { saveUploadedFile, upload, withProofUrls } from "../services/files.js"
 import { changeSummary, notify, recordActivity } from "../services/notify.js"
-import { refreshRehabRemaining } from "./draws.js"
 import { teamToday } from "../lib/dates.js"
 import { costSheetCsv, costSheetName, costSheetWorkbook, expensesCsv, expensesWorkbook, exportName, quickbooksCsv, readFilters, trackingData } from "../services/expenseTracking.js"
 
@@ -313,7 +312,6 @@ expensesRouter.patch(
     const before = expense.toObject()
     Object.assign(expense, next)
     await expense.save()
-    await refreshRehabRemaining(expense.propertyId)
     const changes = changeSummary(before, expense.toObject(), COST_FIELDS)
     await recordActivity({ user: req.user, title: "Cost updated", detail: [before.title, changes || "Saved with no changes"].join(" · "), propertyId: expense.propertyId })
     res.json({ expense: await withProofUrls(presentExpense(expense)) })
@@ -327,7 +325,6 @@ expensesRouter.delete(
     const expense = await findCost(req, res)
     if (!expense) return
     await expense.deleteOne()
-    await refreshRehabRemaining(expense.propertyId)
     await recordActivity({ user: req.user, title: "Cost deleted", detail: [expense.title, `$${Number(expense.amount || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, expense.date || ""].filter(Boolean).join(" · "), propertyId: expense.propertyId })
     res.json({ ok: true })
   }),
@@ -446,7 +443,6 @@ expensesRouter.post(
       scopeLineId,
       postedBy: req.user._id,
     })
-    await refreshRehabRemaining(property._id)
     await recordActivity({ user: req.user, title: "Cost added", detail: expense.title, propertyId: property._id })
     res.status(201).json({ expense: await withProofUrls(presentExpense(expense)) })
   }),
@@ -680,7 +676,6 @@ expensesRouter.post(
       ? await Expense.insertMany(request.lines.map((line) => ({ ...shared, title: line.description, amount: line.amount, category: line.category, lineKind: line.kind || "item" })))
       : [await Expense.create({ ...shared, title: request.title, amount: request.amount, category: request.category })]
     const expense = posted[0]
-    await refreshRehabRemaining(expense.propertyId)
     await notify({ userIds: [request.requestedBy], title: "Expense approved", body: `${request.title} posted to the property books.`, href: "/expenses", event: "expense.approved" })
     await recordActivity({ user: req.user, title: "Expense approved", detail: request.reapplied ? `${request.title} · reapplied` : request.title, propertyId: request.propertyId, alertExcept: [request.requestedBy] })
     res.json({ request: await withProofUrls(presentRequest(request)), expense: await withProofUrls(presentExpense(expense)), expenses: await withProofUrls(posted.map((item) => presentExpense(item))) })

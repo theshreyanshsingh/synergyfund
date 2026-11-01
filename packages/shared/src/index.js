@@ -68,11 +68,14 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.expensesApprove,
     PERMISSIONS.drawsWrite,
     PERMISSIONS.documentsWrite,
+    PERMISSIONS.photosWrite,
   ],
   member: [
     PERMISSIONS.propertiesRead,
     PERMISSIONS.expensesRead,
     PERMISSIONS.documentsRead,
+    PERMISSIONS.photosRead,
+    PERMISSIONS.photosWrite,
     PERMISSIONS.drawsRead,
     PERMISSIONS.agentAsk,
     PERMISSIONS.tasksEdit,
@@ -84,6 +87,8 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.propertiesWrite,
     PERMISSIONS.documentsRead,
     PERMISSIONS.documentsWrite,
+    PERMISSIONS.photosRead,
+    PERMISSIONS.photosWrite,
     PERMISSIONS.importsRun,
     PERMISSIONS.agentAsk,
     PERMISSIONS.activityRead,
@@ -427,11 +432,11 @@ export const PERMISSION_CATALOG = [
   { group: "Tasks", id: PERMISSIONS.tasksAssign, label: "Assign tasks", detail: "Choose an assignee and see every member email." },
   { group: "Tasks", id: PERMISSIONS.tasksManage, label: "Create and delete tasks", detail: "Add and remove tasks. Assignment is included." },
   { group: "Documents", id: PERMISSIONS.documentsRead, label: "View documents", detail: "Open files in the knowledge base." },
-  { group: "Documents", id: PERMISSIONS.documentsWrite, label: "Upload documents", detail: "Add files and weekly photos." },
+  { group: "Documents", id: PERMISSIONS.documentsWrite, label: "Upload documents", detail: "Add files." },
   { group: "Documents", id: PERMISSIONS.documentsDelete, label: "Remove documents", detail: "Delete a file from the library." },
   { group: "Documents", id: PERMISSIONS.importsRun, label: "Import Excel", detail: "Load workbooks into properties." },
-  { group: "Documents", id: PERMISSIONS.photosRead, label: "View photos", detail: "See weekly house photos and draw reports." },
-  { group: "Documents", id: PERMISSIONS.photosWrite, label: "File photos", detail: "Upload a weekly photo set." },
+  { group: "Documents", id: PERMISSIONS.photosRead, label: "View photos", detail: "See a property's photos and draw reports." },
+  { group: "Documents", id: PERMISSIONS.photosWrite, label: "Add photos", detail: "Add photos of a property." },
   { group: "People", id: PERMISSIONS.membersManage, label: "Manage members", detail: "Invite people and set what they can do." },
   { group: "People", id: PERMISSIONS.superAdmin, label: "Super admin", detail: "Change or remove an admin, and grant every permission." },
   { group: "People", id: PERMISSIONS.activityRead, label: "See activity", detail: "Read the activity log and notifications." },
@@ -1171,6 +1176,26 @@ export function resolveBudget({ rehabBudget, recordBudget, scopeLines = [], draw
     estimated: missing > 0 || loose > 0 || !budgeted,
     source: budgeted ? "lines" : "drawn",
   }
+}
+
+// A property's draw figures, worked out one way for the Draws page, the property page, the Overview and the Agent, so
+// they always agree. budgetRecord is the property's draw budget record, if it has one.
+export function propertyDrawFigures({ property = {}, budgetRecord = null, draws = [] }) {
+  const resolved = resolveBudget({ rehabBudget: property.rehabBudget, recordBudget: budgetRecord?.budget, scopeLines: property.scopeLines || [], draws })
+  return drawFigures({
+    budget: resolved.budget,
+    lenderFunding: positive(budgetRecord?.fundingLimit),
+    fundedPercent: budgetRecord?.fundingPercent,
+    draws,
+    budgetEstimated: resolved.estimated,
+  })
+}
+
+// What is left of a rehab budget. With draws it is the Draws page's Remaining (the budget less what was drawn and what
+// is pending). A house with no draws yet is being paid for another way, so its posted rehab costs come off instead.
+export function rehabLeft({ budget, remaining, drawCount = 0, spent = 0 }) {
+  if (budget == null) return null
+  return drawCount > 0 ? remaining ?? null : Math.max(0, Number(budget) - (Number(spent) || 0))
 }
 
 export function drawHealth(figures) {

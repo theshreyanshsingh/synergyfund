@@ -6,6 +6,7 @@ import { cityLine, compStats, daysBetween, drawPulled, isPendingDraw, mapsLink, 
 import { PageSpinner } from "../../../../../components/ui/Spinner"
 import { CompsMap } from "../../../../../components/properties/CompsMap"
 import { money, photoUrl, placedComps, shortDate, useCompLocations } from "../../../../../components/properties/ArvSection"
+import { addedLabel } from "../../../../../components/properties/PhotosSection"
 import { REPORT_SECTIONS, readReport } from "../../../../../components/properties/ReportSheet"
 import { useApi } from "../../../../../lib/useApi"
 
@@ -71,7 +72,7 @@ export default function PropertyReport({ params }) {
   const usedComps = comps.filter((comp) => comp.include)
   const rows = scopeRows(property, draws)
   const lineBudget = rows.reduce((sum, row) => sum + (Number(row.budget) || 0), 0)
-  const totalBudget = property.rehabBudget ?? (lineBudget || null)
+  const totalBudget = detail.data.draws?.figures?.budget ?? property.rehabBudget ?? (lineBudget || null)
   const drawn = draws.filter((draw) => !isPendingDraw(draw)).reduce((sum, draw) => sum + (Number(draw.amount) || 0), 0)
   const pending = draws.filter(isPendingDraw).reduce((sum, draw) => sum + (Number(draw.amount) || 0), 0)
   const received = draws.filter((draw) => !isPendingDraw(draw)).reduce((sum, draw) => sum + drawPulled(draw), 0)
@@ -254,7 +255,12 @@ export default function PropertyReport({ params }) {
           <section className="report-section">
             <h2>Site photos</h2>
             <div className="report-photos">
-              {photos.map((photo) => <img key={photo.id} src={photo.url || photoUrl(photo.id)} alt={photo.name} />)}
+              {photos.map((photo) => (
+                <figure key={photo.id}>
+                  <img src={photo.url || photoUrl(photo.id)} alt={photo.name} />
+                  {photo.addedOn && <figcaption>Added {addedLabel(photo.addedOn)}</figcaption>}
+                </figure>
+              ))}
             </div>
           </section>
         )}

@@ -87,7 +87,7 @@ drawsRouter.get(
   "/",
   requirePermission("draws.read"),
   asyncHandler(async (req, res) => {
-    const properties = orderProperties(await Property.find(propertyFilter(req.user)).select("_id address city stage strategy rehabBudget rehabRemaining scopeLines position createdAt"))
+    const properties = orderProperties(await Property.find(propertyFilter(req.user)).select("_id address city stage strategy rehabBudget scopeLines position createdAt"))
     const ids = properties.map((property) => property._id)
     const [budgets, draws, expenses, requests, reports] = await Promise.all([
       DrawBudget.find({ propertyId: { $in: ids } }),
@@ -111,7 +111,6 @@ drawsRouter.get(
       })
       return
     }
-    await syncRehabRemaining(properties, expenses)
     const funded = draws.filter((draw) => draw.status === "Funded").reduce((sum, draw) => sum + Number(draw.fundedAmount || 0), 0)
     const pendingShare = requests.reduce((sum, request) => sum + Number(request.amount || 0), 0)
     const rehab = budgets.reduce((sum, budget) => sum + Number(budget.budget || 0), 0)
@@ -123,7 +122,6 @@ drawsRouter.get(
         stage: property.stage,
         strategy: property.strategy || "",
         rehabBudget: property.rehabBudget ?? null,
-        rehabRemaining: property.rehabRemaining ?? null,
         scopeLines: (property.scopeLines || []).map((line) => ({
           id: String(line._id),
           title: line.title,
@@ -308,11 +306,6 @@ drawsRouter.post(
     job.counts = result.counts
     job.status = "Confirmed"
     await job.save()
-    if (result.propertyIds.length) {
-      const fresh = await Property.find({ _id: { $in: result.propertyIds } })
-      const expenses = await Expense.find({ propertyId: { $in: result.propertyIds } })
-      await syncRehabRemaining(fresh, expenses)
-    }
     await recordActivity({
       user: req.user,
       title: "Draw workbook appended",
@@ -344,7 +337,6 @@ drawsRouter.put(
     property.rehabBudget = budget
     await property.save()
     await DrawBudget.updateMany({ propertyId: property._id, budget: { $ne: null } }, budget == null ? { $unset: { budget: 1 } } : { $set: { budget } })
-    await refreshRehabRemaining(property._id)
     const money = (value) => (value == null ? "none" : `$${Number(value).toLocaleString("en-US")}`)
     await recordActivity({ user: req.user, title: budget == null ? "Rehab budget removed" : "Rehab budget updated", detail: `${property.address}: ${money(before)} → ${money(budget)}`, propertyId: property._id })
     res.json({ ok: true, budget })
@@ -737,11 +729,6 @@ drawsRouter.post(
     // Nothing pulled yet (blank, or 0 after a funded draw was moved back to pending): the lender funded the full draw.
     if (!(Number(draw.fundedAmount) > 0)) draw.fundedAmount = draw.amount
     await draw.save()
-    const [property, propertyExpenses] = await Promise.all([
-      Property.findById(draw.propertyId),
-      Expense.find({ propertyId: draw.propertyId }),
-    ])
-    if (property) await syncRehabRemaining([property], propertyExpenses)
     const report = await comparePhotosForDraw(draw)
     // Every admin except whoever pulled it.
     await notify({
@@ -876,26 +863,6 @@ function sumFor(items, propertyId) {
 
 function countsAsRehab(expense) {
   return expense.costTreatment !== "Exclude from construction margin"
-}
-
-async function syncRehabRemaining(properties, expenses) {
-  const rehabCosts = expenses.filter(countsAsRehab)
-  await Promise.all(properties.map(async (property) => {
-    if (property.rehabBudget == null) return
-    const spent = sumFor(rehabCosts, property._id)
-    const remaining = Math.max(0, Number(property.rehabBudget) - spent)
-    if (property.rehabRemaining === remaining) return
-    property.rehabRemaining = remaining
-    await property.save()
-  }))
-}
-
-export async function refreshRehabRemaining(propertyId) {
-  if (!propertyId) return
-  const property = await Property.findById(propertyId)
-  if (!property) return
-  const expenses = await Expense.find({ propertyId: property._id })
-  await syncRehabRemaining([property], expenses)
 }
 
 function parseDrawLines(value) {

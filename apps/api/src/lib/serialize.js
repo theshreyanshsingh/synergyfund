@@ -95,7 +95,6 @@ export function presentProperty(property, user) {
     rentNotes: source.rentNotes || "",
     customerTerms: user?.role === "contractor" ? "" : source.customerTerms || "",
     rehabBudget: source.rehabBudget ?? null,
-    rehabRemaining: source.rehabRemaining ?? null,
     taxParcel: source.taxParcel || "",
     taxYears: taxYears(source),
     insurancePolicies: insurancePolicies(source),

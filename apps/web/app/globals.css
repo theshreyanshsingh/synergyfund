@@ -630,6 +630,8 @@ a { color: inherit; text-decoration: none; }
 .proof-tile { display: grid; gap: 6px; align-content: start; }
 .proof-tile button { justify-self: start; }
 .property-photos img { width: 100%; height: 120px; object-fit: cover; border-radius: 10px; background: var(--bg); }
+.property-photo { display: grid; align-content: start; gap: 4px; min-width: 0; margin: 0; }
+.property-photo figcaption { color: var(--muted); font-size: 12px; }
 .property-scope li:first-child, .property-draws li:first-child { border-top: 0; }
 .photo-form { display: grid; grid-template-columns: 180px 1fr; gap: 12px; margin-top: 12px; }
 .photo-form .wide, .photo-form-actions { grid-column: 1 / -1; }
@@ -2156,6 +2158,8 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .report-map .comps-map-canvas { height: 360px; border-color: #d1d5db; border-radius: 6px; }
 .report-photos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .report-photos img { width: 100%; height: 150px; object-fit: cover; border-radius: 4px; background: #f3f4f6; }
+.report-photos figure { display: grid; gap: 3px; min-width: 0; margin: 0; }
+.report-photos figcaption { color: #6b7280; font-size: 11px; }
 .report-text { margin: 0; white-space: pre-wrap; }
 .report-foot { margin-top: 28px; padding-top: 10px; border-top: 1px solid #d1d5db; color: #9ca3af; font-size: 10px; text-align: center; }
 @media (max-width: 700px) {
@@ -2174,7 +2178,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .app::before { display: none !important; }
   .app, .main, .report-page { display: block !important; height: auto !important; min-height: 0 !important; overflow: visible !important; padding: 0 !important; margin: 0 !important; background: #fff !important; }
   .report-section h2, .report-section h3 { break-after: avoid; }
-  .report-table tr, .report-photos img, .report-arv, .report-facts, .report-photo-group { break-inside: avoid; }
+  .report-table tr, .report-photos img, .report-photos figure, .report-arv, .report-facts, .report-photo-group { break-inside: avoid; }
   .report-keep { break-inside: avoid; }
   .report-table { display: table; }
   .report-photos img { height: 140px; }
@@ -3261,6 +3265,20 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .agent-arv-saved a { color: var(--accent); margin-left: 4px; }
 .agent-arv-save { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border: 0; border-radius: 9px; background: var(--ink); color: var(--on-ink); font-size: 13px; font-weight: 650; }
 .agent-arv-save:disabled { opacity: 0.6; }
+/* A change the Agent prepared: the old and new figures, saved only when the person taps Confirm. */
+.agent-change-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.agent-change-list li { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; padding: 10px 14px; border-bottom: 1px solid var(--row-line, var(--line)); font-size: 13.5px; }
+.agent-change-list li > span:first-child { color: var(--muted); }
+.agent-change-figures { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
+.agent-change-figures s { color: var(--muted); }
+.agent-change-figures i { color: var(--muted); font-style: normal; }
+.agent-change-figures b { font-size: 15px; }
+.agent-change .agent-arv-warn { margin: 10px 14px; }
+.agent-change-note { margin: 0; padding: 10px 14px; color: var(--muted); font-size: 12.5px; }
+.agent-change-note.is-saved { color: var(--good); font-weight: 600; }
+.agent-change .agent-draft-foot { justify-content: flex-end; }
+.agent-change-cancel { padding: 7px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--white); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.agent-change-cancel:disabled { opacity: 0.6; }
 
 /* Receipts: photo → AI reading → check the items → property (or split) → submit. */
 .member-sheet.receipt-sheet { width: min(780px, 100%); }

@@ -50,7 +50,7 @@ function cameraSupported() {
   return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia) && typeof window !== "undefined" && window.isSecureContext
 }
 
-export function CameraCapture({ shots, onChange, max = 60 }) {
+export function CameraCapture({ shots, onChange, max = 60, actions = null, emptyText = "No photos yet. Take them with the camera." }) {
   const [open, setOpen] = useState(false)
   const nativeInput = useRef(null)
   const live = useRef(shots)
@@ -82,6 +82,7 @@ export function CameraCapture({ shots, onChange, max = 60 }) {
           <CameraIcon />
           {shots.length ? "Take more photos" : "Take photos"}
         </button>
+        {actions}
         {shots.length > 0 && <span className="camera-count">{shots.length} {shots.length === 1 ? "photo" : "photos"} ready</span>}
       </div>
       <input ref={nativeInput} type="file" accept="image/*" capture="environment" multiple hidden onChange={addNative} />
@@ -95,7 +96,7 @@ export function CameraCapture({ shots, onChange, max = 60 }) {
           ))}
         </div>
       ) : (
-        <em>No photos yet. Take them with the camera.</em>
+        <em>{emptyText}</em>
       )}
       {open && (
         <CameraSession

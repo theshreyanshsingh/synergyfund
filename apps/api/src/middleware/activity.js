@@ -14,7 +14,7 @@ const RESOURCES = {
   loans: "Loan",
   members: "Member",
   agent: "Agent",
-  "photo-sets": "Weekly photos",
+  "photo-sets": "Photos",
   overview: "Overview",
   notifications: "Notifications",
 }

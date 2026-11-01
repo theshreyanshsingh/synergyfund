@@ -94,7 +94,6 @@ export const Property = register(
       rentNotes: String,
       customerTerms: String,
       rehabBudget: Number,
-      rehabRemaining: Number,
       // Property Info: taxes, insurance (moved here from loans) and utilities. Owner is ownerEntity and the purchase
       // date is purchaseDate, the same fields as everywhere else.
       taxParcel: String,
@@ -733,6 +732,25 @@ export const AgentThread = register(
     },
     { timestamps: true },
   ).index({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+)
+
+// A change the Agent prepared for a person to confirm (see services/agent/proposals.js). status: pending, saved,
+// cancelled or outdated (a figure moved before it was confirmed).
+export const AgentProposal = register(
+  "AgentProposal",
+  new Schema(
+    {
+      userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+      threadId: { type: Schema.Types.ObjectId, ref: "AgentThread" },
+      propertyId: { type: Schema.Types.ObjectId, ref: "Property", required: true },
+      address: String,
+      changes: [{ field: String, label: String, from: Number, to: Number, _id: false }],
+      status: { type: String, default: "pending" },
+      decidedAt: Date,
+      expiresAt: Date,
+    },
+    { timestamps: true },
+  ),
 )
 
 export const AgentSetting = register(

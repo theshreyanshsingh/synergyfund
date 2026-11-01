@@ -185,7 +185,7 @@ const ADMIN_ALERTS = new Map([
   ["Property deleted", { event: "property.deleted", area: "properties" }],
   ["Property workbook uploaded", { event: "property.workbook_uploaded", area: "properties" }],
   ["Workbook imported", { event: "property.workbook_imported", area: "properties" }],
-  ["Weekly photos filed", { event: "property.photos", area: "property" }],
+  ["Photos added", { event: "property.photos", area: "property" }],
   ["File removed from the library", { event: "document.removed", area: "documents" }],
   ["Company added", { event: "company.created", area: "companies" }],
   ["Company updated", { event: "company.updated", area: "companies" }],

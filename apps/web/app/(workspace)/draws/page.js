@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { can, drawFigures, drawHealth, drawPulled, isPendingDraw, resolveBudget } from "@synergifund/shared"
+import { can, drawHealth, drawPulled, isPendingDraw, propertyDrawFigures } from "@synergifund/shared"
 import { BudgetEditor, DrawEditor, ScopeEditor } from "../../../components/draws/DrawEditor"
 import { DrawImport } from "../../../components/draws/DrawImport"
 import { FormSheet, InfoSheet } from "../../../components/ui/FormSheet"
@@ -970,14 +970,7 @@ function buildProjects(payload) {
   return (payload.properties || []).map((property) => {
     const lines = draws.filter((draw) => draw.propertyId === property.id)
     const budget = budgets.find((item) => item.propertyId === property.id)
-    const resolved = resolveBudget({ rehabBudget: property.rehabBudget, recordBudget: budget?.budget, scopeLines: property.scopeLines || [], draws: lines })
-    const figures = drawFigures({
-      budget: resolved.budget,
-      lenderFunding: firstNumber(budget?.fundingLimit),
-      fundedPercent: budget?.fundingPercent,
-      draws: lines,
-      budgetEstimated: resolved.estimated,
-    })
+    const figures = propertyDrawFigures({ property, budgetRecord: budget, draws: lines })
     const forecast = lines.reduce((sum, line) => {
       if (line.status === "Funded" || !(isPendingDraw(line) || line.requestedDate)) return sum
       return sum + Math.max(0, (Number(line.amount) || 0) - (Number(line.fundedAmount) || 0))

@@ -1,8 +1,11 @@
 import { Router } from "express"
 import { AGENT_DEFAULTS, chatTitleFromPrompt } from "@synergifund/shared"
-import { AgentSetting, AgentThread } from "../models/index.js"
-import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
+import { AgentProposal, AgentSetting, AgentThread, Property } from "../models/index.js"
+import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
+import { presentProperty } from "../lib/serialize.js"
+import { ownsProperty } from "../services/access.js"
 import { modelKey } from "../services/agent/llm.js"
+import { applyProposal, changedSince, freshProposals, presentProposal } from "../services/agent/proposals.js"
 import { runAgent } from "../services/agent/run.js"
 import { resumeRun } from "../services/agent/stream.js"
 import { recordActivity } from "../services/notify.js"
@@ -186,7 +189,9 @@ agentRouter.get(
       sendError(res, 404, "That conversation was not found.")
       return
     }
-    res.json({ thread: { ...presentThread(thread), messages: thread.messages.map(presentMessage) } })
+    const messages = thread.messages.map(presentMessage)
+    await freshProposals(messages)
+    res.json({ thread: { ...presentThread(thread), messages } })
   }),
 )
 
@@ -200,6 +205,7 @@ agentRouter.delete(
       return
     }
     await removeAttachments(threadFileIds([thread])).catch((error) => console.error("Agent attachment removal failed", error))
+    await AgentProposal.deleteMany({ threadId: thread._id, status: "pending" })
     if (!thread.temporary) await recordActivity({ user: req.user, title: "Agent chat deleted", detail: thread.title || "" })
     res.json({ ok: true })
   }),
@@ -260,6 +266,76 @@ agentRouter.post(
     res.setHeader("X-Chat-Id", String(thread._id))
     res.setHeader("Access-Control-Expose-Headers", "X-Chat-Id, X-Run-Id")
     await runAgent({ user: req.user, permissions: req.permissions, thread, prompt, attachments, res, settings })
+  }),
+)
+
+// A change the Agent prepared: only the person it was prepared for can confirm or cancel it, once.
+const CLOSED = {
+  saved: "This change was already saved.",
+  cancelled: "This change was cancelled. Ask the agent again.",
+  outdated: "This change is out of date. Ask the agent again.",
+  expired: "This change has expired. Ask the agent again.",
+}
+
+async function openProposal(req, res) {
+  const proposal = await AgentProposal.findOne({ _id: req.params.id, userId: req.user._id }).catch(() => null)
+  if (!proposal) {
+    sendError(res, 404, "That change was not found.")
+    return null
+  }
+  const { status } = presentProposal(proposal)
+  if (status !== "pending") {
+    sendError(res, 409, CLOSED[status] || CLOSED.outdated)
+    return null
+  }
+  return proposal
+}
+
+agentRouter.post(
+  "/proposals/:id/confirm",
+  requirePermission("properties.write"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const proposal = await openProposal(req, res)
+    if (!proposal) return
+    const property = await Property.findById(proposal.propertyId)
+    if (!property || !ownsProperty(req.user, property)) {
+      sendError(res, 404, "That property is not available.")
+      return
+    }
+    const moved = changedSince(proposal, property)
+    if (moved) {
+      await AgentProposal.updateOne({ _id: proposal._id, status: "pending" }, { status: "outdated", decidedAt: new Date() })
+      sendError(res, 409, moved)
+      return
+    }
+    // Taken first, so a second tap can't save it twice.
+    const taken = await AgentProposal.findOneAndUpdate({ _id: proposal._id, status: "pending" }, { status: "saved", decidedAt: new Date() }, { new: true })
+    if (!taken) {
+      sendError(res, 409, CLOSED.saved)
+      return
+    }
+    try {
+      await applyProposal(taken, property, req.user)
+    } catch (error) {
+      await AgentProposal.updateOne({ _id: taken._id }, { status: "pending", $unset: { decidedAt: 1 } })
+      throw error
+    }
+    res.json({ proposal: presentProposal(taken), property: presentProperty(property, req.user) })
+  }),
+)
+
+agentRouter.post(
+  "/proposals/:id/cancel",
+  asyncHandler(async (req, res) => {
+    const proposal = await openProposal(req, res)
+    if (!proposal) return
+    const taken = await AgentProposal.findOneAndUpdate({ _id: proposal._id, status: "pending" }, { status: "cancelled", decidedAt: new Date() }, { new: true })
+    if (!taken) {
+      sendError(res, 409, CLOSED.cancelled)
+      return
+    }
+    res.json({ proposal: presentProposal(taken) })
   }),
 )
 
