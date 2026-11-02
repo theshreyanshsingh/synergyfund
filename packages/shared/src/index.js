@@ -472,6 +472,7 @@ export const DOCUMENT_LABELS = ["Purchase Contract", "Reassignment Contract", "C
 
 // Key documents every property may need, shown under Quick Access on its Documents. A file counts as one when it
 // carries that label (older spellings too); uploading from Quick Access files it in the main folder with the label.
+// Each holds one file: the newest with the label, and a new upload takes the label from the old one (see the API).
 export const QUICK_ACCESS = [
   { id: "purchase-contract", name: "Purchase Contract", folder: "contracts", aliases: ["purchase contract"] },
   { id: "reassignment-contract", name: "Reassignment Contract", folder: "contracts", aliases: ["reassignment contract", "assignment contract"] },
@@ -529,19 +530,19 @@ export function cleanDocumentLabels(value) {
 // Folders inside a property's and a company's Documents. Every file filed under one lives in exactly one folder.
 export const PROPERTY_FOLDERS = [
   { id: "contracts", name: "Contracts" },
-  { id: "lender", name: "Financing & Lender" },
-  { id: "title", name: "Title & Closing" },
+  { id: "lender", name: "Financing and lender" },
+  { id: "title", name: "Title and closing" },
   { id: "insurance", name: "Insurance" },
-  { id: "renovation", name: "Renovation & Rehab" },
+  { id: "renovation", name: "Renovation and rehab" },
   { id: "other", name: "Miscellaneous" },
-  { id: "pictures", name: "Photos & Media" },
+  { id: "pictures", name: "Photos and media" },
 ]
 // `required`: every company needs one; an empty required folder shows as Missing.
 export const COMPANY_FOLDERS = [
-  { id: "articles", name: "Articles of Organization", required: true },
-  { id: "operating", name: "Operating Agreement", required: true },
-  { id: "ein", name: "EIN Letter", required: true },
-  { id: "good-standing", name: "Certificate of Good Standing", required: true },
+  { id: "articles", name: "Articles of organization", required: true },
+  { id: "operating", name: "Operating agreement", required: true },
+  { id: "ein", name: "EIN letter", required: true },
+  { id: "good-standing", name: "Certificate of good standing", required: true },
   { id: "other", name: "Miscellaneous" },
 ]
 

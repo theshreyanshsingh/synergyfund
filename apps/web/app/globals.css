@@ -100,12 +100,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 /* Labels have every word capitalized: menus, buttons, titles, tabs, headings, table headers, field names and status
    pills. What people typed stays exactly as written (fields, messages, notes, file names, emails), and so do sentences.
+   Documents' folders and their ⋯ menus are in sentence case ("Create zip", "Replace file").
    All :where(), so a component's own text-transform (an uppercase eyebrow) still wins. */
 :where(h1, h2, h3, h4, h5, h6, th, legend, summary, button, label, a[role="button"], [role="tab"], [role="menuitem"]) { text-transform: capitalize; }
 :where(input, textarea, [contenteditable], td, p, small, em, blockquote, li, pre, code, .keep-case, .chat-nav-row, .palette-row, .paycal-pill, .paycal-attn, .cal-event, .cal-day-item, .cal-detail-title, .agent-download, .sr-only,
   .overview-attn-copy strong, .scope-line-head b, .draw-fold-title b, .draw-property-name b, .draw-lines-head b, .line-card-head b, .folder-copy strong,
   .chat-head-copy h2, .chat-results, .chat-results button, .chat-mention-menu, .chat-mention-menu button, .chat-text, .agent-history-row button, .agent-md h1, .agent-md h2, .agent-md h3, .agent-md h4, .agent-md th, .agent-title, .agent-history-row,
-  .reader-tab, .sheet, .doc-html) { text-transform: none; }
+  .reader-tab, .sheet, .doc-html,
+  .folders button, .folders label, .folders h3, .row-menu.keep-case button) { text-transform: none; }
 :where(.nav-link, .nav-label, .page-title, .stat-label, .pill, .role-pill, .doc-badge, .chat-nav-heading, .chat-nav-sub, .palette-label, .agent-label, .agent-draft-head span, .agent-email-field > span, .agent-send-main, .agent-send-menu a, .agent-send-menu button, .contractor-link, a.tool, a.primary, a.ghost, .field > span, .role-block > span, .property-figure > span, .overview-card-copy > span, .install-card strong, .agent-empty p, .chat-empty-main p, .paycal-group h2, .overview-projection > div > span, .draw-health) { text-transform: capitalize; }
 a { color: inherit; text-decoration: none; }
 
@@ -446,10 +448,15 @@ a { color: inherit; text-decoration: none; }
 .pop .filter-clear { justify-content: center; color: var(--muted); font-size: 13px; }
 .row-menu-button { width: 32px; height: 32px; display: inline-grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); }
 .row-menu-button:hover, .row-menu-button[aria-expanded="true"] { background: var(--bg); color: var(--text); }
-.row-menu { position: fixed; z-index: 60; display: grid; gap: 2px; min-width: 160px; padding: 6px; background: var(--white); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
-.row-menu button { width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; text-align: left; }
+.row-menu { position: fixed; z-index: 60; display: grid; gap: 2px; min-width: 160px; max-height: calc(100vh - 24px); overflow-y: auto; padding: 6px; background: var(--white); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.row-menu button { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; text-align: left; }
 .row-menu button:hover { background: var(--hover); }
+.row-menu button:disabled { color: var(--faint); cursor: default; }
+.row-menu button:disabled:hover { background: transparent; }
 .row-menu button.danger { color: var(--bad); }
+.row-menu button.row-menu-back { justify-content: flex-start; gap: 6px; color: var(--muted); font-size: 13px; font-weight: 600; }
+.row-menu-more { display: grid; color: var(--muted); transform: rotate(-90deg); }
+.row-menu-divider { margin: 4px 2px; border: 0; border-top: 1px solid var(--line); }
 .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; font-size: 12px; font-weight: 600; }
 .tone-good { background: var(--good-bg); color: var(--good); }
 .tone-warn { background: var(--warn-bg); color: var(--warn); }
@@ -2790,38 +2797,53 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .folders-search input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; }
 .folders-upload { display: inline-flex; align-items: center; gap: 6px; height: 38px; }
 .folders-bar .folders-upload { margin-left: 0; }
-/* Download zip, beside Upload: greyed out until a file or folder is ticked, then shows how many. */
-.folders-zip { justify-content: center; height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--white); color: var(--text); font-weight: 600; white-space: nowrap; }
-.folders-zip:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-.folders-zip:not(:disabled):hover { background: color-mix(in srgb, var(--accent) 8%, var(--white)); }
+/* Create zip, beside Upload: turns on tick boxes. */
+.folders-zip { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 38px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--white); color: var(--text); font-weight: 600; white-space: nowrap; }
 .folders-zip:disabled { color: var(--faint); cursor: not-allowed; }
-.folders-zip:disabled:hover { background: var(--white); }
-.zip-count { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; line-height: 1; }
-/* What is ticked, across folders, with a way to untick it all. */
-.folders-basket { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 8px 8px 8px 14px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--accent) 6%, var(--white)); font-size: 13px; }
-.folders-basket > span { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
-.folders-basket strong { color: var(--text); }
-.folders-basket .tool { height: 30px; font-weight: 600; }
+/* While making a zip: a blue bar with how many are ticked (and how many of those are in other folders), then
+   Select all, Cancel and Download zip. It stays in view while the list scrolls. */
+.folders-selectbar { position: sticky; top: 8px; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 50px; padding: 7px 8px 7px 16px; border-radius: 12px; background: var(--accent); color: #fff; box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 28%, transparent); }
+.folders-selectbar-count { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin-right: auto; font-size: 14px; }
+.folders-selectbar-count strong { font-weight: 700; }
+.folders-selectbar-count span { font-size: 13px; opacity: .85; }
+.folders-selectbar button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: #fff; font: inherit; font-size: 13px; font-weight: 650; white-space: nowrap; }
+.folders-selectbar button:hover { background: rgba(255, 255, 255, .15); }
+.folders-selectbar button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.folders-selectbar .is-main { background: #fff; color: var(--accent); }
+.folders-selectbar .is-main:hover { background: rgba(255, 255, 255, .88); }
+.folders-selectbar .is-main:disabled { opacity: .55; cursor: not-allowed; }
+.row-check { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.row-check:disabled { cursor: not-allowed; opacity: .4; }
+.row-check-space { flex: none; width: 18px; }
+/* Sections that fold away: Quick access documents, All folders. */
+.folders-section { display: grid; gap: 8px; min-width: 0; }
+.folders-toggle { display: inline-flex; align-items: center; gap: 6px; margin-left: -6px; padding: 3px 6px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-weight: 700; cursor: pointer; }
+.folders-toggle:hover { background: var(--hover); }
+.folders-toggle svg { flex: none; color: var(--muted); transition: transform .15s ease; }
+.folders-toggle.is-closed svg { transform: rotate(-90deg); }
 .folder-picked { color: var(--accent); font-size: 12px; font-weight: 650; }
-.folder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
-.folder-tile { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--white); color: var(--text); text-align: left; cursor: pointer; transition: border-color .12s, background .12s; }
+.folder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.folder-cell { position: relative; height: 100%; }
+.folder-tile { display: flex; align-items: center; gap: 10px; width: 100%; height: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--white); color: var(--text); text-align: left; cursor: pointer; transition: border-color .12s, background .12s; }
 .folder-tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent) 4%, var(--white)); }
-.folder-tile > svg:last-child { flex: none; margin-left: auto; color: var(--faint); transform: rotate(-90deg); }
-.folder-icon { display: grid; place-items: center; flex: none; width: 42px; height: 42px; border-radius: 11px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.folder-icon { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 .folder-icon.is-empty { background: var(--neutral-bg, var(--hover)); color: var(--faint); }
-.folder-copy { display: grid; gap: 2px; min-width: 0; }
-.folder-copy strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.folder-copy { display: grid; gap: 1px; min-width: 0; }
+/* Names on up to two lines rather than cut short. */
+.folder-copy strong { display: -webkit-box; overflow: hidden; font-size: 14px; line-height: 1.25; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .folder-copy em { color: var(--muted); font-size: 12px; font-style: normal; }
-.folders-select { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 40px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--white); }
-.folders-select.is-on { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent) 6%, var(--white)); }
-.folders-select .tool { display: inline-flex; align-items: center; gap: 6px; height: 32px; }
-.folders-select-hint { margin-right: auto; color: var(--muted); font-size: 12px; }
-.folders-check { display: inline-flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer; }
-.folders-check input { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); cursor: pointer; }
-.folders-move select { height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--white); color: var(--text); font: inherit; font-size: 13px; }
+/* An empty folder is greyed; it still opens, to upload into it. */
+.folder-cell.is-empty .folder-tile:not(.is-missing) { background: var(--bg); }
+.folder-cell.is-empty .folder-tile:not(.is-missing):hover { background: color-mix(in srgb, var(--accent) 4%, var(--bg)); }
+.folder-cell.is-empty .folder-copy strong { color: var(--muted); font-weight: 600; }
+.folder-cell.is-picked .folder-tile { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--white)); }
+.folder-check { position: absolute; z-index: 1; top: 1px; bottom: 1px; left: 1px; display: grid; place-items: center; width: 38px; border-radius: 11px 0 0 11px; cursor: pointer; }
+.folder-check:has(:disabled) { cursor: not-allowed; }
+.folders.is-selecting .folder-tile { padding-left: 40px; }
 .folder-files { display: grid; margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--white); }
 .folder-files:empty { display: none; }
-.folder-file { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 10px 12px; }
+.folder-file { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 0 8px 0 0; }
+.folder-file .doc-open { padding: 9px 4px 9px 12px; cursor: pointer; }
 .folder-file + .folder-file { border-top: 1px solid var(--line); }
 .folder-file:hover { background: var(--row-hover, var(--hover)); }
 .folder-file.is-selected { background: color-mix(in srgb, var(--accent) 7%, var(--white)); }
@@ -2845,17 +2867,19 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .crumbs-trail li.is-current { flex-basis: 100%; }
   .crumbs-trail li.is-current .crumbs-sep { display: none; }
   .crumbs-here { height: auto; max-width: 100%; padding: 0; font-size: 18px; letter-spacing: -0.01em; }
-  /* Search on its own line, then Download zip and Upload side by side. */
+  /* Search on its own line, then Create zip and Upload side by side. */
   .folders-search { flex: 1 1 100%; }
   .folders-zip, .folders-bar .folders-upload { flex: 1 1 calc(50% - 5px); min-width: 0; justify-content: center; height: 40px; }
-  .folders-select-hint { display: none; }
-  .folders-select .folders-check { margin-right: auto; }
-  .folder-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
-  .folder-tile { padding: 12px; }
-  .folder-file { grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; }
-  .folder-file .doc-tags { grid-column: 2; justify-content: flex-start; max-width: none; padding-left: 0; }
-  .folder-file .doc-tags:empty { display: none; }
-  .folder-file .doc-actions { grid-column: 2; padding-left: 0; flex-wrap: wrap; }
+  /* The zip bar: the count on its own line, then the buttons sharing the next. */
+  .folders-selectbar { padding: 8px; }
+  .folders-selectbar-count { flex-basis: 100%; padding: 2px 8px 4px; }
+  .folders-selectbar button { flex: 1 1 auto; }
+  /* Two folders a row. */
+  .folder-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .folder-tile { gap: 8px; padding: 10px; }
+  .folders.is-selecting .folder-tile { padding-left: 36px; }
+  .folder-check { width: 34px; }
+  .folder-icon { width: 28px; height: 28px; border-radius: 8px; }
   .reader-pdf iframe { height: 70vh; }
 }
 
@@ -2882,8 +2906,13 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .copy-row dt { grid-column: 1 / -1; }
 }
 [data-theme="dark"] .doc-badge.is-video { background: #2e1a47; color: #c084fc; }
-.folders-heading { display: flex; align-items: baseline; gap: 6px; margin: 8px 0 0; font-size: 14px; font-weight: 700; }
-.folders-heading em { color: var(--muted); font-style: normal; font-weight: 600; }
+.folders-heading { display: flex; align-items: center; gap: 6px; min-height: 30px; margin: 4px 0 0; font-size: 14px; font-weight: 700; }
+.folders-heading em { color: var(--muted); font-size: 12.5px; font-style: normal; font-weight: 600; }
+/* Documents header: the title, with Open in Documents small beside it. */
+.doc-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 14px; }
+.doc-head h2 { margin: 0; }
+.doc-head-link { color: var(--accent); font-size: 13px; font-weight: 600; }
+.doc-head-link:hover { text-decoration: underline; }
 .folders-note { margin: 0; color: var(--muted); font-size: 13px; }
 .folder-icon.is-property { background: color-mix(in srgb, var(--good) 13%, transparent); color: var(--good); }
 .folder-icon.is-property.is-empty { background: var(--neutral-bg, var(--hover)); color: var(--faint); }
@@ -2956,27 +2985,34 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .import-row-note { display: block; color: var(--warn); font-size: 11.5px; }
 .import-row-link { display: block; color: var(--good); font-size: 11.5px; font-weight: 600; }
 
-/* Quick Access Documents on a property's Documents */
-.quick-access { display: grid; gap: 8px; margin-top: 6px; }
+/* Quick access documents on a property's Documents: five key documents, one file each, each marked with a star. */
 .quick-list { display: grid; margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--white); }
-.quick-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 10px 12px; }
-.quick-list li + li { border-top: 1px solid var(--line); }
-.quick-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
-.quick-icon.is-empty { background: var(--neutral-bg, var(--hover)); color: var(--faint); }
-.quick-copy { display: grid; gap: 2px; min-width: 0; }
-.quick-copy strong { font-size: 14px; }
-.quick-copy em { min-width: 0; overflow: hidden; color: var(--muted); font-size: 12px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
-.quick-copy em a { color: var(--text); font-weight: 600; }
-.quick-copy em a:hover, .quick-copy em button:hover { text-decoration: underline; }
-.quick-copy em button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; }
-.quick-actions { display: flex; align-items: center; gap: 2px; }
-.quick-actions a, .quick-actions button { height: 30px; padding: 0 9px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 650; line-height: 30px; cursor: pointer; }
-.quick-actions a:hover, .quick-actions button:hover { background: var(--hover); color: var(--text); }
-.doc-status.is-none { border-color: var(--line); background: var(--neutral-bg, var(--hover)); color: var(--muted); }
+.quick-slot { display: flex; align-items: center; gap: 8px; min-height: 58px; padding-right: 8px; }
+.quick-slot + .quick-slot { border-top: 1px solid var(--line); }
+.quick-slot:not(.is-empty):hover { background: var(--row-hover, var(--hover)); }
+.quick-slot.is-selected { background: color-mix(in srgb, var(--accent) 7%, var(--white)); }
+.quick-slot.is-empty { padding-right: 12px; }
+.quick-row { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; align-self: stretch; padding: 9px 4px 9px 14px; color: var(--text); cursor: pointer; }
+.quick-slot.is-empty .quick-row { cursor: default; }
+.quick-star { display: grid; place-items: center; flex: none; width: 26px; height: 26px; color: #f4b400; }
+.quick-star.is-empty { color: var(--faint); opacity: .5; }
+.quick-copy { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.quick-copy strong { overflow: hidden; font-size: 14px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.quick-copy small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.quick-slot.is-empty .quick-copy strong { color: var(--muted); font-weight: 600; }
+.quick-sub { display: none; }
+.quick-folder { flex: 0 0 170px; overflow: hidden; color: var(--muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.quick-date { flex: 0 0 96px; color: var(--muted); font-size: 13px; text-align: right; white-space: nowrap; }
+.quick-upload { display: inline-flex; flex: none; align-items: center; gap: 6px; height: 32px; padding: 0 12px; }
+.quick-upload.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+.quick-upload.primary:hover { border-color: color-mix(in srgb, var(--accent) 85%, #000); background: color-mix(in srgb, var(--accent) 85%, #000); }
+/* Top level: no breadcrumb (the sections say where you are); search and the buttons sit on the right. */
+.folders-spacer { margin-right: auto; }
 @media (max-width: 760px) {
-  .quick-list li { grid-template-columns: auto minmax(0, 1fr) auto; }
-  .quick-copy em { white-space: normal; }
-  .quick-actions { grid-column: 2 / -1; }
+  /* Phones: the folder and date join the file name's line. */
+  .quick-folder, .quick-date { display: none; }
+  .quick-sub { display: inline; }
+  .quick-row { gap: 10px; padding-left: 12px; }
 }
 
 /* Company exposure: a small badge from how many properties it holds */
@@ -2993,24 +3029,6 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 @media (max-width: 1100px) {
   .app:not(.is-contractor) .main .detail-meta-below.has-aside { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; }
   .detail-meta-aside { display: inline-flex; flex: none; margin-left: auto; }
-}
-
-/* Tick folders and Quick Access documents to download them together: the icon turns into a tick box on hover. */
-.folder-cell, .quick-lead { position: relative; }
-.quick-lead { display: inline-grid; }
-.pick-box { position: absolute; z-index: 1; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 11px; background: var(--white); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
-.pick-box input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); cursor: pointer; }
-.folder-cell .pick-box { left: 15px; top: 50%; width: 42px; height: 42px; transform: translateY(-50%); }
-.quick-lead .pick-box { inset: 0; border-radius: 9px; }
-.folder-cell:hover .pick-box, .folder-cell:focus-within .pick-box, .folder-cell.is-picked .pick-box, .folders.is-picking .folder-cell .pick-box,
-.quick-list li:hover .pick-box, .quick-list li:focus-within .pick-box, .quick-list li.is-picked .pick-box, .folders.is-picking .quick-list .pick-box { opacity: 1; pointer-events: auto; }
-.folder-cell.is-picked .folder-tile { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--white)); }
-.quick-list li.is-picked { background: color-mix(in srgb, var(--accent) 6%, var(--white)); }
-/* Touch screens cannot hover: the tick boxes stay visible (beside the arrow on a folder, in place of the icon on a document). */
-@media (hover: none) {
-  .pick-box { opacity: 1; pointer-events: auto; }
-  .folder-cell .pick-box { left: auto; right: 34px; top: 50%; width: 30px; height: 30px; border-radius: 8px; }
-  .folder-cell.has-pick .folder-copy { padding-right: 40px; }
 }
 
 /* Installed iPhone app: a file being downloaded, before it goes to the share sheet (Save to Files, Mail…). */

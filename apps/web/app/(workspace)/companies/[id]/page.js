@@ -336,12 +336,9 @@ export default function CompanyPage({ params }) {
 
       {section === "documents" && (
         <section className="panel property-card doc-panel">
-          <div className="property-card-head">
-            <div>
-              <h2>Documents</h2>
-              <p className="property-missing">{company.name}’s papers and the documents of every property it owns, in folders. Open a folder to view, download or upload. Tick files or folders, in as many folders as you like, then Download zip.</p>
-            </div>
-            <Link href={`/documents?company=${id}`} className="tool">Open in Documents</Link>
+          <div className="doc-head">
+            <h2>Documents</h2>
+            <Link href={`/documents?company=${id}`} className="doc-head-link">Open in Documents</Link>
           </div>
           {files.error ? (
             <p className="banner">{files.error}</p>

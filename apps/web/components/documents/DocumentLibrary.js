@@ -346,8 +346,9 @@ function typeProblem(file, place) {
   return `${file.name}: only PDF, Word, Excel${placeType(place) === "property" ? ", image and video" : " and image"} files can be uploaded.`
 }
 
-// `labels` are not chosen here: only Quick Access passes one (e.g. "Purchase Contract") so the file shows there.
-export function UploadSheet({ properties = [], companies = [], fixedPlace, defaultPlace, defaultFolder = "", initialFiles = [], labels = [], title = "", placeName = "", requireProperty, onUploaded, onClose, onDone }) {
+// `labels` are not chosen here: only Quick Access passes one (e.g. "Purchase Contract") so the file shows there,
+// with `single` (a Quick Access document holds one file) and a `hint` of its own.
+export function UploadSheet({ properties = [], companies = [], fixedPlace, defaultPlace, defaultFolder = "", initialFiles = [], labels = [], title = "", hint = "", single = false, placeName = "", requireProperty, onUploaded, onClose, onDone }) {
   const [files, setFiles] = useState(initialFiles)
   const [place, setPlace] = useState(defaultPlace || "")
   const [folder, setFolder] = useState(defaultFolder)
@@ -417,11 +418,11 @@ export function UploadSheet({ properties = [], companies = [], fixedPlace, defau
     <FormSheet
       eyebrow="Documents"
       title={title || (fixedPlace && (placeName || folderLabel) ? `Upload to ${[placeName, folderLabel].filter(Boolean).join(" › ")}` : "Upload files")}
-      hint={fixedPlace
+      hint={hint || (fixedPlace
         ? `PDF, Word, Excel${kind === "property" ? ", images or videos" : " or images"}, up to ${MAX_UPLOAD_MB} MB each. They are filed under this ${placeLabel}.`
         : companies.length && !requireProperty
           ? "File them under a property or a company, in one of its folders. PDF, Word, Excel or images (videos on properties only)."
-          : `Link them to a property, in one of its folders. PDF, Word, Excel, images or videos, up to ${MAX_UPLOAD_MB} MB each.`}
+          : `Link them to a property, in one of its folders. PDF, Word, Excel, images or videos, up to ${MAX_UPLOAD_MB} MB each.`)}
       onClose={pending ? () => {} : onClose}
       onSubmit={submit}
       submitLabel={files.length > 1 ? `Upload ${files.length} files` : "Upload"}
@@ -431,13 +432,42 @@ export function UploadSheet({ properties = [], companies = [], fixedPlace, defau
     >
       <div className="form-grid">
         <label className="field wide">
-          <span>Files</span>
-          <input type="file" multiple accept={documentAccept(kind || "property")} onChange={(event) => { setFiles([...(event.target.files || [])]); setError("") }} />
+          <span>{single ? "File" : "Files"}</span>
+          <input type="file" multiple={!single} accept={documentAccept(kind || "property")} onChange={(event) => { setFiles([...(event.target.files || [])].slice(0, single ? 1 : undefined)); setError("") }} />
           {files.length > 0 && <small className="doc-picked">{files.map((file) => file.name).join(", ")}</small>}
           {problems.length > 0 && <small className="doc-problem">{problems.join(" ")}</small>}
         </label>
         <PlaceField properties={properties} companies={companies} value={place} onChange={changePlace} fixedPlace={fixedPlace} requireProperty={requireProperty} />
         <FolderField place={where} value={activeFolder} onChange={setFolder} />
+      </div>
+    </FormSheet>
+  )
+}
+
+// Just a new name, from a file's ⋯ menu. The API keeps its type: "Contract" stays "Contract.pdf".
+export function RenameSheet({ file, onClose, onDone }) {
+  const [name, setName] = useState(file.name)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState("")
+
+  async function submit(event) {
+    event.preventDefault()
+    setError("")
+    setPending(true)
+    try {
+      await api(`/documents/${file.id}`, { method: "PATCH", body: { name } })
+      onDone()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <FormSheet eyebrow="Documents" title="Rename" onClose={onClose} onSubmit={submit} submitLabel="Save" pending={pending} error={error}>
+      <div className="form-grid">
+        <label className="field wide"><span>Name</span><input value={name} onChange={(event) => setName(event.target.value)} required maxLength={200} autoFocus onFocus={(event) => { const dot = event.target.value.lastIndexOf("."); event.target.setSelectionRange(0, dot > 0 ? dot : event.target.value.length) }} /></label>
       </div>
     </FormSheet>
   )

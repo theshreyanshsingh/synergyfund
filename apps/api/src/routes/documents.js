@@ -2,7 +2,7 @@ import zlib from "node:zlib"
 import { Router } from "express"
 import mammoth from "mammoth"
 import xlsx from "xlsx"
-import { allowedDocument, cleanDocumentLabels, documentType, folderName, folderOf, foldersFor, US_STATES } from "@synergifund/shared"
+import { allowedDocument, cleanDocumentLabels, documentType, folderName, folderOf, foldersFor, QUICK_ACCESS, quickAccessFiles, US_STATES } from "@synergifund/shared"
 import { Company, DocumentFile, ImportJob, Loan, Property, Task, User } from "../models/index.js"
 import { lenderForName } from "../services/lenders.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
@@ -125,6 +125,34 @@ function readFolder(value, place) {
   return { folder: wanted }
 }
 
+// A Quick Access document holds one file per property. When `file` takes a slot (uploaded to it, or labeled for it),
+// the property's other files lose that label, so the slot shows this file. When the file the slot shows leaves it
+// (`left`: deleted, or moved to another property; it was the newest with the label, as the page picks it), older
+// copies lose it too and the slot is empty again. Those other files stay in their folders.
+// `olderOnly` (a new upload): only older files lose it, so two uploads at once leave the newer one in the slot.
+// A contractor only ever takes the label off files they uploaded, as with renaming and deleting.
+async function clearSlotsElsewhere(file, user, { left = false, olderOnly = false } = {}) {
+  if (!file.propertyId) return
+  const held = QUICK_ACCESS.filter((item) => quickAccessFiles([file], item).length)
+  if (!held.length) return
+  const filter = { propertyId: file.propertyId, _id: { $ne: file._id }, kind: { $nin: HIDDEN_KINDS }, "labels.0": { $exists: true } }
+  if (user.role === "contractor") filter.uploadedBy = user._id
+  const others = await DocumentFile.find(filter).select("labels createdAt").lean()
+  // Newer by when it was added; two added in the same instant by id, which only grows.
+  const newer = (other) => {
+    const gap = new Date(other.createdAt || 0) - new Date(file.createdAt || 0)
+    return gap > 0 || (gap === 0 && String(other._id) > String(file._id))
+  }
+  const shown = (item) => !quickAccessFiles(others, item).some(newer)
+  const aliases = new Set(held.filter((item) => !left || shown(item)).flatMap((item) => item.aliases))
+  if (!aliases.size) return
+  for (const other of others) {
+    if (olderOnly && newer(other)) continue
+    const kept = other.labels.filter((label) => !aliases.has(String(label).trim().toLowerCase()))
+    if (kept.length !== other.labels.length) await DocumentFile.updateOne({ _id: other._id }, { $set: { labels: kept } })
+  }
+}
+
 // "" or "none" clears the property; anything else must be a property this person can see.
 async function readPropertyChoice(req, value) {
   const id = String(value ?? "").trim()
@@ -222,6 +250,7 @@ documentsRouter.post(
       kind: "file",
       labels,
     })
+    await clearSlotsElsewhere(file, req.user, { olderOnly: true })
     await recordActivity({ user: req.user, title: "File uploaded", detail: [file.name, choice.property?.address, owner.company?.name, folderName(place, folder), labels.join(", ")].filter(Boolean).join(" · "), propertyId: file.propertyId })
     const [presented] = await presentMany([file], req.user)
     res.status(201).json({ file: presented })
@@ -307,6 +336,11 @@ documentsRouter.patch(
       file.name = extension && !name.toLowerCase().endsWith(extension.toLowerCase()) ? `${name}${extension}` : name
     }
     await file.save()
+    // Only a change of label or property takes a slot: renaming an older copy leaves the slot's file where it is.
+    // Moved to another property, it leaves the old one's slot as deleting it would.
+    const movedFrom = before.propertyId !== (file.propertyId ? String(file.propertyId) : "") ? before.propertyId : ""
+    if (movedFrom) await clearSlotsElsewhere({ _id: file._id, propertyId: movedFrom, labels: before.labels, createdAt: file.createdAt }, req.user, { left: true })
+    if (movedFrom || before.labels.join("|") !== (file.labels || []).join("|")) await clearSlotsElsewhere(file, req.user)
     const changes = []
     if (before.labels.join("|") !== (file.labels || []).join("|")) changes.push(file.labels.length ? `Labels: ${file.labels.join(", ")}` : "Labels cleared")
     if (before.propertyId !== (file.propertyId ? String(file.propertyId) : "")) changes.push(property ? `Linked to ${property.address}` : "No longer linked to a property")
@@ -598,6 +632,7 @@ documentsRouter.delete(
     }
     await deleteStoredFile(file)
     await file.deleteOne()
+    await clearSlotsElsewhere(file, req.user, { left: true })
     await recordActivity({ user: req.user, title: "File removed from the library", detail: file.name, propertyId: file.propertyId, href: !file.propertyId && file.companyId ? `/companies/${file.companyId}?tab=documents` : "" })
     res.json({ ok: true })
   }),

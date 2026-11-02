@@ -1243,7 +1243,7 @@ export const TOOLS = [
         query: { type: "string", description: "Words in the file name or its label, such as \"ALTA\", \"insurance\" or \"scope of work\". Leave empty to list everything that fits the other filters." },
         property: { type: "string", description: "Address or part of it, e.g. \"3318 Nolan\". Leave empty for all." },
         company: { type: "string", description: "Company name, e.g. \"Revive Jax LLC\". Its own files and its properties' files. Leave empty for all." },
-        folder: { type: "string", description: "Folder name, e.g. \"Contracts\" or \"Title & Closing\". Leave empty for all folders." },
+        folder: { type: "string", description: "Folder name, e.g. \"Contracts\" or \"Title and closing\". Leave empty for all folders." },
         type: { type: "string", enum: ["any", "pdf", "word", "excel", "image", "video", "receipt"], description: "Kind of file. Default any." },
         addedAfter: { type: "string", description: "Only files added on or after this date, YYYY-MM-DD." },
         addedBefore: { type: "string", description: "Only files added on or before this date, YYYY-MM-DD." },

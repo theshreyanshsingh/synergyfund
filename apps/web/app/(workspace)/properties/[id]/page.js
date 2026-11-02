@@ -344,7 +344,7 @@ export default function PropertyDetailPage({ params }) {
       )}
 
       {section === "documents" && (
-        <DocumentsSection property={property} company={company} writable={Boolean(session?.user && can(session.user, "documents.write"))} canDelete={Boolean(session?.user && can(session.user, "documents.delete"))} initialFolder={search.get("folder") || ""} />
+        <DocumentsSection property={property} writable={Boolean(session?.user && can(session.user, "documents.write"))} canDelete={Boolean(session?.user && can(session.user, "documents.delete"))} initialFolder={search.get("folder") || ""} />
       )}
 
       {section === "info" && (
