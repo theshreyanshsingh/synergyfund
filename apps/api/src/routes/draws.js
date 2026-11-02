@@ -10,6 +10,7 @@ import { materializeStoredFile, receiveFile, saveUploadedFile } from "../service
 import { orderProperties } from "../services/propertyOrder.js"
 import { changeSummary, notify, recordActivity } from "../services/notify.js"
 import { teamToday } from "../lib/dates.js"
+import { groupByProperty, sumAmounts } from "../lib/group.js"
 
 export const drawsRouter = Router()
 
@@ -92,8 +93,9 @@ drawsRouter.get(
     const [budgets, draws, expenses, requests, reports] = await Promise.all([
       DrawBudget.find({ propertyId: { $in: ids } }),
       Draw.find({ propertyId: { $in: ids } }).sort({ createdAt: -1 }),
-      Expense.find({ propertyId: { $in: ids } }),
-      ExpenseRequest.find({ propertyId: { $in: ids }, status: { $in: ["Submitted", "Needs information", "Needs second approval"] } }),
+      // Only the amounts are needed from costs, which run to thousands.
+      Expense.find({ propertyId: { $in: ids } }).select("propertyId amount costTreatment").lean(),
+      ExpenseRequest.find({ propertyId: { $in: ids }, status: { $in: ["Submitted", "Needs information", "Needs second approval"] } }).select("propertyId amount").lean(),
       PhotoReport.find({ propertyId: { $in: ids } }).sort({ createdAt: -1 }),
     ])
     if (req.user.role === "contractor") {
@@ -114,6 +116,9 @@ drawsRouter.get(
     const funded = draws.filter((draw) => draw.status === "Funded").reduce((sum, draw) => sum + Number(draw.fundedAmount || 0), 0)
     const pendingShare = requests.reduce((sum, request) => sum + Number(request.amount || 0), 0)
     const rehab = budgets.reduce((sum, budget) => sum + Number(budget.budget || 0), 0)
+    const rehabCosts = expenses.filter(countsAsRehab)
+    const costsByProperty = groupByProperty(rehabCosts)
+    const pendingByProperty = groupByProperty(requests)
     res.json({
       properties: properties.map((property) => ({
         id: String(property._id),
@@ -129,8 +134,8 @@ drawsRouter.get(
           budget: line.budget ?? null,
           status: line.status || "Not started",
         })),
-        spent: sumFor(expenses.filter(countsAsRehab), property._id),
-        pending: sumFor(requests, property._id),
+        spent: sumAmounts(costsByProperty.get(String(property._id))),
+        pending: sumAmounts(pendingByProperty.get(String(property._id))),
       })),
       budgets: budgets.map(presentBudget),
       draws: draws.map(presentDraw),
@@ -146,7 +151,7 @@ drawsRouter.get(
         reportedCash: funded,
         pending: pendingShare,
         undrawn: rehab - funded - pendingShare,
-        postedExpenses: expenses.filter(countsAsRehab).reduce((sum, expense) => sum + Number(expense.amount || 0), 0),
+        postedExpenses: sumAmounts(rehabCosts),
       },
     })
   }),
@@ -854,11 +859,6 @@ function moneyOrZero(value) {
   const number = Number(String(value).replace(/[$,]/g, ""))
   if (!Number.isFinite(number) || number < 0) return null
   return number
-}
-
-function sumFor(items, propertyId) {
-  const id = String(propertyId)
-  return items.reduce((sum, item) => sum + (String(item.propertyId) === id ? Number(item.amount) || 0 : 0), 0)
 }
 
 function countsAsRehab(expense) {

@@ -29,6 +29,8 @@ export default function OverviewPage() {
   const projection = overview.data?.projection
   const attention = overview.data?.attention || []
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+  // A new window is loading: the figures on screen are still the last window's, so they fade until the new ones arrive.
+  const updating = overview.loading && Boolean(overview.data)
   const savingOrder = useRef(false)
 
   useEffect(() => {
@@ -41,7 +43,7 @@ export default function OverviewPage() {
   }
 
   return (
-    <div className="workspace">
+    <div className={updating ? "workspace is-updating" : "workspace"} aria-busy={updating || undefined}>
       <div className="workspace-top">
         <div className="page-heading">
           <h1 className="page-title">Overview</h1>
@@ -61,7 +63,7 @@ export default function OverviewPage() {
         </div>
       </div>
       {!overview.data && !overview.error && <PageSpinner />}
-      {overview.data && <Attention items={attention} onOpen={(href) => router.push(href)} />}
+      {overview.data && <Attention items={attention} days={overview.data.days} onOpen={(href) => router.push(href)} />}
       {projection && <Projection days={projection.days} projection={projection} />}
       {overview.error && <p className="draws-empty">{overview.error}</p>}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={async (event) => {
@@ -91,7 +93,7 @@ export default function OverviewPage() {
   )
 }
 
-function Attention({ items, onOpen }) {
+function Attention({ items, days, onOpen }) {
   const [showAll, setShowAll] = useState(false)
   const overdue = items.filter((item) => item.tone === "bad").length
   const preview = items.slice(0, 3)
@@ -104,11 +106,11 @@ function Attention({ items, onOpen }) {
       <header>
         <div>
           <h2>Needs attention</h2>
-          {items.length > 0 && <p>{items.length} {items.length === 1 ? "item" : "items"}{overdue ? ` · ${overdue} overdue` : ""}</p>}
+          <p>{items.length > 0 ? `${items.length} ${items.length === 1 ? "item" : "items"}${overdue ? ` · ${overdue} overdue` : ""} · ` : ""}Overdue and the next {days} days, tasks this week</p>
         </div>
         {items.length > 3 && <button type="button" className="overview-attention-more" onClick={() => setShowAll(true)}>View all</button>}
       </header>
-      {items.length === 0 && <p className="overview-attention-empty">Nothing in those books is overdue or coming up.</p>}
+      {items.length === 0 && <p className="overview-attention-empty">Nothing in those books is overdue or coming up in the next {days} days.</p>}
       {items.length > 0 && (
         <ul className="overview-attention-list">
           {preview.map((item) => <AttentionItem key={item.id} item={item} onOpen={openItem} />)}

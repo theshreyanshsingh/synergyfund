@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { BEHIND_STATUSES, can, TASK_LABELS, drawPulled, ensureTaskPermissions, insurancePolicies, isPaidOff, loanStatus, loanType, LOAN_TYPES, isRole, NOT_OWNED_STAGES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, policyActive, policyName, policyPaymentAmount, policyTitle, propertyDrawFigures, ROLES } from "@synergifund/shared"
+import { BEHIND_STATUSES, can, TASK_LABELS, drawPulled, ensureTaskPermissions, insurancePolicies, isPaidOff, loanStatus, loanType, LOAN_TYPES, isRole, NOT_OWNED_STAGES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, loansEndedWithSale, policyActive, policyName, policyPaymentAmount, policyTitle, propertyDrawFigures, ROLES } from "@synergifund/shared"
 import {
   NativeDevice,
   Activity,
@@ -32,6 +32,8 @@ import { changeSummary, notify, notifyPropertyAccess, recordActivity } from "../
 import { unreadSplit, usesChat } from "../services/chat.js"
 import { disconnectChat, refreshChat } from "../services/chatHub.js"
 import { isDay, teamToday } from "../lib/dates.js"
+import { groupByProperty } from "../lib/group.js"
+import { stressRows } from "../services/stress.js"
 import { removeDraftReceipts } from "../services/receiptCleanup.js"
 
 export const workspaceRouter = Router()
@@ -73,18 +75,19 @@ workspaceRouter.get(
       Loan.find({ propertyId: { $in: ids } }),
       (req.permissions.includes("draws.read") && req.user.role !== "contractor") ? DrawBudget.find({ propertyId: { $in: ids } }) : [],
       (req.permissions.includes("draws.read") && req.user.role !== "contractor") ? Draw.find({ propertyId: { $in: ids } }) : [],
-      req.permissions.includes("expenses.read") ? Expense.find({ propertyId: { $in: ids } }) : [],
+      req.permissions.includes("expenses.read") ? Expense.find({ propertyId: { $in: ids } }).select("propertyId amount category costTreatment date createdAt").lean() : [],
       Task.find({ $or: [{ propertyId: { $in: ids } }, { propertyId: null }] }),
     ])
+    const budgetsByProperty = groupByProperty(budgets)
+    const drawsByProperty = groupByProperty(draws)
     const purchase = sum(properties, "purchasePrice")
     const arv = sum(properties, "arv")
     const rehab = sum(properties, "rehabBudget")
     const rent = sum(properties, "actualRent")
     const monthlyMortgage = loans.filter((loan) => !isPaidOff(loan)).reduce((total, loan) => total + Number(loan.payment || 0), 0)
     const drawTotals = properties.reduce((total, property) => {
-      const budget = budgets.find((item) => String(item.propertyId) === String(property._id))
-      const own = draws.filter((draw) => String(draw.propertyId) === String(property._id))
-      const figures = propertyDrawFigures({ property, budgetRecord: budget, draws: own })
+      const id = String(property._id)
+      const figures = propertyDrawFigures({ property, budgetRecord: budgetsByProperty.get(id)?.[0], draws: drawsByProperty.get(id) || [] })
       return { received: total.received + figures.received, remaining: total.remaining + (figures.remaining || 0) }
     }, { received: 0, remaining: 0 })
     const received = drawTotals.received
@@ -127,7 +130,7 @@ workspaceRouter.get(
       title: "Mortgage payments",
       value: currency(projectedMortgage),
       hint: `Scheduled for the next ${days} days`,
-      note: `${currency(projectedRent)} rent on file · ${currency(projectedRent - projectedMortgage)} after scheduled mortgage payments. Only recorded monthly schedules are included.`,
+      note: `${currency(projectedRent)} rent over the next ${days} days at the rent on file · ${currency(projectedRent - projectedMortgage)} after scheduled mortgage payments. Only recorded monthly schedules are included.`,
       money: true,
       lines: [
         scheduledSeries("Mortgage", monthlyMortgage, projectedMortgage, months),
@@ -145,7 +148,7 @@ workspaceRouter.get(
     res.json({
       days,
       labels,
-      attention: attentionItems({ properties, budgets, draws, loans, bills, tasks: openTasks, names }),
+      attention: attentionItems({ properties, budgetsByProperty, draws, drawsByProperty, loans, bills, tasks: openTasks, names, days }),
       projection: expenseProjection(expenses, bills, days),
       order: cleanOverviewOrder(req.user.overviewOrder),
       cards: cards.map((card) => ({ ...card, labels })),
@@ -162,6 +165,17 @@ workspaceRouter.patch(
     await req.user.save()
     await recordActivity({ user: req.user, title: "Overview rearranged", detail: "Changed the order of the overview cards" })
     res.json({ order })
+  }),
+)
+
+// The owned houses' figures for the Stress Test page, which runs the what-ifs itself (stressTest in the shared
+// package) so moving a slider needs no new request.
+workspaceRouter.get(
+  "/stress-test",
+  requirePermission("properties.read"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    res.json(await stressRows(req.user, req.permissions))
   }),
 )
 
@@ -1111,7 +1125,7 @@ workspaceRouter.get(
   requirePermission("expenses.read"),
   blockContractors,
   asyncHandler(async (req, res) => {
-    const properties = await Property.find(propertyFilter(req.user)).select("_id address stage insurancePolicies insuranceCarrier insuranceAmount insuranceFrequency insuranceDue insurancePolicy")
+    const properties = await Property.find(propertyFilter(req.user)).select("_id address stage strategy insurancePolicies insuranceCarrier insuranceAmount insuranceFrequency insuranceDue insurancePolicy")
     const propertyIds = properties.map((property) => property._id)
     const names = new Map(properties.map((property) => [String(property._id), property.address]))
     const canSeeAllTasks = req.permissions.includes(PERMISSIONS.tasksAssign) || req.permissions.includes(PERMISSIONS.tasksManage)
@@ -1136,6 +1150,8 @@ workspaceRouter.get(
     const soon = shiftKey(today, 7)
     const monthOut = shiftKey(today, 30)
     const lender = (loan) => (loan.lender && loan.lender !== "Not provided" ? loan.lender : "Loan")
+    const ended = new Set(properties.filter(loansEndedWithSale).map((property) => String(property._id)))
+    const liveLoans = loans.filter((loan) => !ended.has(String(loan.propertyId || "")))
     const events = [
       ...bills.filter((bill) => bill.due).flatMap((bill) => {
         const paid = bill.status === "Paid"
@@ -1159,7 +1175,7 @@ workspaceRouter.get(
           }
         })
       }),
-      ...loans.filter((loan) => loan.maturity && !isPaidOff(loan)).map((loan) => {
+      ...liveLoans.filter((loan) => loan.maturity && !isPaidOff(loan)).map((loan) => {
         const date = dateKey(loan.maturity)
         const passed = date < today
         const dueSoon = !passed && date <= monthOut
@@ -1178,7 +1194,7 @@ workspaceRouter.get(
           href: loan.propertyId ? `/properties/${loan.propertyId}?tab=financing` : "/loans",
         }
       }),
-      ...loans.flatMap((loan) => loanPaymentDates(loan, shiftKey(today, -60), shiftKey(today, 365)).map((date) => {
+      ...liveLoans.flatMap((loan) => loanPaymentDates(loan, shiftKey(today, -60), shiftKey(today, 365)).map((date) => {
         const dueSoon = date >= today && date <= soon
         return {
           id: `loan-payment-${loan._id}-${date}`,
@@ -1699,17 +1715,20 @@ async function moveOpenReviewsOntoTasks() {
   }
 }
 
-function attentionItems({ properties, budgets, draws, loans, bills, tasks, names }) {
+// What needs doing: everything overdue, and what comes up within the Overview's window (30, 60 or 90 days). Tasks keep
+// to the coming week (two for High or Verify), and loan maturities show at least 60 days ahead.
+function attentionItems({ properties, budgetsByProperty, draws, drawsByProperty, loans, bills, tasks, names, days = 30 }) {
   const today = todayKey()
   const week = shiftKey(today, 7)
   const twoWeeks = shiftKey(today, 14)
-  const month = shiftKey(today, 30)
+  const until = shiftKey(today, days)
+  const within = `within ${days} days`
   const items = []
   for (const draw of draws) {
     const requested = dateKey(draw.requestedDate)
     if (draw.status === "Funded" || !requested) continue
     const arrive = addBusinessDays(requested, 4)
-    if (arrive > month) continue
+    if (arrive > until) continue
     items.push({
       id: `draw-${draw._id}`,
       kind: "Draw",
@@ -1723,10 +1742,11 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
     })
   }
   for (const property of properties) {
-    const budget = budgets.find((item) => String(item.propertyId) === String(property._id) && Number(item.budget) > 0)
+    const id = String(property._id)
+    const budget = (budgetsByProperty.get(id) || []).find((item) => Number(item.budget) > 0)
     if (!budget) continue
     const scheduled = Number(budget.budget)
-    const propertyDraws = draws.filter((draw) => String(draw.propertyId) === String(property._id))
+    const propertyDraws = drawsByProperty.get(id) || []
     const funded = propertyDraws
       .filter((draw) => draw.status === "Funded")
       .reduce((total, draw) => total + Number(draw.fundedAmount ?? draw.amount ?? 0), 0)
@@ -1747,15 +1767,17 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
       href: "/draws",
     })
   }
+  // A sold house's loans ended with the sale (unless it was sold on terms): no payment or maturity reminders.
+  const ended = new Set(properties.filter(loansEndedWithSale).map((property) => String(property._id)))
   for (const loan of loans) {
-    if (isPaidOff(loan) || !(Number(loan.payment) > 0)) continue
+    if (isPaidOff(loan) || !(Number(loan.payment) > 0) || ended.has(String(loan.propertyId || ""))) continue
     const hasDatedBill = bills.some((bill) => {
       const mortgage = bill.category === "Mortgage" || /mortgage/i.test(bill.title || "")
       const due = dateKey(bill.due)
-      return mortgage && bill.status !== "Paid" && due && due <= month && String(bill.propertyId || "") === String(loan.propertyId || "")
+      return mortgage && bill.status !== "Paid" && due && due <= until && String(bill.propertyId || "") === String(loan.propertyId || "")
     })
     if (hasDatedBill) continue
-    const nextDue = loanPaymentDates(loan, today, month)[0] || ""
+    const nextDue = loanPaymentDates(loan, today, until)[0] || ""
     if (loan.paymentDay && !nextDue) continue
     items.push({
       id: `loan-payment-${loan._id}`,
@@ -1766,7 +1788,7 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
       amount: loan.payment,
       // The next payment is today or later, so never "bad": Overview shows "bad" as Overdue and counts it as late.
       tone: "warn",
-      detail: nextDue ? (nextDue <= week ? "Due this week" : "Due within 30 days") : "Due within 30 days · payment date not recorded",
+      detail: nextDue ? (nextDue <= week ? "Due this week" : `Due ${within}`) : `Due ${within} · payment date not recorded`,
       href: "/loans",
     })
   }
@@ -1774,7 +1796,7 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
     const due = dateKey(bill.due)
     const mortgage = bill.category === "Mortgage" || /mortgage/i.test(bill.title || "")
     if (!mortgage || bill.status === "Paid" || !due) continue
-    if (due > month) continue
+    if (due > until) continue
     items.push({
       id: `bill-${bill._id}`,
       kind: "Mortgage",
@@ -1804,12 +1826,32 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
       href: loan.propertyId ? `/properties/${loan.propertyId}?tab=financing` : "/loans",
     })
   }
-  // Active insurance policies that have expired or expire within 30 days, from Property Info.
+  // Open loans that have matured or mature within 60 days (or the window, if longer): a refinance, extension or payoff
+  // takes weeks to line up.
+  const maturityDays = Math.max(60, days)
+  const twoMonths = shiftKey(today, maturityDays)
+  for (const loan of loans) {
+    const matures = dateKey(loan.maturity)
+    if (isPaidOff(loan) || !matures || matures > twoMonths || ended.has(String(loan.propertyId || ""))) continue
+    const past = matures < today
+    items.push({
+      id: `loan-maturity-${loan._id}`,
+      kind: "Loan",
+      title: `${loan.lender && loan.lender !== "Not provided" ? loan.lender : "Loan"}${loan.loanNumber ? ` #${loan.loanNumber}` : ""} · ${past ? "matured" : "matures"}`,
+      property: names.get(String(loan.propertyId || "")) || "",
+      date: matures,
+      amount: loan.balance ?? null,
+      tone: past ? "bad" : "warn",
+      detail: past ? "Matured · pay it off, extend it or refinance" : `Matures within ${maturityDays} days · line up the refinance, extension or payoff`,
+      href: loan.propertyId ? `/properties/${loan.propertyId}?tab=financing` : "/loans",
+    })
+  }
+  // Active insurance policies that have expired or expire within the window, from Property Info.
   for (const property of properties) {
     if (NOT_OWNED_STAGES.includes(property.stage)) continue
     for (const policy of insurancePolicies(property).filter(policyActive)) {
       const expires = dateKey(policy.expirationDate)
-      if (!expires || expires > month) continue
+      if (!expires || expires > until) continue
       const expired = expires < today
       items.push({
         id: `insurance-${property._id}-${policy.id}`,
@@ -1819,7 +1861,7 @@ function attentionItems({ properties, budgets, draws, loans, bills, tasks, names
         date: expires,
         amount: policyPaymentAmount(policy),
         tone: expired ? "bad" : "warn",
-        detail: expired ? "Expired · renew it, fix the dates or set its status to Expired on Property Info" : expires <= week ? "Expires this week" : "Expires within 30 days",
+        detail: expired ? "Expired · renew it, fix the dates or set its status to Expired on Property Info" : expires <= week ? "Expires this week" : `Expires ${within}`,
         href: `/properties/${property._id}?tab=info`,
       })
     }

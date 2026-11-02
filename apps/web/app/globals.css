@@ -3550,3 +3550,62 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .agent-attach-menu button { width: calc((100vw - 72px) / 3); max-width: 110px; height: 84px; }
   .agent-file { max-width: 100%; }
 }
+
+/* Stress Test: the what-ifs, the cash a bad market takes, and where the portfolio is exposed. */
+.stress { display: grid; gap: 12px; margin-bottom: 16px; }
+.stress-intro { margin: 0; color: var(--muted); }
+.stress .panel { padding: 16px; overflow: visible; }
+.stress h2 { margin: 0 0 4px; font-size: 16px; }
+.stress-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.stress-presets button { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 999px; padding: 6px 12px; font-weight: 650; }
+.stress-presets button.is-on { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+.stress-inputs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 24px; }
+.stress-input { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 4px 8px; }
+.stress-input span { color: var(--muted); font-size: 13px; }
+.stress-input strong { font-variant-numeric: tabular-nums; }
+.stress-input input { grid-column: 1 / -1; width: 100%; accent-color: var(--ink); }
+.stress-rules { margin: 14px 0 0; color: var(--faint); font-size: 12px; line-height: 1.45; }
+.stress-cash { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 16px 24px; align-items: start; }
+.stress-eyebrow, .stress-sub { display: block; color: var(--muted); font-size: 13px; }
+.stress-big { display: block; font-size: 36px; font-weight: 650; letter-spacing: -0.04em; line-height: 1.15; margin: 4px 0; font-variant-numeric: tabular-nums; }
+.stress-lines { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 20px; }
+.stress-lines div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding-bottom: 8px; border-bottom: 1px solid var(--row-line); }
+.stress-lines dt { font-weight: 600; }
+.stress-lines dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 650; }
+.stress-lines small { grid-column: 1 / -1; color: var(--muted); }
+.stress-lines .stress-back dd { color: var(--good); }
+.stress-compare table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.stress-compare th, .stress-compare td { padding: 7px 8px; border-bottom: 1px solid var(--row-line); text-align: right; }
+.stress-compare th[scope="row"], .stress-compare thead th:first-child { text-align: left; font-weight: 600; }
+.stress-compare thead th { color: var(--muted); font-weight: 600; font-size: 13px; }
+.stress-compare th small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+.stress-compare td.is-bad, .stress-bad { color: var(--bad); }
+.stress-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.stress-chart .property-switch { margin: 8px 0; }
+.stress-chart .property-missing { margin: 0 0 10px; }
+.stress-bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.stress-bars li { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(60px, 1.4fr) 96px; align-items: center; gap: 10px; }
+.stress-bar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stress-bar-track { height: 8px; border-radius: 999px; background: var(--neutral-bg); overflow: hidden; }
+.stress-bar-track span { display: block; height: 100%; border-radius: 999px; background: var(--neutral); }
+.stress-bars li.is-warn .stress-bar-track span { background: var(--warn); }
+.stress-bars li.is-bad .stress-bar-track span { background: var(--bad); }
+.stress-bar-value { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; display: grid; line-height: 1.2; }
+.stress-bar-value small { color: var(--muted); font-weight: 400; }
+.stress-gaps ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); display: grid; gap: 4px; }
+.stress-problems { display: flex; flex-wrap: wrap; gap: 4px; }
+.stress-fine { color: var(--good); font-weight: 600; }
+@media (max-width: 900px) {
+  .stress-inputs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stress-cash, .stress-pair { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .stress-inputs, .stress-lines { grid-template-columns: minmax(0, 1fr); }
+  .stress .panel { padding: 14px; }
+  .stress-big { font-size: 30px; }
+  .stress-compare th, .stress-compare td { padding: 6px 4px; font-size: 13px; }
+}
+
+/* Overview: while a new 30/60/90-day window loads, the old figures fade so the switch visibly took. */
+.workspace.is-updating > :not(.workspace-top) { opacity: 0.5; transition: opacity 0.15s ease; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .workspace.is-updating > :not(.workspace-top) { transition: none; } }

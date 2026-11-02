@@ -1,4 +1,4 @@
-import { cityLine, COMPANY_FOLDERS, EXPENSE_CATEGORIES, insurancePolicies, isPaidOff, latestPropertyTaxes, loanStatus, refinancePlan, taxYears, yearlyInsurance, LOAN_STATUSES, LOAN_TYPES, NOT_OWNED_STAGES, PERMISSIONS, policyActive, policyName, propertyDrawFigures, PROPERTY_FOLDERS, rehabLeft, TASK_LABELS, documentType, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
+import { cityLine, COMPANY_FOLDERS, EXPENSE_CATEGORIES, insurancePolicies, isPaidOff, latestPropertyTaxes, loanStatus, refinancePlan, taxYears, yearlyInsurance, LOAN_STATUSES, LOAN_TYPES, loansEndedWithSale, NOT_OWNED_STAGES, PERMISSIONS, policyActive, policyName, propertyDrawFigures, PROPERTY_FOLDERS, rehabLeft, STRESS_INPUTS, STRESS_RULES, STRESS_SERIOUS, stressTest, TASK_LABELS, documentType, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
 import { Bill, Company, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, Property, Task, User } from "../../models/index.js"
 import { presentProperty } from "../../lib/serialize.js"
 import { propertyFilter } from "../access.js"
@@ -10,6 +10,7 @@ import { geocode, nearbyZips } from "../geocode.js"
 import { analyzeArv, milesBetween } from "./arv.js"
 import { CHANGE_FIELDS, CHANGE_TOOL, createProposal, readChanges } from "./proposals.js"
 import { teamToday } from "../../lib/dates.js"
+import { stressRows } from "../stress.js"
 
 const MODEL_RESULT_LIMIT = 32000
 const OPEN_REQUEST_STATUSES = ["Submitted", "Needs information", "Needs second approval"]
@@ -709,6 +710,44 @@ export const TOOLS = [
     summarize: (result) => ({ title: result.proposal?.address || result.address || "", proposal: result.proposal }),
   },
   {
+    name: "stress_test",
+    label: "Stress testing the portfolio",
+    permission: PERMISSIONS.propertiesRead,
+    staffOnly: true,
+    description: `What a bad market does to the portfolio, the same as the Stress Test page. Every what-if is optional and starts at a bad but plausible year (${STRESS_INPUTS.map((item) => `${item.label.toLowerCase()} ${item.start}${item.unit}`).join(", ")}). Returns the cash the company would need (shortfalls when loans come due and the house is refinanced or sold, holding costs, rental losses, rehab overruns) and what comes back, value, debt, equity, loan-to-value and rent cover today and under the scenario, loans coming due by quarter, the houses at risk and why, concentration by lender, market and company, and the records missing from the numbers. Use it for what-if questions, refinance and maturity risk, and what could hurt the business.`,
+    parameters: {
+      type: "object",
+      properties: Object.fromEntries(STRESS_INPUTS.map((item) => [item.key, { type: "number", description: `${item.label} (${item.unit.trim()}), ${item.min} to ${item.max}. Leave out for ${item.start}.` }])),
+    },
+    run: async (args, context) => {
+      const { today, rows, leftOut, seesRehab } = await stressRows(context.user, context.permissions)
+      const result = stressTest(rows, args, today)
+      const atRisk = result.houses.filter((house) => house.problems.some((problem) => STRESS_SERIOUS.includes(problem)))
+      return {
+        success: true,
+        scenario: result.scenario,
+        refinanceRate: result.refinanceRate,
+        rules: { ...STRESS_RULES, refinanceRateBeforeRise: STRESS_RULES.refinanceRate },
+        lookingAheadTo: result.until,
+        houses: result.houses.length,
+        leftOut: { ...leftOut, rehabNotCounted: !seesRehab },
+        today: result.today,
+        underScenario: result.stressed,
+        cashNeeded: result.cash,
+        housesAtRisk: result.atRisk,
+        problems: result.problems,
+        maturities: result.maturities,
+        concentration: result.concentration,
+        missingRecords: result.gaps,
+        // The houses needing the most cash first; the page lists them all.
+        worst: atRisk.slice(0, 12).map((house) => ({ address: house.address, stage: house.stage, problems: house.problems, cashNeeded: house.cashNeeded, debt: house.debt, valueUnderScenario: house.stressedValue, monthlyCashFlowUnderScenario: house.stressedCashFlow, exit: house.exit })),
+        page: "/stress-test",
+        instructions: "Ratios are fractions (0.82 is 82%). Lead with the cash needed and the few houses behind most of it, then the loans coming due soonest. Say what the scenario assumed and which records are missing from the numbers. Point to the Stress Test page to move the what-ifs.",
+      }
+    },
+    summarize: (result) => ({ title: `${result.housesAtRisk} of ${result.houses} houses at risk` }),
+  },
+  {
     name: "list_loans",
     label: "Reading loans",
     permission: PERMISSIONS.propertiesRead,
@@ -932,7 +971,9 @@ export const TOOLS = [
           payee: bill.vendor || "",
         })))
         .sort((left, right) => left.due.localeCompare(right.due))
-      const open = loans.filter((loan) => !isPaidOff(loan))
+      // A sold house's loans ended with the sale, unless it was sold on terms (as on the Overview and Calendar).
+      const ended = new Set(properties.filter(loansEndedWithSale).map((property) => String(property._id)))
+      const open = loans.filter((loan) => !isPaidOff(loan) && !ended.has(String(loan.propertyId || "")))
       const mortgages = open.filter((loan) => loan.payment).map((loan) => ({
         property: place(loan.propertyId),
         lender: lenderName(loan.lender),

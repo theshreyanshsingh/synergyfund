@@ -873,6 +873,15 @@ export function latestPropertyTaxes(property = {}) {
 // Properties that are no longer owned: no insurance reminders for them.
 export const NOT_OWNED_STAGES = ["Sold", "Exit"]
 
+// Sold on terms (a wrap or seller financing), the company keeps paying the loan under the sale.
+export const KEEPS_LOAN_STRATEGIES = ["Wrap", "Seller financing"]
+
+// A sold house's loans ended with the sale (paid at closing, even when nobody marked them Paid Off), so they get no
+// payment or maturity reminders, unless it was sold on terms.
+export function loansEndedWithSale(property = {}) {
+  return NOT_OWNED_STAGES.includes(property.stage) && !KEEPS_LOAN_STRATEGIES.includes(property.strategy)
+}
+
 // Utilities on Property Info: Water and Electric are on every property and can't be removed; others can be added.
 export const DEFAULT_UTILITIES = ["Water", "Electric"]
 export const UTILITY_CHOICES = ["Sewer", "Gas", "Trash", "Internet"]
@@ -973,6 +982,270 @@ export function refinancePlan(property = {}, today = "") {
   }
 }
 
+// ---- Stress test ----
+
+// The what-ifs on the Stress Test page and in the Agent's stress_test. `start` is a bad but plausible year: values
+// down 15%, rents down 10%, rates up 2 points, rehab 20% over, and lenders refinancing only 70% of value.
+export const STRESS_INPUTS = [
+  { key: "valueDrop", label: "Home values drop", unit: "%", min: 0, max: 50, step: 1, start: 15 },
+  { key: "rentDrop", label: "Rents drop", unit: "%", min: 0, max: 50, step: 1, start: 10 },
+  { key: "rateRise", label: "Interest rates rise", unit: " points", min: 0, max: 5, step: 0.25, start: 2 },
+  { key: "rehabOverrun", label: "Rehab runs over budget", unit: "%", min: 0, max: 100, step: 5, start: 20 },
+  { key: "refinanceLtv", label: "Lenders refinance up to", unit: "% of value", min: 50, max: 85, step: 5, start: 70 },
+  { key: "months", label: "Looking ahead", unit: " months", min: 3, max: 24, step: 3, start: 12 },
+]
+
+// The rules under it: the rate a refinance gets before any rise, the rent cover lenders want (rent ÷ the new payment,
+// taxes and insurance), what a sale loses to agents and closing, and the new loan's term.
+export const STRESS_RULES = { refinanceRate: 7.5, minDscr: 1, sellingCostPercent: 8, termMonths: 360 }
+
+// What can go wrong for a house under the scenario, worst first (the order the page lists them in).
+export const STRESS_PROBLEMS = ["Short at refinance", "Short at sale", "Loan already matured", "Behind on payments", "Underwater", "Loses money monthly", "No value on file", "No maturity date"]
+// The ones that cost money (the last two are records to fill in).
+export const STRESS_SERIOUS = STRESS_PROBLEMS.slice(0, 6)
+
+// When its loan comes due, a house listed for sale is sold, and so is a flip that isn't rented out or up for rent (any
+// strategy with "flip" in it, however it was typed); everything else is refinanced.
+const stressSells = (house) => house.stage === "For sale" || (!["Rented", "For rent"].includes(house.stage) && /flip/i.test(house.strategy || ""))
+
+// The scenario with each what-if inside its limits (a missing or unreadable one takes its start).
+export function stressScenario(input = {}) {
+  const scenario = {}
+  for (const item of STRESS_INPUTS) {
+    const raw = input?.[item.key]
+    const value = Number(raw)
+    scenario[item.key] = raw == null || raw === "" || !Number.isFinite(value) ? item.start : Math.min(item.max, Math.max(item.min, value))
+  }
+  return scenario
+}
+
+// The monthly payment that pays off `amount` over `months` at a yearly rate (a percent), and the loan a payment carries.
+export function amortizedPayment(amount, ratePercent, months = STRESS_RULES.termMonths) {
+  const rate = Number(ratePercent) / 1200
+  if (!(amount > 0)) return 0
+  return rate > 0 ? (amount * rate) / (1 - (1 + rate) ** -months) : amount / months
+}
+
+function loanForPayment(payment, ratePercent, months = STRESS_RULES.termMonths) {
+  const rate = Number(ratePercent) / 1200
+  if (!(payment > 0)) return 0
+  return rate > 0 ? (payment * (1 - (1 + rate) ** -months)) / rate : payment * months
+}
+
+const stressSum = (list, pick) => list.reduce((total, item) => total + (Number(pick(item)) || 0), 0)
+const wholeDollars = (value) => (value == null || !Number.isFinite(value) ? null : Math.round(value))
+
+// Months from one day to another (YYYY-MM-DD), as a fraction: 30 days is about 0.99.
+function monthsBetween(from, to) {
+  const start = realDay(from)
+  const end = realDay(to)
+  if (!start || !end) return 0
+  return (Date.UTC(end.year, end.month, end.date) - Date.UTC(start.year, start.month, start.date)) / (86400000 * (365.25 / 12))
+}
+
+function quarterOf(day) {
+  const [year, month] = String(day).split("-").map(Number)
+  return { key: `${year}-${Math.floor((month - 1) / 3)}`, label: `Q${Math.floor((month - 1) / 3) + 1} ${year}` }
+}
+
+// Amounts by name, largest first, each with its share of the whole: up to six names, or the top five and the rest
+// together.
+function shares(pairs) {
+  const totals = new Map()
+  for (const [name, amount] of pairs) if (Number(amount) > 0) totals.set(name, (totals.get(name) || 0) + Number(amount))
+  const total = [...totals.values()].reduce((sum, amount) => sum + amount, 0)
+  const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1])
+  const shown = sorted.length > 6 ? 5 : sorted.length
+  const top = sorted.slice(0, shown).map(([name, amount]) => ({ name, amount: Math.round(amount), share: total ? amount / total : 0 }))
+  const rest = sorted.slice(shown).reduce((sum, [, amount]) => sum + amount, 0)
+  if (rest > 0) top.push({ name: `${sorted.length - shown} others`, amount: Math.round(rest), share: rest / total, others: true })
+  return top
+}
+
+function stressHouse(row, { scenario, today, until, newRate }) {
+  const loans = row.loans || []
+  const keepValue = 1 - scenario.valueDrop / 100
+  const keepRent = 1 - scenario.rentDrop / 100
+  const debt = stressSum(loans, (loan) => loan.balance)
+  const value = row.value == null ? null : Number(row.value)
+  const stressedValue = value == null ? null : value * keepValue
+  const rent = Number(row.rent) || 0
+  const stressedRent = rent * keepRent
+  const taxes = Number(row.taxes) || 0
+  const insurance = Number(row.insurance) || 0
+  const debtService = stressSum(loans, (loan) => loan.payment)
+  const carry = debtService + taxes + insurance
+  const stressedCashFlow = stressedRent - carry
+  const dated = loans.filter((loan) => realDay(loan.maturity)).sort((a, b) => a.maturity.localeCompare(b.maturity))
+  const due = dated.filter((loan) => loan.maturity <= until)
+  let exit = null
+  if (due.length) {
+    const date = due[0].maturity
+    if (stressSells(row)) {
+      const proceeds = stressedValue == null ? null : stressedValue * (1 - STRESS_RULES.sellingCostPercent / 100)
+      exit = { kind: "Sale", date, past: date < today, proceeds: wholeDollars(proceeds), shortfall: proceeds == null ? null : wholeDollars(Math.max(0, debt - proceeds)), cashOut: proceeds == null ? null : wholeDollars(Math.max(0, proceeds - debt)) }
+    } else {
+      // A refinance pays off every loan on the house. The new loan is the smaller of the lender's share of the value
+      // and what the rent carries at the minimum cover (when there is a rent to check).
+      const byValue = stressedValue == null ? null : (stressedValue * scenario.refinanceLtv) / 100
+      const marketRent = row.marketRent == null ? null : Number(row.marketRent) * keepRent
+      const byRent = marketRent == null ? null : loanForPayment(Math.max(0, marketRent / STRESS_RULES.minDscr - taxes - insurance), newRate)
+      const newLoan = byValue == null ? null : byRent == null ? byValue : Math.min(byValue, byRent)
+      exit = {
+        kind: "Refinance",
+        date,
+        past: date < today,
+        rate: newRate,
+        newLoan: wholeDollars(newLoan),
+        newPayment: newLoan == null ? null : wholeDollars(amortizedPayment(newLoan, newRate)),
+        limitedBy: byRent != null && byValue != null && byRent < byValue ? "rent" : byRent == null ? "value, no rent to check" : "value",
+        shortfall: newLoan == null ? null : wholeDollars(Math.max(0, debt - newLoan)),
+        cashOut: newLoan == null ? null : wholeDollars(Math.max(0, newLoan - debt)),
+      }
+    }
+  }
+  const overrun = Number(row.rehabLeft) > 0 ? (Number(row.rehabLeft) * scenario.rehabOverrun) / 100 : 0
+  // The months until the loan comes due run at today's cash flow (under the scenario). After that a sold house costs
+  // nothing, and a refinanced one pays the new payment instead of the old loans.
+  const before = exit ? Math.min(scenario.months, Math.max(0, monthsBetween(today, exit.date))) : scenario.months
+  const after = scenario.months - before
+  const afterFlow = exit?.kind === "Sale" ? 0 : exit?.newPayment != null ? stressedRent - exit.newPayment - taxes - insurance : stressedCashFlow
+  const windowLoss = Math.max(0, -stressedCashFlow) * before + Math.max(0, -afterFlow) * after
+  const windowGain = Math.max(0, stressedCashFlow) * before + Math.max(0, afterFlow) * after
+  const problems = []
+  if (exit?.shortfall > 0) problems.push(exit.kind === "Sale" ? "Short at sale" : "Short at refinance")
+  if (loans.some((loan) => loanStatus(loan.status) === "Matured – Past Due") || dated.some((loan) => loan.maturity < today)) problems.push("Loan already matured")
+  if (loans.some((loan) => BEHIND_STATUSES.includes(loanStatus(loan.status)))) problems.push("Behind on payments")
+  if (stressedValue != null && debt > stressedValue) problems.push("Underwater")
+  if (rent > 0 && stressedCashFlow < 0) problems.push("Loses money monthly")
+  if (value == null) problems.push("No value on file")
+  if (loans.some((loan) => !realDay(loan.maturity))) problems.push("No maturity date")
+  return {
+    id: row.id,
+    address: row.address,
+    city: row.city || "",
+    state: row.state || "",
+    stage: row.stage || "",
+    strategy: row.strategy || "",
+    company: row.company || "",
+    valueNote: row.valueNote || "",
+    rentSource: row.rentSource || "",
+    loans: loans.length,
+    nextMaturity: dated.find((loan) => loan.maturity >= today)?.maturity || "",
+    value: wholeDollars(value),
+    stressedValue: wholeDollars(stressedValue),
+    debt: wholeDollars(debt),
+    equity: value == null ? null : wholeDollars(value - debt),
+    stressedEquity: stressedValue == null ? null : wholeDollars(stressedValue - debt),
+    stressedLtv: stressedValue ? debt / stressedValue : null,
+    rent: wholeDollars(rent),
+    stressedRent: wholeDollars(stressedRent),
+    carry: wholeDollars(carry),
+    cashFlow: wholeDollars(rent - carry),
+    stressedCashFlow: wholeDollars(stressedCashFlow),
+    exit,
+    overrun: wholeDollars(overrun),
+    afterExitCashFlow: exit ? wholeDollars(afterFlow) : null,
+    windowLoss: wholeDollars(windowLoss),
+    windowGain: wholeDollars(windowGain),
+    cashNeeded: wholeDollars((exit?.shortfall || 0) + windowLoss + overrun),
+    problems,
+  }
+}
+
+// The portfolio under a scenario. rows: one per owned house (GET /stress-test), each { id, address, city, state, stage,
+// strategy, company, value (today's, or null), valueNote, rent (coming in now), rentSource, marketRent, taxes and
+// insurance (monthly), rehabLeft, loans: [{ lender, balance, payment, maturity, status }] } with only open loans.
+// today: YYYY-MM-DD where the team works.
+export function stressTest(rows = [], input = {}, today = "") {
+  const scenario = stressScenario(input)
+  const until = addMonths(today, scenario.months)
+  const newRate = STRESS_RULES.refinanceRate + scenario.rateRise
+  const houses = rows.map((row) => stressHouse(row, { scenario, today, until, newRate }))
+  houses.sort((a, b) => b.cashNeeded - a.cashNeeded || b.problems.length - a.problems.length || String(a.address).localeCompare(String(b.address)))
+  const valued = houses.filter((house) => house.value != null)
+  const rented = houses.filter((house) => house.rent > 0)
+  const empty = houses.filter((house) => !(house.rent > 0))
+  const debtOnValued = stressSum(valued, (house) => house.debt)
+  const position = (value, rent, rentedCarry) => ({
+    value: Math.round(value),
+    debt: Math.round(stressSum(houses, (house) => house.debt)),
+    // Loans on houses with no value: in the loans total, but left out of equity and loan to value.
+    debtWithoutValue: Math.round(stressSum(houses, (house) => house.debt) - debtOnValued),
+    equity: Math.round(value - debtOnValued),
+    ltv: value ? debtOnValued / value : null,
+    rent: Math.round(rent),
+    carry: Math.round(stressSum(houses, (house) => house.carry)),
+    cashFlow: Math.round(rent - stressSum(houses, (house) => house.carry)),
+    // How many times the rent covers the rented houses' payments, taxes and insurance.
+    rentCover: rentedCarry ? rent / rentedCarry : null,
+  })
+  const rentedCarry = stressSum(rented, (house) => house.carry)
+  const exits = houses.filter((house) => house.exit)
+  const cash = {
+    shortfalls: Math.round(stressSum(exits, (house) => house.exit.shortfall)),
+    holding: Math.round(stressSum(empty, (house) => house.windowLoss)),
+    rentalLosses: Math.round(stressSum(rented, (house) => house.windowLoss)),
+    overruns: Math.round(stressSum(houses, (house) => house.overrun)),
+    // What comes back over the same months: rent left after costs on the houses that make money, and refinances and
+    // sales that return more than the loans they pay off.
+    rentSurplus: Math.round(stressSum(houses, (house) => house.windowGain)),
+    cashOut: Math.round(stressSum(exits, (house) => house.exit.cashOut)),
+  }
+  cash.total = cash.shortfalls + cash.holding + cash.rentalLosses + cash.overruns
+  // Loans coming due, by quarter (every quarter in the window, even an empty one), with the ones already past first.
+  const quarters = new Map()
+  const past = { label: "Already past", loans: 0, balance: 0, past: true }
+  for (let day = today; day && day <= until; day = addMonths(day, 3)) {
+    const quarter = quarterOf(day)
+    quarters.set(quarter.key, { label: quarter.label, loans: 0, balance: 0 })
+  }
+  const lastQuarter = quarterOf(until)
+  if (until && !quarters.has(lastQuarter.key)) quarters.set(lastQuarter.key, { label: lastQuarter.label, loans: 0, balance: 0 })
+  for (const row of rows) {
+    for (const loan of row.loans || []) {
+      if (!realDay(loan.maturity) || loan.maturity > until) continue
+      const bucket = loan.maturity < today ? past : quarters.get(quarterOf(loan.maturity).key)
+      if (!bucket) continue
+      bucket.loans += 1
+      bucket.balance += Number(loan.balance) || 0
+    }
+  }
+  const maturities = [...(past.loans ? [past] : []), ...quarters.values()].map((bucket) => ({ ...bucket, balance: Math.round(bucket.balance) }))
+  const problemCounts = STRESS_PROBLEMS.map((problem) => ({ problem, houses: houses.filter((house) => house.problems.includes(problem)).length })).filter((item) => item.houses > 0)
+  const allLoans = rows.flatMap((row) => row.loans || [])
+  return {
+    scenario,
+    until,
+    refinanceRate: newRate,
+    houses,
+    today: position(stressSum(valued, (house) => house.value), stressSum(houses, (house) => house.rent), rentedCarry),
+    stressed: position(stressSum(valued, (house) => house.stressedValue), stressSum(houses, (house) => house.stressedRent), rentedCarry),
+    cash,
+    problems: problemCounts,
+    // Houses with a money problem (missing records are counted in gaps, and holding costs on a flip are expected).
+    atRisk: houses.filter((house) => house.problems.some((problem) => STRESS_SERIOUS.includes(problem))).length,
+    maturities,
+    concentration: {
+      lenders: shares(allLoans.map((loan) => [loan.lender || "Lender not set", loan.balance])),
+      markets: shares(houses.map((house) => [[house.city, house.state].filter(Boolean).join(", ") || "Location not set", house.value])),
+      companies: shares(houses.map((house) => [house.company || "No company", house.value])),
+    },
+    // What the numbers could not include, so nobody reads a gap as good news.
+    gaps: {
+      noValue: houses.filter((house) => house.value == null).length,
+      rentFromMarket: rows.filter((row) => row.rentSource === "market").length,
+      noRent: rows.filter((row) => row.rentSource === "none").length,
+      noMaturity: allLoans.filter((loan) => !realDay(loan.maturity)).length,
+      noBalance: allLoans.filter((loan) => loan.balance == null).length,
+      paymentEstimated: allLoans.filter((loan) => loan.paymentEstimated).length,
+      noPayment: allLoans.filter((loan) => loan.payment == null).length,
+      noTaxes: rows.filter((row) => row.taxes == null).length,
+      noInsurance: rows.filter((row) => row.insurance == null).length,
+    },
+  }
+}
+
 export function ensureTaskPermissions(list = []) {
   const selected = knownPermissions(list)
   if (selected.includes(PERMISSIONS.tasksManage) && !selected.includes(PERMISSIONS.tasksAssign)) selected.push(PERMISSIONS.tasksAssign)
@@ -1030,6 +1303,7 @@ export const NAV = [
   { href: "/companies", label: "Companies", icon: "buildings", permission: PERMISSIONS.propertiesRead, section: "Projects" },
   { href: "/construction", label: "Construction Intelligence", icon: "chart", permission: PERMISSIONS.drawsRead, section: "Projects", badge: "Soon" },
   { href: "/loans", label: "Loans & Lenders", icon: "bank", permission: PERMISSIONS.propertiesRead, section: "Projects" },
+  { href: "/stress-test", label: "Stress Test", icon: "sliders", permission: PERMISSIONS.propertiesRead, section: "Projects" },
   { href: "/expenses", label: "Expenses", icon: "receipt", permission: PERMISSIONS.expensesRead, section: "Records" },
   { href: "/documents", label: "Documents", icon: "file", permission: PERMISSIONS.documentsRead, section: "Records" },
   { href: "/activity", label: "Team Activity", icon: "pulse", permission: PERMISSIONS.activityRead, section: "Records" },
