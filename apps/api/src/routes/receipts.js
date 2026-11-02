@@ -3,7 +3,7 @@ import { PAYING_ENTITIES, RECEIPT_CATEGORIES, RECEIPT_MAX_ITEMS, SALES_TAX, docu
 import { DocumentFile, Expense, ExpenseRequest, Property, Receipt, User } from "../models/index.js"
 import { asyncHandler, requireAnyPermission, sendError } from "../lib/http.js"
 import { propertyFilter } from "../services/access.js"
-import { deleteStoredFile, saveUploadedFile, upload, withProofUrls } from "../services/files.js"
+import { deleteStoredFile, saveUploadedFile, upload } from "../services/files.js"
 import { notify, recordActivity } from "../services/notify.js"
 import { READ_STALE_MS, readReceiptInBackground, receiptReadingAvailable } from "../services/receiptReader.js"
 
@@ -73,8 +73,7 @@ async function presentReceipt(receipt) {
     createdAt: source.createdAt,
     updatedAt: source.updatedAt,
   }
-  const withUrls = await withProofUrls({ proofFileIds: view.fileIds })
-  return { ...view, fileUrls: withUrls.proofUrls }
+  return view
 }
 
 // A receipt this person may open: their own; or, for staff who see expenses, any filed one.

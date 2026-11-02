@@ -5,7 +5,7 @@ import { Activity, Bill, CalendarEvent, Company, ConstructionProject, DocumentFi
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
 import { propertyFilter, ownsProperty } from "../services/access.js"
-import { deleteStoredFile, publicFileUrl, saveUploadedFile, upload, withProofUrls } from "../services/files.js"
+import { deleteStoredFile, saveUploadedFile, upload } from "../services/files.js"
 import { ensureLenders } from "../services/lenders.js"
 import { loanFields } from "../services/loans.js"
 import { clearLoanInsurance, findPolicy, keepEarlierPolicy, POLICY_FIELDS, readPolicy } from "../services/insurance.js"
@@ -45,7 +45,6 @@ const PROPERTY_FIELDS = [
   ["marketRent", "Market rent", true],
   ["actualRent", "Actual rent", true],
   ["rentStatus", "Rent status"],
-  ["accessInfo", "Access info"],
   ["customerTerms", "Customer terms"],
   ["labels", "Labels"],
   ["taxParcel", "Tax parcel/account #"],
@@ -470,8 +469,8 @@ propertiesRouter.get(
         property: presentProperty(property, req.user),
         photos: photos.map(presentPhoto),
         // Same rule as the Expenses page: a contractor sees only costs that came from their own requests.
-        expenses: await withProofUrls(expenseDocs.filter((item) => (item.drawId || item.scopeLineId) && ownRequests.has(String(item.requestId || ""))).map(presentCost)),
-        requests: await withProofUrls(requestDocs.filter((item) => String(item.requestedBy) === String(req.user._id)).map(presentCost)),
+        expenses: expenseDocs.filter((item) => (item.drawId || item.scopeLineId) && ownRequests.has(String(item.requestId || ""))).map(presentCost),
+        requests: requestDocs.filter((item) => String(item.requestedBy) === String(req.user._id)).map(presentCost),
         draws: canDraws ? { items: draws.map(presentContractorDraw) } : null,
       })
       return
@@ -483,7 +482,7 @@ propertiesRouter.get(
       pendingExpenses: pending[0]?.total || 0,
       contractors: people.map((person) => ({ id: String(person._id), name: person.name, email: person.email })),
       photos: photos.map(presentPhoto),
-      expenses: await withProofUrls(expenseDocs.map(presentCost)),
+      expenses: expenseDocs.map(presentCost),
       requests: requestDocs.map(presentCost),
       loans: await presentPropertyLoans(loans),
       upcoming: bills.filter((bill) => bill.due).map((bill) => ({
@@ -650,6 +649,8 @@ propertiesRouter.patch(
     const after = property.toObject()
     const changes = [
       changeSummary(before, after, PROPERTY_FIELDS),
+      // Access info (lockbox and door codes) is encrypted, so the log and the admin alert only say it changed.
+      (before.accessInfo || "") !== (after.accessInfo || "") ? "Access info changed" : "",
       taxRead ? taxYearChanges(before, after) : "",
       companyChange,
       before.houseBoughtPrice !== after.houseBoughtPrice ? "Internal pricing changed" : "",
@@ -934,7 +935,7 @@ propertiesRouter.delete(
 
 // addedOn is the day it was added on the team's clock, so everyone sees the same date.
 function presentPhoto(file) {
-  return { id: String(file._id), name: file.name, url: publicFileUrl(file), addedOn: file.createdAt ? teamToday(file.createdAt) : "" }
+  return { id: String(file._id), name: file.name, addedOn: file.createdAt ? teamToday(file.createdAt) : "" }
 }
 
 function presentCost(item) {

@@ -9,7 +9,7 @@ import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { signDownloadLink } from "../middleware/auth.js"
 import { propertyFilter } from "../services/access.js"
 import { readWorkbook } from "../services/drawImport.js"
-import { deleteStoredFile, headerNameUtf8, materializeStoredFile, publicFileUrl, readStoredFile, receiveDocument, receiveFile, saveUploadedFile, sendStoredFile } from "../services/files.js"
+import { deleteStoredFile, headerNameUtf8, materializeStoredFile, readStoredFile, receiveDocument, receiveFile, saveUploadedFile, sendStoredFile } from "../services/files.js"
 import { recordActivity } from "../services/notify.js"
 
 // A Word file's links and images come through the preview as written, including "javascript:" links that would run
@@ -56,7 +56,6 @@ function present(file, names = new Map(), people = new Map(), companies = new Ma
     uploadedBy: file.uploadedBy ? people.get(String(file.uploadedBy)) || "" : "",
     uploadedById: file.uploadedBy ? String(file.uploadedBy) : "",
     createdAt: file.createdAt,
-    url: publicFileUrl(file),
   }
 }
 
@@ -554,7 +553,7 @@ documentsRouter.get(
       return
     }
     if (file.mime?.startsWith("image/")) {
-      res.json({ kind: "image", file: presented, url: publicFileUrl(file) || `/api/documents/${file._id}/raw` })
+      res.json({ kind: "image", file: presented, url: `/api/documents/${file._id}/raw` })
       return
     }
     res.json({ kind: "file", file: presented })
@@ -568,11 +567,6 @@ documentsRouter.get(
     const file = await visibleFile(req, req.params.id)
     if (!file) {
       sendError(res, 404, "That file is not available.")
-      return
-    }
-    const direct = publicFileUrl(file)
-    if (direct) {
-      res.redirect(direct)
       return
     }
     await sendStoredFile(res, file, { range: req.headers.range })

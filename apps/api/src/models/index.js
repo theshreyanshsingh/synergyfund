@@ -1,6 +1,14 @@
 import mongoose from "mongoose"
+import { sealedFields } from "../lib/sealed.js"
 
 const { Schema, model, models } = mongoose
+
+// Encrypted before they reach the database (lib/sealed.js): a company's tax and bank details, and a property's
+// lockbox and door codes. Nothing looks these up by value.
+export const SEALED_FIELDS = {
+  Company: ["ein", "wireBankName", "wireRoutingNumber", "wireAccountNumber", "wireEntityName", "wireAddress"],
+  Property: ["accessInfo"],
+}
 
 function register(name, schema) {
   return models[name] || model(name, schema)
@@ -169,7 +177,7 @@ export const Property = register(
       updatedBy: String,
     },
     { timestamps: true },
-  ),
+  ).plugin(sealedFields, { model: "Property", fields: SEALED_FIELDS.Property }),
 )
 
 // A company (LLC, corporation, trust…) that owns properties. Each property belongs to at most one.
@@ -201,7 +209,7 @@ export const Company = register(
       updatedBy: String,
     },
     { timestamps: true },
-  ),
+  ).plugin(sealedFields, { model: "Company", fields: SEALED_FIELDS.Company }),
 )
 
 export const ExpenseRequest = register(
@@ -332,9 +340,26 @@ export const BackupFileCopy = register(
       copiedAt: Date,
       // When its document was first seen gone; the copy is removed once no kept backup can need it.
       goneSince: Date,
+      // The encryption key the copy is under (empty: stored before encryption), so the encryption job reads only
+      // copies that still need it.
+      keyId: String,
     },
     { timestamps: true },
   ).index({ storage: 1, storagePath: 1 }, { unique: true }),
+)
+
+// One record per encryption key: a value encrypted with it. A server started with a different key under the same name,
+// or with none of the keys this database was encrypted with, refuses to start (services/encryptData.js), rather than
+// save records that the right key can't read.
+export const EncryptionKey = register(
+  "EncryptionKey",
+  new Schema(
+    {
+      keyId: { type: String, required: true, unique: true },
+      check: { type: String, required: true },
+    },
+    { timestamps: true },
+  ),
 )
 
 export const DrawBudget = register(
@@ -450,6 +475,9 @@ export const DocumentFile = register(
       labels: { type: [String], default: [] },
       versionGroup: String,
       version: { type: Number, default: 1 },
+      // The encryption key the stored file is under (empty: stored before encryption, or encryption is off). The
+      // encryption job reads only files not yet under the current key.
+      fileKeyId: String,
       uploadedBy: { type: Schema.Types.ObjectId, ref: "User" },
     },
     { timestamps: true },

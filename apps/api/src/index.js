@@ -31,6 +31,8 @@ import { receiptsRouter } from "./routes/receipts.js"
 import { restoreRunning, startBackupSchedule } from "./services/backup.js"
 import { moveLoanInsurance } from "./services/insuranceMove.js"
 import { moveTaxYears } from "./services/taxMove.js"
+import { checkEncryptionKeys } from "./services/encryptData.js"
+import { currentKeyId, encryptionOn } from "./lib/crypto.js"
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../..")
 dotenv.config({ path: path.join(repoRoot, ".env"), quiet: true })
@@ -45,7 +47,7 @@ app.use((req, res, next) => {
   rememberAppOrigin(req.headers["x-app-origin"])
   next()
 })
-app.get("/health", (req, res) => res.json({ ok: true }))
+app.get("/health", (req, res) => res.json({ ok: true, encryption: encryptionOn() ? "on" : "off" }))
 // While a backup is being restored nothing can be changed (it would be lost), and sign-in waits too.
 app.use((req, res, next) => {
   if (restoreRunning() && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
@@ -87,6 +89,10 @@ app.use((error, req, res, next) => {
 
 const port = Number(process.env.PORT || 4000)
 await mongoose.connect(process.env.MONGODB_URI)
+// A wrong key stops the server here, before anything is saved with it (see encryptData.js).
+await checkEncryptionKeys()
+if (encryptionOn()) console.log(`Encryption at rest is on (key ${currentKeyId()}).`)
+else console.warn("FIELD_ENCRYPTION_KEYS is not set: new files and bank details are saved unencrypted.")
 await seedIfEmpty()
 await closeStaleCalls()
 await moveLoanInsurance().catch((error) => console.error("Moving loan insurance to Property Info failed", error))

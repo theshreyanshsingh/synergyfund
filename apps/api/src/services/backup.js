@@ -11,7 +11,8 @@ import { fileURLToPath } from "node:url"
 import mongoose from "mongoose"
 import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand } from "@aws-sdk/client-s3"
 import { BackupFileCopy, BackupSetting, DocumentFile } from "../models/index.js"
-import { storageClient as s3Client, storageConfig, uploadsPath } from "./files.js"
+import { fileContext, resealObject, storageClient as s3Client, storageConfig, uploadsPath } from "./files.js"
+import { currentKeyId, encryptionOn } from "../lib/crypto.js"
 import { teamHour, teamTimezone, teamToday } from "../lib/dates.js"
 
 // Backups of all the workspace's data. Each backup is one gzipped file: a header line, then one line per record
@@ -20,12 +21,14 @@ import { teamHour, teamTimezone, teamToday } from "../lib/dates.js"
 // server's disk when S3 is not set up), with a small .json beside it describing it.
 //
 // Uploaded files (documents, photos, receipts) are copied once each into the backups area, so a restore can bring back
-// a file that was deleted since. A copy is removed only when no kept backup can need it any more.
+// a file that was deleted since. A copy is removed only when no kept backup can need it any more. A copy is the stored
+// file as it is, so it is encrypted when the file is; copies made before encryption are encrypted by the encryption job.
 
 const { EJSON } = mongoose.mongo.BSON
 const FORMAT = "synergifund-backup"
 const VERSION = 1
-const LOCAL_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../backups")
+// BACKUPS_DIR moves the folder (the tests use a scratch one).
+const LOCAL_ROOT = process.env.BACKUPS_DIR ? path.resolve(process.env.BACKUPS_DIR) : path.join(path.dirname(fileURLToPath(import.meta.url)), "../../backups")
 const ALWAYS_KEEP = 3
 const KEEP_CHOICES = [7, 14, 30, 60, 90]
 const BATCH = 500
@@ -342,18 +345,18 @@ const fileKey = (storage, storagePath) => `${storage || "local"}:${storagePath}`
 
 // Copies every uploaded file that has no backup copy yet, and notes copies whose document is gone.
 async function syncFileCopies() {
-  const docs = await DocumentFile.find({ storagePath: { $nin: [null, ""] } }).select("storage storagePath").lean()
+  const docs = await DocumentFile.find({ storagePath: { $nin: [null, ""] } }).select("storage storagePath fileKeyId").lean()
   const copies = await BackupFileCopy.find({}).lean()
   const have = new Map(copies.map((copy) => [fileKey(copy.storage, copy.storagePath), copy]))
   const live = new Map()
-  for (const doc of docs) live.set(fileKey(doc.storage, doc.storagePath), { storage: doc.storage || "local", storagePath: doc.storagePath })
+  for (const doc of docs) live.set(fileKey(doc.storage, doc.storagePath), { storage: doc.storage || "local", storagePath: doc.storagePath, keyId: doc.fileKeyId || "" })
   const todo = [...live.entries()].filter(([key]) => !have.has(key)).map(([, file]) => file)
   const counts = { total: live.size, copied: 0, missing: 0, skipped: 0 }
   await eachLimit(todo, COPY_PARALLEL, async (file) => {
     const result = await copyOut(file)
     counts[result] += 1
     if (result === "copied") {
-      await BackupFileCopy.updateOne({ storage: file.storage, storagePath: file.storagePath }, { $set: { copiedAt: new Date() }, $unset: { goneSince: 1 } }, { upsert: true })
+      await BackupFileCopy.updateOne({ storage: file.storage, storagePath: file.storagePath }, { $set: { copiedAt: new Date(), keyId: file.keyId }, $unset: { goneSince: 1 } }, { upsert: true })
     }
   })
   const gone = copies.filter((copy) => !live.has(fileKey(copy.storage, copy.storagePath)) && !copy.goneSince).map((copy) => copy._id)
@@ -361,6 +364,26 @@ async function syncFileCopies() {
   if (gone.length) await BackupFileCopy.updateMany({ _id: { $in: gone } }, { $set: { goneSince: new Date() } })
   if (back.length) await BackupFileCopy.updateMany({ _id: { $in: back } }, { $unset: { goneSince: 1 } })
   counts.kept = counts.total - counts.missing - counts.skipped
+  return counts
+}
+
+// Encrypts copies made before encryption, or moves them to the current key after a rotation (for encryptData.js).
+// Only copies not yet under the current key are read.
+export async function resealFileCopies() {
+  const current = currentKeyId()
+  const config = storageConfig()
+  const counts = { changed: 0, missing: 0 }
+  for (const copy of await BackupFileCopy.find({ keyId: { $ne: current } }).lean()) {
+    const place = copy.storage === "s3" ? { s3: true, key: `${config.prefix}/backups/${copyName(copy.storagePath)}` } : { s3: false, path: inside(LOCAL_ROOT, copyName(copy.storagePath)) }
+    try {
+      const { changed, keyId } = await resealObject(place, fileContext(copy.storagePath))
+      await BackupFileCopy.updateOne({ _id: copy._id }, { $set: { keyId } })
+      if (changed) counts.changed += 1
+    } catch (error) {
+      counts.missing += 1
+      console.error(`Encryption: the backup copy of ${copy.storagePath} could not be encrypted:`, error.message)
+    }
+  }
   return counts
 }
 
@@ -710,6 +733,7 @@ async function dailyTick() {
   if (settings.lastAutoDay === today || teamHour() < settings.hour) return
   const claimed = await BackupSetting.findOneAndUpdate({ key: "org", lastAutoDay: settings.lastAutoDay ?? null }, { $set: { lastAutoDay: today } }, { new: true })
   if (!claimed) return
+  await encryptBeforeBackup()
   let started
   try {
     started = startBackup({ kind: "daily", by: "Daily backup" })
@@ -721,6 +745,21 @@ async function dailyTick() {
   if (started.status === "failed") {
     retryAfter = Date.now() + 60 * 60 * 1000
     await BackupSetting.updateOne({ key: "org", lastAutoDay: today }, { $set: { lastAutoDay: settings.lastAutoDay ?? null } })
+  }
+}
+
+// Anything still saved unencrypted (a restored older backup, a file whose encryption failed) is encrypted before the
+// day's backup, so the backup holds it encrypted too. A failure here never stops the backup.
+async function encryptBeforeBackup() {
+  if (!encryptionOn()) return
+  try {
+    // Imported here because it imports this file.
+    const { encryptStoredData } = await import("./encryptData.js")
+    const done = await encryptStoredData()
+    const changed = done.companies + done.properties + done.logEntries + done.files + done.fileCopies
+    if (changed || done.missing) console.log("Daily encryption before the backup", done)
+  } catch (error) {
+    console.error("Daily encryption before the backup failed", error)
   }
 }
 

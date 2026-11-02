@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch-path=src --watch-path=../../packages/shared/src --watch-path=../../.env src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "db:encrypt": "node scripts/encrypt-data.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1146.0",

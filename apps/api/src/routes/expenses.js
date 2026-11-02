@@ -4,7 +4,7 @@ import { DocumentFile, Draw, Expense, ExpenseRequest, Property, Receipt, User } 
 import { writeZip } from "./documents.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { ownsProperty, propertyFilter } from "../services/access.js"
-import { saveUploadedFile, upload, withProofUrls } from "../services/files.js"
+import { saveUploadedFile, upload } from "../services/files.js"
 import { changeSummary, notify, recordActivity } from "../services/notify.js"
 import { teamToday } from "../lib/dates.js"
 import { costSheetCsv, costSheetName, costSheetWorkbook, expensesCsv, expensesWorkbook, exportName, quickbooksCsv, readFilters, trackingData } from "../services/expenseTracking.js"
@@ -77,8 +77,8 @@ expensesRouter.get(
     const expenses = await Expense.find(expenseScope).sort({ createdAt: -1 })
     const requestsById = new Map(requests.map((request) => [String(request._id), request]))
     res.json({
-      requests: await withProofUrls(requests.map(presentRequest)),
-      expenses: await withProofUrls(expenses.map((expense) => presentExpense(expense, requestsById.get(String(expense.requestId || ""))))),
+      requests: requests.map(presentRequest),
+      expenses: expenses.map((expense) => presentExpense(expense, requestsById.get(String(expense.requestId || "")))),
     })
   }),
 )
@@ -95,8 +95,7 @@ expensesRouter.get(
       sendError(res, 404, "That property is not available.")
       return
     }
-    const rows = await withProofUrls(data.rows.map((row) => ({ ...row, proofFileIds: row.fileIds })))
-    res.json({ ...data, rows: rows.map(({ proofFileIds, ...row }) => row), filters })
+    res.json({ ...data, filters })
   }),
 )
 
@@ -214,11 +213,6 @@ expensesRouter.get(
       return
     }
     const { property, sheet } = found
-    // Receipt photos open from the sheet, like they do in expense tracking (one lookup for every row).
-    const lists = [...sheet.groups.flatMap((group) => group.types), sheet.loanPayoffs]
-    const shown = await withProofUrls(lists.flatMap((entry) => entry.rows.map((row) => ({ ...row, proofFileIds: row.fileIds || [] }))))
-    let at = 0
-    for (const entry of lists) entry.rows = entry.rows.map(() => { const { proofFileIds, ...row } = shown[at++]; return row })
     res.json({
       property: { id: String(property._id), address: property.address, purchasePrice: property.purchasePrice ?? null, purchaseDate: property.purchaseDate || "", arv: property.arv ?? null },
       sheet,
@@ -314,7 +308,7 @@ expensesRouter.patch(
     await expense.save()
     const changes = changeSummary(before, expense.toObject(), COST_FIELDS)
     await recordActivity({ user: req.user, title: "Cost updated", detail: [before.title, changes || "Saved with no changes"].join(" · "), propertyId: expense.propertyId })
-    res.json({ expense: await withProofUrls(presentExpense(expense)) })
+    res.json({ expense: presentExpense(expense) })
   }),
 )
 
@@ -400,7 +394,7 @@ expensesRouter.post(
       event: "expense.submitted",
     })
     await recordActivity({ user: req.user, title: "Expense submitted", detail: request.title, propertyId: request.propertyId })
-    res.status(201).json({ request: await withProofUrls(presentRequest(request)) })
+    res.status(201).json({ request: presentRequest(request) })
   }),
 )
 
@@ -444,7 +438,7 @@ expensesRouter.post(
       postedBy: req.user._id,
     })
     await recordActivity({ user: req.user, title: "Cost added", detail: expense.title, propertyId: property._id })
-    res.status(201).json({ expense: await withProofUrls(presentExpense(expense)) })
+    res.status(201).json({ expense: presentExpense(expense) })
   }),
 )
 
@@ -536,7 +530,7 @@ expensesRouter.patch(
       })
     }
     await recordActivity({ user: req.user, title: "Expense request updated", detail: request.title, propertyId: request.propertyId })
-    res.json({ request: await withProofUrls(presentRequest(request)) })
+    res.json({ request: presentRequest(request) })
   }),
 )
 
@@ -579,7 +573,7 @@ expensesRouter.post(
       event: "expense.submitted",
     })
     await recordActivity({ user: req.user, title: "Expense submitted again", detail: request.title, propertyId: request.propertyId })
-    res.json({ request: await withProofUrls(presentRequest(request)) })
+    res.json({ request: presentRequest(request) })
   }),
 )
 
@@ -608,7 +602,7 @@ expensesRouter.post(
       await request.save()
       await recordActivity({ user: req.user, title: "Expense rejected", detail: request.title, propertyId: request.propertyId })
       await notify({ userIds: [request.requestedBy], roles: ["admin"], exceptUserIds: [req.user._id], title: "Expense rejected", body: `${request.title} was rejected. ${request.reviewNote}`, href: "/expenses", event: "expense.rejected" })
-      res.json({ request: await withProofUrls(presentRequest(request)) })
+      res.json({ request: presentRequest(request) })
       return
     }
     if (action === "needs_information") {
@@ -617,7 +611,7 @@ expensesRouter.post(
       request.reviewedBy = req.user._id
       await request.save()
       await notify({ userIds: [request.requestedBy], title: "Expense needs information", body: request.reviewNote, href: "/expenses", event: "expense.needs_information" })
-      res.json({ request: await withProofUrls(presentRequest(request)) })
+      res.json({ request: presentRequest(request) })
       return
     }
     // The second approval on a large request is an admin's (that is who is asked for it), not another finance click.
@@ -642,7 +636,7 @@ expensesRouter.post(
       request.reviewedBy = req.user._id
       await request.save()
       await notify({ roles: ["admin"], exceptUserIds: [req.user._id], title: "Second approval needed", body: `${request.title} is above $${APPROVAL_THRESHOLD.toLocaleString("en-US")}.`, href: "/expenses", event: "expense.second_approval" })
-      res.json({ request: await withProofUrls(presentRequest(request)) })
+      res.json({ request: presentRequest(request) })
       return
     }
     const decided = { status: "Approved", reviewNote: req.body.note || "", reviewedBy: req.user._id, ...(req.body.drawId ? { drawId: req.body.drawId } : {}) }
@@ -678,7 +672,7 @@ expensesRouter.post(
     const expense = posted[0]
     await notify({ userIds: [request.requestedBy], title: "Expense approved", body: `${request.title} posted to the property books.`, href: "/expenses", event: "expense.approved" })
     await recordActivity({ user: req.user, title: "Expense approved", detail: request.reapplied ? `${request.title} · reapplied` : request.title, propertyId: request.propertyId, alertExcept: [request.requestedBy] })
-    res.json({ request: await withProofUrls(presentRequest(request)), expense: await withProofUrls(presentExpense(expense)), expenses: await withProofUrls(posted.map((item) => presentExpense(item))) })
+    res.json({ request: presentRequest(request), expense: presentExpense(expense), expenses: posted.map((item) => presentExpense(item)) })
   }),
 )
 

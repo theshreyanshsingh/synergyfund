@@ -413,9 +413,13 @@ companiesRouter.post(
           created += 1
           linked += (await assignProperties(company, item.propertyIds, req.user)).length
         } else if (item.status === "update") {
-          await Company.updateOne({ _id: item.id }, { $set: { ...item.clean, updatedBy: req.user.name } })
+          // Saved through the record, which encrypts the bank details (an update query can't).
+          const company = await Company.findById(item.id)
+          if (!company) throw new Error("That company is no longer saved.")
+          company.set({ ...item.clean, updatedBy: req.user.name })
+          await company.save()
           updated += 1
-          if (item.propertyIds?.length) linked += (await assignProperties(await Company.findById(item.id), item.propertyIds, req.user)).length
+          if (item.propertyIds?.length) linked += (await assignProperties(company, item.propertyIds, req.user)).length
         } else if (item.status === "error") {
           errors.push({ row: item.row, name: item.name, message: item.message })
         }
