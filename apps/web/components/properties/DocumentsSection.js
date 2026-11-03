@@ -5,7 +5,8 @@ import { FolderBrowser } from "../documents/FolderBrowser"
 import { useApi } from "../../lib/useApi"
 
 // One property's documents in its folders. They are the same files its company shows under Documents › Properties.
-export function DocumentsSection({ property, writable, canDelete, initialFolder = "" }) {
+// The page keeps which folder is open (`folder`, `onFolder`), so its Back steps out of the folder.
+export function DocumentsSection({ property, writable, canDelete, folder, onFolder }) {
   const list = useApi(`/documents?propertyId=${property.id}`)
   const files = list.data?.items || []
   return (
@@ -25,7 +26,8 @@ export function DocumentsSection({ property, writable, canDelete, initialFolder 
           writable={writable}
           canDelete={canDelete}
           onChanged={list.reload}
-          initialFolder={initialFolder}
+          folder={folder}
+          onFolder={onFolder}
         />
       )}
     </section>

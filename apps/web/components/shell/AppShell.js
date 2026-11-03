@@ -13,6 +13,7 @@ import { InstallCard } from "../pwa/InstallCard"
 import { CallLayer } from "../calls/CallLayer"
 import { SoundAlerts } from "./SoundAlerts"
 import { DownloadTray } from "./DownloadTray"
+import { notePage } from "../../lib/back"
 
 const NARROW = "(max-width: 1100px)"
 
@@ -28,8 +29,10 @@ export function AppShell({ children }) {
   // Contractors have no sidebar, so their top bar shows what is waiting on Channels and Messages.
   const badges = useChatBadges(session?.user?.id, Boolean(session?.user?.role === "contractor" && can(session.user, PERMISSIONS.chatUse)))
 
+  // Notes each page opened, so a detail page's Back can say where it goes ("← Calendar").
   useEffect(() => {
     setMenuOpen(false)
+    notePage(pathname)
   }, [pathname])
 
   // On a phone the contractor's links scroll sideways; keep the current page's link in view.

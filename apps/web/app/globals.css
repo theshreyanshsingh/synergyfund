@@ -100,14 +100,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 /* Labels have every word capitalized: menus, buttons, titles, tabs, headings, table headers, field names and status
    pills. What people typed stays exactly as written (fields, messages, notes, file names, emails), and so do sentences.
-   Documents' folders and their ⋯ menus are in sentence case ("Create zip", "Replace file").
+   Documents' folders and their ⋯ menus are in sentence case ("Create zip", "Replace file"), and a Back says its page's
+   name as written ("← Financing and lender").
    All :where(), so a component's own text-transform (an uppercase eyebrow) still wins. */
 :where(h1, h2, h3, h4, h5, h6, th, legend, summary, button, label, a[role="button"], [role="tab"], [role="menuitem"]) { text-transform: capitalize; }
 :where(input, textarea, [contenteditable], td, p, small, em, blockquote, li, pre, code, .keep-case, .chat-nav-row, .palette-row, .paycal-pill, .paycal-attn, .cal-event, .cal-day-item, .cal-detail-title, .agent-download, .sr-only,
   .overview-attn-copy strong, .scope-line-head b, .draw-fold-title b, .draw-property-name b, .draw-lines-head b, .line-card-head b, .folder-copy strong,
   .chat-head-copy h2, .chat-results, .chat-results button, .chat-mention-menu, .chat-mention-menu button, .chat-text, .agent-history-row button, .agent-md h1, .agent-md h2, .agent-md h3, .agent-md h4, .agent-md th, .agent-title, .agent-history-row,
   .reader-tab, .sheet, .doc-html,
-  .folders button, .folders label, .folders h3, .row-menu.keep-case button) { text-transform: none; }
+  .folders button, .folders label, .folders h3, .row-menu.keep-case button, .back-link) { text-transform: none; }
 :where(.nav-link, .nav-label, .page-title, .stat-label, .pill, .role-pill, .doc-badge, .chat-nav-heading, .chat-nav-sub, .palette-label, .agent-label, .agent-draft-head span, .agent-email-field > span, .agent-send-main, .agent-send-menu a, .agent-send-menu button, .contractor-link, a.tool, a.primary, a.ghost, .field > span, .role-block > span, .property-figure > span, .overview-card-copy > span, .install-card strong, .agent-empty p, .chat-empty-main p, .paycal-group h2, .overview-projection > div > span, .draw-health) { text-transform: capitalize; }
 a { color: inherit; text-decoration: none; }
 
@@ -689,7 +690,9 @@ a { color: inherit; text-decoration: none; }
 .detail-bar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
 .detail-bar .page-title { font-size: 26px; }
 .detail-meta { margin: 6px 0 0; color: var(--muted); }
-.back-link { color: var(--muted); display: inline-block; margin-bottom: 6px; }
+.back-link { color: var(--muted); display: inline-block; max-width: 100%; margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: top; }
+button.back-link { padding: 0; border: 0; background: none; text-align: left; }
+.back-link:hover { color: var(--text); }
 .detail-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .detail-actions .primary { margin-left: 0; }
 .detail-meta-below { display: none; }

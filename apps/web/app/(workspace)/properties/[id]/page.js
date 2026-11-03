@@ -3,7 +3,7 @@
 import { use, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { LINE_STATUSES, PROPERTY_LABELS, STAGES, STRATEGIES, can, cityLine, isPaidOff, rehabLeft, splitCity } from "@synergifund/shared"
+import { LINE_STATUSES, PROPERTY_FOLDERS, PROPERTY_LABELS, STAGES, STRATEGIES, can, cityLine, isPaidOff, rehabLeft, splitCity } from "@synergifund/shared"
 import { FormSheet } from "../../../../components/ui/FormSheet"
 import { DrawEditor } from "../../../../components/draws/DrawEditor"
 import { FinancingSection } from "../../../../components/properties/FinancingSection"
@@ -16,6 +16,7 @@ import { ReportSheet } from "../../../../components/properties/ReportSheet"
 import { money } from "../../../../lib/format"
 import { api } from "../../../../lib/api"
 import { useApi } from "../../../../lib/useApi"
+import { useBack } from "../../../../lib/back"
 import { useSession } from "../../../../components/shell/Providers"
 import { StatusPill } from "../../../../components/ui/StatusPill"
 import { PageSpinner } from "../../../../components/ui/Spinner"
@@ -32,7 +33,10 @@ export default function PropertyDetailPage({ params }) {
   const search = useSearchParams()
   const session = useSession()
   const detail = useApi(`/properties/${id}`)
-  const [section, setSection] = useState(() => (["overview", "info", "photos", "draws", "expenses", "arv", "financing", "documents"].includes(search.get("tab")) ? search.get("tab") : "overview"))
+  const back = useBack()
+  // The tab, and on Documents the folder, are in the address: each is a step of its own, so Back goes back one at a time.
+  const section = ["overview", "info", "photos", "draws", "expenses", "arv", "financing", "documents"].includes(search.get("tab")) ? search.get("tab") : "overview"
+  const openFolder = section === "documents" ? search.get("folder") || "" : ""
   const [note, setNote] = useState("")
   const [message, setMessage] = useState("")
   const [termsMessage, setTermsMessage] = useState("")
@@ -99,6 +103,15 @@ export default function PropertyDetailPage({ params }) {
   ]
   // The Documents tab shows the same files the property's company shows under Documents › Properties.
   if (internal) tabs.push({ id: "info", label: "Property Info" }, { id: "photos", label: "Photos" }, { id: "draws", label: "Draws" }, ...(seesExpenses ? [{ id: "expenses", label: "Expenses" }] : []), { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" }, { id: "documents", label: "Documents" })
+
+  // Opens a tab (or a folder on Documents) as a new step; Back names the step you left ("← Documents").
+  function show(tab, folder = "") {
+    const query = new URLSearchParams()
+    if (tab !== "overview") query.set("tab", tab)
+    if (folder) query.set("folder", folder)
+    const leaving = PROPERTY_FOLDERS.find((item) => item.id === openFolder)?.name || tabs.find((item) => item.id === section)?.label || "Overview"
+    back.to(`/properties/${id}${query.toString() ? `?${query}` : ""}`, leaving)
+  }
 
   if (!internal) {
     return (
@@ -201,7 +214,7 @@ export default function PropertyDetailPage({ params }) {
     >
       <div className="property-switch" role="tablist" aria-label="Property sections">
         {tabs.map((tab) => (
-          <button key={tab.id} type="button" role="tab" aria-selected={section === tab.id} className={section === tab.id ? "is-on" : ""} onClick={() => setSection(tab.id)}>{tab.label}</button>
+          <button key={tab.id} type="button" role="tab" aria-selected={section === tab.id} className={section === tab.id ? "is-on" : ""} onClick={() => show(tab.id)}>{tab.label}</button>
         ))}
       </div>
 
@@ -344,7 +357,7 @@ export default function PropertyDetailPage({ params }) {
       )}
 
       {section === "documents" && (
-        <DocumentsSection property={property} writable={Boolean(session?.user && can(session.user, "documents.write"))} canDelete={Boolean(session?.user && can(session.user, "documents.delete"))} initialFolder={search.get("folder") || ""} />
+        <DocumentsSection property={property} writable={Boolean(session?.user && can(session.user, "documents.write"))} canDelete={Boolean(session?.user && can(session.user, "documents.delete"))} folder={openFolder} onFolder={(folder) => show("documents", folder)} />
       )}
 
       {section === "info" && (

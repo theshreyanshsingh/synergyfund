@@ -50,12 +50,15 @@ function startDownload(files, name, { zip = false } = {}) {
 // With `onlyProperty`, the same folders for one property on its own page (the same files the company shows).
 // A property opens on its Quick access documents and its folders. Click a file to open it; everything else is in its ⋯ menu.
 // Create zip turns on tick boxes: tick files and folders (ticks stay while you move between folders), then Download zip.
-export function FolderBrowser({ companyId = "", companyName = "", properties: owned = [], onlyProperty = null, files, writable, canDelete, canEdit = () => true, onChanged, initialProperty = "", initialFolder = "" }) {
+// With `onFolder` (a property's page, with `onlyProperty`), the page keeps which folder is open: `folder`, and
+// `onFolder(id)` to open one ("" for all folders), so the page's Back and the browser's step out of it.
+export function FolderBrowser({ companyId = "", companyName = "", properties: owned = [], onlyProperty = null, files, writable, canDelete, canEdit = () => true, onChanged, initialProperty = "", initialFolder = "", folder: openFolder = "", onFolder = null }) {
   const properties = onlyProperty ? [onlyProperty] : owned
   const top = onlyProperty ? onlyProperty.id : ""
   const startProperty = onlyProperty ? onlyProperty.id : properties.some((item) => item.id === initialProperty) ? initialProperty : ""
   const startFolders = startProperty ? PROPERTY_FOLDERS : COMPANY_FOLDERS
-  const [at, setAt] = useState({ propertyId: startProperty, folder: startFolders.some((item) => item.id === initialFolder) ? initialFolder : "" })
+  const [place, setPlace] = useState({ propertyId: startProperty, folder: startFolders.some((item) => item.id === initialFolder) ? initialFolder : "" })
+  const at = onFolder ? { propertyId: top, folder: PROPERTY_FOLDERS.some((item) => item.id === openFolder) ? openFolder : "" } : place
   const [query, setQuery] = useState("")
   const [selecting, setSelecting] = useState(false)
   const [selected, setSelected] = useState([])
@@ -128,10 +131,15 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
 
   // Moving between folders keeps what is ticked.
   function go(next) {
-    setAt(onlyProperty ? { ...next, propertyId: onlyProperty.id } : next)
+    if (onFolder) onFolder(next.folder)
+    else setPlace(onlyProperty ? { ...next, propertyId: onlyProperty.id } : next)
+  }
+
+  // A new folder starts without a search, whether you opened it here or went back to it.
+  useEffect(() => {
     setQuery("")
     setError("")
-  }
+  }, [at.propertyId, at.folder])
 
   function toggle(id) {
     setError("")
