@@ -93,6 +93,7 @@ export function AppShell({ children }) {
   if (session.user.role === "contractor") {
     return (
       <div className="app is-contractor">
+        <SkipLink />
         <header className="contractor-bar">
           <Link href="/properties" className="contractor-brand">
             <span className="mark">S</span>
@@ -113,7 +114,7 @@ export function AppShell({ children }) {
             <button type="button" className="tool" onClick={() => session.signOut()}>Logout</button>
           </div>
         </header>
-        <main className="main">
+        <main className="main" id="main" tabIndex={-1}>
           <InstallCard className="bar-install" />
           {children}
         </main>
@@ -128,12 +129,14 @@ export function AppShell({ children }) {
 
   return (
     <div className={shellClass}>
+      {/* Keyboard and screen-reader users jump past the menu to the page. */}
+      <SkipLink />
       <button type="button" className="nav-toggle" aria-label="Open sidebar" onClick={toggleMenu}>
         <Icon name="menu" size={18} />
       </button>
       <button type="button" className="menu-backdrop" aria-label="Close sidebar" onClick={() => setMenuOpen(false)} />
       <Sidebar user={session.user} onSearch={openSearch} onToggle={toggleMenu} onNavigate={() => setMenuOpen(false)} onAgent={openAgent} />
-      <main className="main">
+      <main className="main" id="main" tabIndex={-1}>
         <InstallCard className="bar-install main-install" />
         {children}
       </main>
@@ -163,5 +166,21 @@ function ThemeToggle() {
     <button type="button" className="icon-btn contractor-theme" aria-label={dark ? "Light mode" : "Dark mode"} onClick={toggle}>
       <Icon name={dark ? "sun" : "moon"} size={16} />
     </button>
+  )
+}
+
+// "Skip to content": moves focus to the page (without adding #main to the address or a step to Back).
+function SkipLink() {
+  return (
+    <a
+      href="#main"
+      className="skip-link"
+      onClick={(event) => {
+        event.preventDefault()
+        document.getElementById("main")?.focus()
+      }}
+    >
+      Skip to content
+    </a>
   )
 }

@@ -43,7 +43,8 @@ export function trackActivity(req, res, next) {
     // Chat messages and call plumbing (AI notes speech pieces every few seconds, declines, test rings) are not activity.
     // Nor is someone's own use of the Agent (temporary chats, thumbs, pins, saved prompts): what counts there, like a
     // question or a deleted chat, is recorded by the Agent routes themselves.
-    if (path.startsWith("/chat/") || path.startsWith("/calls/") || path.startsWith("/agent/")) return
+    // Saving how the Tasks page was left is not activity either.
+    if (path.startsWith("/chat/") || path.startsWith("/calls/") || path.startsWith("/agent/") || path === "/tasks/view") return
     Activity.create({ actorId: req.user._id, actorName: req.user.name, title: fallbackTitle(req, path), detail: fallbackDetail(req) }).catch((error) => console.error("Activity log failed", error))
   })
   next()

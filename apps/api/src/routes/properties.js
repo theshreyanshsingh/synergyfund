@@ -491,6 +491,8 @@ propertiesRouter.get(
         amount: bill.amount ?? null,
         due: bill.due || "",
         category: bill.category || "",
+        // Unpaid and past its day (the team's date), as Home and the calendar call it.
+        overdue: Boolean(bill.due) && bill.due < teamToday(),
       })),
       draws: canDraws ? {
         figures,

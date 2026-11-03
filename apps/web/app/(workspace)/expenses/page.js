@@ -14,6 +14,9 @@ import { CameraCapture } from "../../../components/photos/CameraCapture"
 import { ReceiptSheet } from "../../../components/receipts/ReceiptSheet"
 import { ExpenseTracking } from "../../../components/expenses/ExpenseTracking"
 
+// An empty value, in grey.
+const BLANK = <span className="is-empty-text">Not entered</span>
+
 export default function ExpensesPage() {
   const session = useSession()
   const list = useApi("/expenses")
@@ -321,7 +324,7 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camer
           <div><dt>Amount</dt><dd>{dollars(item.amount)}</dd></div>
           {item.receiptId && item.book === "Posted" && <div><dt>Category</dt><dd>{item.category}</dd></div>}
           <div><dt>Status</dt><dd>{item.status}</dd></div>
-          <div><dt>Vendor</dt><dd>{item.vendor || "Not entered"}</dd></div>
+          <div><dt>Vendor</dt><dd>{item.vendor || BLANK}</dd></div>
           <div><dt>Part of the house</dt><dd>{line?.title || "Whole property"}</dd></div>
           {item.note && <div className="wide"><dt>Note</dt><dd>{item.note}</dd></div>}
           {item.reviewNote && <div className="wide"><dt>Review</dt><dd>{item.reviewNote}</dd></div>}

@@ -56,7 +56,7 @@ export const Sidebar = memo(function Sidebar({ user, onSearch, onToggle, onNavig
   }
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" aria-label="Sidebar">
       <div className="brand-row">
         <span className="mark">S</span>
         <span className="brand-name">SynergiFund</span>
@@ -148,7 +148,7 @@ function SidebarNav({ primary, sections, onNavigate, onAgent, chat, me }) {
   }
   useChatEvents({ "message:new": onMessage, read: refreshChat, "channel:remove": refreshChat, "chat:refresh": refreshChat, reconnect: refreshChat, "notification:new": onNotification }, chat)
   return (
-    <nav className="nav">
+    <nav className="nav" aria-label="Menu">
       {primary.map((item) => (
         <NavLink key={item.label} item={item} count={counts[item.countKey] || 0} onNavigate={onNavigate} onAgent={item.href === "/knowledge" ? onAgent : null} />
       ))}

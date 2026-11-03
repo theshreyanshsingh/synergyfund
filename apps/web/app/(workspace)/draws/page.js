@@ -560,7 +560,7 @@ function LineSheet({ sheet, onDraw, onScope }) {
           ))}
           {!rows.length && (
             <tr className="is-other">
-              <th className="row-number" />
+              <th className="row-number"><span className="sr-only">Row</span></th>
               <td className="pin-col">No line items yet</td>
               <td className="line-description">
                 {onScope ? <button type="button" className="line-empty-action" onClick={onScope}>Add the scope of work</button> : "Import the workbook to see each line of the budget."}
@@ -574,7 +574,7 @@ function LineSheet({ sheet, onDraw, onScope }) {
         </tbody>
         <tfoot>
           <tr>
-            <th className="row-number" />
+            <th className="row-number"><span className="sr-only">Row</span></th>
             <td className="pin-col">TOTAL</td>
             {described && <td className="line-description" />}
             <td className="num">{cash(total.budget)}</td>

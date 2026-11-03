@@ -63,17 +63,17 @@ export default function StressTestPage() {
           <span className="stress-sub">{result.atRisk ? `${plural(result.atRisk, "house")} at risk` : "No house at risk"} · through {dayLabel(result.until)}</span>
         </div>
         <dl className="stress-lines">
-          <div><dt>Short when loans come due</dt><dd>{money(result.cash.shortfalls)}</dd><small>The new loan or the sale doesn't cover the old loans</small></div>
-          <div><dt>Holding costs</dt><dd>{money(result.cash.holding)}</dd><small>Payments, taxes and insurance on houses with no rent, until they are sold or refinanced</small></div>
-          <div><dt>Rentals losing money</dt><dd>{money(result.cash.rentalLosses)}</dd><small>Rent under the scenario doesn't cover the costs</small></div>
-          <div><dt>Rehab overruns</dt><dd>{money(result.cash.overruns)}</dd><small>{data.seesRehab ? `${scenario.rehabOverrun}% over on the rehab still to do` : "Not counted: needs access to draws"}</small></div>
-          <div className="stress-back"><dt>Coming back</dt><dd>{money(result.cash.rentSurplus + result.cash.cashOut)}</dd><small>{money(result.cash.rentSurplus)} rent left over on rentals that make money{result.cash.cashOut ? `, ${money(result.cash.cashOut)} more from refinances and sales than the loans they pay off` : ""}</small></div>
+          <div><dt>Short when loans come due</dt><dd>{money(result.cash.shortfalls)}</dd><dd className="stress-note">The new loan or the sale doesn't cover the old loans</dd></div>
+          <div><dt>Holding costs</dt><dd>{money(result.cash.holding)}</dd><dd className="stress-note">Payments, taxes and insurance on houses with no rent, until they are sold or refinanced</dd></div>
+          <div><dt>Rentals losing money</dt><dd>{money(result.cash.rentalLosses)}</dd><dd className="stress-note">Rent under the scenario doesn't cover the costs</dd></div>
+          <div><dt>Rehab overruns</dt><dd>{money(result.cash.overruns)}</dd><dd className="stress-note">{data.seesRehab ? `${scenario.rehabOverrun}% over on the rehab still to do` : "Not counted: needs access to draws"}</dd></div>
+          <div className="stress-back"><dt>Coming back</dt><dd>{money(result.cash.rentSurplus + result.cash.cashOut)}</dd><dd className="stress-note">{money(result.cash.rentSurplus)} rent left over on rentals that make money{result.cash.cashOut ? `, ${money(result.cash.cashOut)} more from refinances and sales than the loans they pay off` : ""}</dd></div>
         </dl>
       </section>
 
       <section className="panel stress-compare" aria-label="Today and under the scenario">
         <table>
-          <thead><tr><th scope="col" /><th scope="col">Today</th><th scope="col">Under the scenario</th></tr></thead>
+          <thead><tr><th scope="col"><span className="sr-only">Figure</span></th><th scope="col">Today</th><th scope="col">Under the scenario</th></tr></thead>
           <tbody>
             <tr><th scope="row">Value</th><td>{money(result.today.value)}</td><td>{money(result.stressed.value)}</td></tr>
             <tr><th scope="row">Loans{result.today.debtWithoutValue > 0 && <small>{money(result.today.debtWithoutValue)} on houses with no value, left out of equity and loan to value</small>}</th><td>{money(result.today.debt)}</td><td>{money(result.stressed.debt)}</td></tr>

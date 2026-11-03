@@ -25,8 +25,8 @@ export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loa
     <table className={["grid", compact ? "is-compact" : "", folding ? "is-collapsible" : ""].filter(Boolean).join(" ")}>
         <thead>
           <tr>
-            {onMove && <th className="drag-col" aria-label="Reorder" />}
-            {selectable && <th className="check-col" />}
+            {onMove && <th className="drag-col"><span className="sr-only">Reorder</span></th>}
+            {selectable && <th className="check-col"><span className="sr-only">Select</span></th>}
             {columns.map((column) => {
               const sorting = column.sort && onSort
               const on = sorting && sort?.key === column.key
@@ -36,7 +36,7 @@ export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loa
                     <button type="button" className={on ? "th-sort is-on" : "th-sort"} onClick={() => onSort(column.key)}>
                       {column.label}<span aria-hidden="true">{on ? (sort.dir === "asc" ? "↑" : "↓") : "↕"}</span>
                     </button>
-                  ) : column.label}
+                  ) : column.label || <span className="sr-only">{column.srLabel || "Actions"}</span>}
                 </th>
               )
             })}
@@ -92,9 +92,9 @@ function Row({ row, columns, on, onToggle, onRow, onOpen, selectable, sortable, 
                     data-primary={index === 0 ? "true" : undefined}
                     className={cellClass(column)}
                   >
-                    {column.avatar ? (
+                    {column.avatar || column.icon ? (
                       <span className="person">
-                        <span className="avatar">{initials(column.avatar(row))}</span>
+                        {column.icon ? <span className="avatar is-icon"><Icon name={column.icon(row)} size={14} /></span> : <span className="avatar">{initials(column.avatar(row))}</span>}
                         <span>{column.render ? column.render(row) : row[column.key]}</span>
                       </span>
                     ) : column.render ? column.render(row) : row[column.key]}

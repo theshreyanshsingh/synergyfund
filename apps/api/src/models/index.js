@@ -39,6 +39,9 @@ export const User = register(
       overviewHidden: [String],
       // The Home sections this person hid (Customize Home): "greeting", "attention", "today", "tasks", "catchup".
       homeHidden: [String],
+      // How this person left the Tasks page (group, sort, filters, hidden columns), as `main`, and a property's
+      // Tasks tab as `property`.
+      taskViews: Schema.Types.Mixed,
       // The call ringtone and message chime this person picked in Settings.
       sounds: { ringtone: String, chime: String },
       // The AI teammate's account: it posts in property chats, never signs in, and gets no notifications.
@@ -541,11 +544,38 @@ export const Task = register(
       priority: { type: String, default: "Medium" },
       labels: [String],
       done: { type: Boolean, default: false },
+      // Not started, In progress or Waiting while open (see taskStatus); the status it had before it was completed,
+      // to go back to when it is reopened.
+      status: { type: String, default: "" },
+      previousStatus: String,
+      // Shown as Description.
       notes: String,
       reviewId: { type: Schema.Types.ObjectId, ref: "ReviewItem" },
+      // Who added it (Assigned by); older tasks have no one.
+      createdBy: { type: Schema.Types.ObjectId, ref: "User" },
+      createdByName: String,
+      // The task's own log: "Status changed to Waiting" by Roman, and when.
+      history: [{ at: { type: Date, default: Date.now }, byName: String, text: String, _id: false }],
     },
     { timestamps: true },
   ),
+)
+
+// A comment on a task (a reply has `parentId`), with @mentions and files (DocumentFile kind "task").
+export const TaskComment = register(
+  "TaskComment",
+  new Schema(
+    {
+      taskId: { type: Schema.Types.ObjectId, ref: "Task", required: true },
+      parentId: { type: Schema.Types.ObjectId, ref: "TaskComment" },
+      userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+      userName: String,
+      text: { type: String, default: "" },
+      mentionIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      attachments: [{ fileId: { type: Schema.Types.ObjectId, ref: "Document" }, name: String, mime: String, size: Number, _id: false }],
+    },
+    { timestamps: true },
+  ).index({ taskId: 1, createdAt: 1 }),
 )
 
 export const Bill = register(

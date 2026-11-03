@@ -17,6 +17,9 @@ import { api } from "../../../../lib/api"
 import { money } from "../../../../lib/format"
 import { useApi } from "../../../../lib/useApi"
 
+// An empty value, in grey.
+const BLANK = <span className="is-empty-text">Not entered</span>
+
 const TABS = ["overview", "properties", "documents"]
 
 function plural(count, one, many) {
@@ -418,7 +421,7 @@ function CopyRow({ label, value, secret = false }) {
   return (
     <div className="copy-row">
       <dt>{label}</dt>
-      <dd className={value ? "" : "is-empty"}>{value ? masked : "Not entered"}</dd>
+      <dd className={value ? "" : "is-empty"}>{value ? masked : BLANK}</dd>
       {value && (
         <span className="copy-actions">
           {secret && <button type="button" onClick={() => setShown(!shown)} aria-label={shown ? `Hide ${label}` : `Show ${label}`}><Icon name="eye" size={14} /> {shown ? "Hide" : "Show"}</button>}
@@ -452,7 +455,7 @@ function Fact({ label, value, wide }) {
   return (
     <div className={wide ? "wide" : undefined}>
       <dt>{label}</dt>
-      <dd>{value || "Not entered"}</dd>
+      <dd>{value || BLANK}</dd>
     </div>
   )
 }

@@ -32,7 +32,7 @@ export const documentsRouter = Router()
 
 // Receipt photos belong to their receipt (one receipt can be filed on several properties) and open from its expenses.
 // Files attached to an Agent question belong to that person's chat.
-const HIDDEN_KINDS = ["chat", "comp", "receipt-scan", "agent"]
+const HIDDEN_KINDS = ["chat", "comp", "receipt-scan", "agent", "task"]
 // Receipts and weekly photos are referenced by expenses and photo sets, and draw workbooks hold draw money,
 // so they stay where they were filed.
 const PINNED_KINDS = ["receipt", "photo", "import"]
@@ -89,7 +89,8 @@ async function presentMany(files, user = null) {
 // Contractors only reach files on their own properties, or files they uploaded.
 async function visibleFile(req, id) {
   const file = await DocumentFile.findById(id).catch(() => null)
-  if (!file || file.kind === "chat") return null
+  // Chat and task comment files open from their message or task, for the people who can see it.
+  if (!file || file.kind === "chat" || file.kind === "task") return null
   if (file.kind === "agent") return String(file.uploadedBy || "") === String(req.user._id) ? file : null
   if (req.user.role !== "contractor") return file
   if (file.uploadedBy && String(file.uploadedBy) === String(req.user._id)) return file

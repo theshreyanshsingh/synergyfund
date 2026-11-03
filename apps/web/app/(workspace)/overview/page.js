@@ -13,7 +13,7 @@ import { PageSpinner } from "../../../components/ui/Spinner"
 import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
 import { useApi } from "../../../lib/useApi"
-import { money as formatMoney } from "../../../lib/format"
+import { day, money as formatMoney } from "../../../lib/format"
 
 const LINE_COLORS = ["var(--ink)", "var(--good)", "var(--warn)"]
 const WINDOWS = [30, 60, 90]
@@ -192,7 +192,7 @@ function Projection({ days, projection }) {
         {!expenses.length && <li><span>No expenses were posted in the past {days} days.</span></li>}
       </ul>
       {scheduled.length > 0 && (
-        <p className="overview-note">Already scheduled, not added to the lines: {scheduled.map((item) => `${item.title} ${formatMoney(item.amount)} on ${item.due}`).join(" · ")}.</p>
+        <p className="overview-note">Already scheduled, not added to the lines: {scheduled.map((item) => `${item.title} ${formatMoney(item.amount)} on ${day(item.due)}`).join(" · ")}.</p>
       )}
     </section>
   )
@@ -209,9 +209,18 @@ function LineChart({ labels = [], lines = [], money }) {
   const xAt = (index) => pad.left + (labels.length <= 1 ? innerW / 2 : (index / (labels.length - 1)) * innerW)
   const yAt = (value) => pad.top + innerH - (value / max) * innerH
   const ticks = [max, max / 2, 0]
+  // What a screen reader says instead of the picture: each line from its first month to now, and the forecast.
+  const amount = (value) => (money ? formatMoney(value) : String(Math.round(value)))
+  const summary = lines.map((line) => {
+    const points = line.points || []
+    if (!points.length) return `${line.name}: no data`
+    if (points.length === 1) return `${line.name}: ${amount(points[0])} in ${labels[0]}`
+    const now = points.length - 2
+    return `${line.name}: ${amount(points[0])} in ${labels[0]}${now > 0 ? `, ${amount(points[now])} in ${labels[now]}` : ""}, forecast ${amount(points.at(-1))} in ${labels[points.length - 1]}`
+  }).join(". ")
 
   return (
-    <svg className="overview-line" viewBox={`0 0 ${width} ${height}`} role="img">
+    <svg className="overview-line" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={summary || "No data yet"}>
       {ticks.map((tick) => (
         <g key={tick}>
           <line x1={pad.left} x2={width - pad.right} y1={yAt(tick)} y2={yAt(tick)} className="overview-gridline" />

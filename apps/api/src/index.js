@@ -13,6 +13,7 @@ import { expensesRouter } from "./routes/expenses.js"
 import { drawsRouter } from "./routes/draws.js"
 import { documentsRouter } from "./routes/documents.js"
 import { workspaceRouter } from "./routes/workspace.js"
+import { tasksRouter } from "./routes/tasks.js"
 import { nativeDecline, pushRouter } from "./routes/push.js"
 import { agentRouter } from "./routes/agent.js"
 import { chatRouter } from "./routes/chat.js"
@@ -75,6 +76,7 @@ api.use("/calls", callsRouter)
 api.use("/teammate", teammateRouter)
 api.use("/backups", backupsRouter)
 api.use("/receipts", receiptsRouter)
+api.use("/tasks", tasksRouter)
 api.use(workspaceRouter)
 app.use(api)
 

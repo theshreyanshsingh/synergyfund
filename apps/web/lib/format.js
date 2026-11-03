@@ -19,3 +19,11 @@ export function when(value) {
   if (!value) return ""
   return new Date(value).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
 }
+
+// A day (YYYY-MM-DD) as "Oct 30", with the year when it isn't this year ("Oct 30, 2027"). Anything else as given.
+export function day(key) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(key || ""))
+  if (!match) return key || ""
+  const [year, month, date] = match.slice(1).map(Number)
+  return new Date(year, month - 1, date, 12).toLocaleDateString("en-US", { month: "short", day: "numeric", ...(year !== new Date().getFullYear() ? { year: "numeric" } : {}) })
+}

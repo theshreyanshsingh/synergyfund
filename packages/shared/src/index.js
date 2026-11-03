@@ -465,6 +465,16 @@ export function permissionOverrides(role, selected) {
 
 export const TASK_LABELS = ["EMD", "Mortgage payment", "Draw", "Verify", "Inspection", "Closing", "Insurance", "Taxes"]
 
+// A task's status, the same four for everyone (no editing them). Completed is the task's `done`; a task saved before
+// statuses existed is Not started until it is done.
+export const TASK_STATUSES = ["Not started", "In progress", "Waiting", "Completed"]
+export const TASK_PRIORITIES = ["High", "Medium", "Low"]
+
+export function taskStatus(task) {
+  if (task?.done) return "Completed"
+  return TASK_STATUSES.includes(task?.status) && task.status !== "Completed" ? task.status : "Not started"
+}
+
 export const PROPERTY_LABELS = ["Financed", "Refinanced", "Flip", "Hold", "Rent"]
 
 // The first five are the Quick Access documents on a property (see QUICK_ACCESS).

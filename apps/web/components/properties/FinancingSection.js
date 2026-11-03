@@ -10,6 +10,9 @@ import { StatusPill } from "../ui/StatusPill"
 import { api } from "../../lib/api"
 import { money } from "../../lib/format"
 
+// An empty value, in grey.
+const BLANK = <span className="is-empty-text">Not entered</span>
+
 export function dayLabel(value) {
   const [year, month, day] = String(value || "").slice(0, 10).split("-").map(Number)
   if (!year || !month || !day) return ""
@@ -118,14 +121,14 @@ export function FinancingSection({ propertyId, property, loans, writable, onChan
                   <div><dt>Monthly payment</dt><dd>{money(loan.payment)}</dd></div>
                   <div>
                     <dt>Payment due</dt>
-                    <dd>{loan.paymentDay ? `${ordinal(loan.paymentDay)} of the month` : "Not entered"}</dd>
+                    <dd>{loan.paymentDay ? `${ordinal(loan.paymentDay)} of the month` : BLANK}</dd>
                     {loan.nextPaymentDue && <small>Next {dayLabel(loan.nextPaymentDue)}</small>}
                   </div>
-                  <div className="is-row"><dt>Loan type</dt><dd>{loan.loanType || "Not entered"}</dd></div>
-                  <div><dt>Interest rate</dt><dd>{rateLabel(loan.interestRate) || "Not entered"}</dd></div>
-                  <div className="is-wide"><dt>Servicer</dt><dd>{loan.servicer || "Not entered"}</dd></div>
+                  <div className="is-row"><dt>Loan type</dt><dd>{loan.loanType || BLANK}</dd></div>
+                  <div><dt>Interest rate</dt><dd>{rateLabel(loan.interestRate) || BLANK}</dd></div>
+                  <div className="is-wide"><dt>Servicer</dt><dd>{loan.servicer || BLANK}</dd></div>
                   <div className="is-row"><dt>Origination date</dt><dd>{loan.originationDate ? dayLabel(loan.originationDate) : "—"}</dd></div>
-                  <div><dt>Maturity date</dt><dd>{loan.maturity ? dayLabel(loan.maturity) || loan.maturity : "Not entered"}</dd></div>
+                  <div><dt>Maturity date</dt><dd>{loan.maturity ? dayLabel(loan.maturity) || loan.maturity : BLANK}</dd></div>
                   <div className="is-row"><dt>Terms</dt><dd>{loan.termsStatus || "Recorded"}</dd></div>
                 </dl>
                 {(loan.terms || loan.lenderTerms) && <p className="loan-terms">{[loan.terms, loan.lenderTerms].filter(Boolean).join(" · ")}</p>}

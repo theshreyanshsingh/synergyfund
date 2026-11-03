@@ -9,7 +9,7 @@ import { MultiSelect } from "../../../components/ui/MultiSelect"
 import { Icon } from "../../../components/ui/Icon"
 import { PageSpinner } from "../../../components/ui/Spinner"
 import { api } from "../../../lib/api"
-import { money } from "../../../lib/format"
+import { day, money } from "../../../lib/format"
 import { useApi } from "../../../lib/useApi"
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -161,7 +161,7 @@ function CalendarScreen() {
                 <i className={`tone-${event.tone}`} />
                 <span>
                   <strong>{event.title}</strong>
-                  <em>{event.detail} · {event.date}</em>
+                  <em>{event.detail} · {day(event.date)}</em>
                 </span>
               </button>
             ))}
@@ -231,8 +231,9 @@ function MonthView({ cursor, events, today, selected, onDay, onItem }) {
         const key = iso(cell.date)
         const matches = sortDay(events.filter((event) => event.date === key))
         return (
-          <div key={key} role="button" tabIndex={0} className={`paycal-cell${cell.inMonth ? "" : " is-outside"}${key === selected ? " is-selected" : ""}`} onClick={() => onDay(key)} onKeyDown={(event) => { if (event.key === "Enter" && event.target === event.currentTarget) onDay(key) }}>
-            <span className={key === today ? "paycal-num is-today" : "paycal-num"}>{cell.date.getDate()}</span>
+          // The day number is the day's button (keyboards, screen readers); a click anywhere else in the cell does the same.
+          <div key={key} className={`paycal-cell${cell.inMonth ? "" : " is-outside"}${key === selected ? " is-selected" : ""}`} onClick={() => onDay(key)}>
+            <button type="button" className={key === today ? "paycal-num is-today" : "paycal-num"} aria-label={`${cell.date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}${matches.length ? `, ${matches.length} ${matches.length === 1 ? "item" : "items"}` : ""}`} aria-current={key === today ? "date" : undefined} onClick={(click) => { click.stopPropagation(); onDay(key) }}>{cell.date.getDate()}</button>
             {matches.slice(0, 3).map((event) => (
               <button key={event.id} type="button" className={`paycal-pill tone-${event.tone}`} onClick={(click) => { click.stopPropagation(); onItem(event) }}>
                 {event.kind === "event" && !event.allDay && <b>{shortTime(event.start)}</b>}{event.title}

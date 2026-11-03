@@ -19,6 +19,7 @@ import { useApi } from "../../../../lib/useApi"
 import { useBack } from "../../../../lib/back"
 import { useSession } from "../../../../components/shell/Providers"
 import { StatusPill } from "../../../../components/ui/StatusPill"
+import { RowMenu } from "../../../../components/ui/RowMenu"
 import { PageSpinner } from "../../../../components/ui/Spinner"
 import { DetailFrame } from "../../../../components/ui/DetailFrame"
 import { CameraCapture } from "../../../../components/photos/CameraCapture"
@@ -26,6 +27,7 @@ import { Icon } from "../../../../components/ui/Icon"
 import { ExpenseTracking } from "../../../../components/expenses/ExpenseTracking"
 import { CostSheet } from "../../../../components/expenses/CostSheet"
 import { AddReceipt } from "../../../../components/receipts/AddReceipt"
+import { TaskBoard } from "../../../../components/tasks/TaskBoard"
 
 export default function PropertyDetailPage({ params }) {
   const { id } = use(params)
@@ -35,7 +37,7 @@ export default function PropertyDetailPage({ params }) {
   const detail = useApi(`/properties/${id}`)
   const back = useBack()
   // The tab, and on Documents the folder, are in the address: each is a step of its own, so Back goes back one at a time.
-  const section = ["overview", "info", "photos", "draws", "expenses", "arv", "financing", "documents"].includes(search.get("tab")) ? search.get("tab") : "overview"
+  const section = ["overview", "info", "photos", "draws", "expenses", "arv", "financing", "documents", "tasks"].includes(search.get("tab")) ? search.get("tab") : "overview"
   const openFolder = section === "documents" ? search.get("folder") || "" : ""
   const [note, setNote] = useState("")
   const [message, setMessage] = useState("")
@@ -102,7 +104,7 @@ export default function PropertyDetailPage({ params }) {
     { id: "overview", label: "Overview" },
   ]
   // The Documents tab shows the same files the property's company shows under Documents › Properties.
-  if (internal) tabs.push({ id: "info", label: "Property Info" }, { id: "photos", label: "Photos" }, { id: "draws", label: "Draws" }, ...(seesExpenses ? [{ id: "expenses", label: "Expenses" }] : []), { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" }, { id: "documents", label: "Documents" })
+  if (internal) tabs.push({ id: "info", label: "Property Info" }, { id: "photos", label: "Photos" }, { id: "draws", label: "Draws" }, ...(seesExpenses ? [{ id: "expenses", label: "Expenses" }] : []), { id: "arv", label: "ARV" }, { id: "financing", label: "Financing" }, { id: "documents", label: "Documents" }, { id: "tasks", label: "Tasks" })
 
   // Opens a tab (or a folder on Documents) as a new step; Back names the step you left ("← Documents").
   function show(tab, folder = "") {
@@ -204,12 +206,14 @@ export default function PropertyDetailPage({ params }) {
       backHref="/properties"
       backLabel="Properties"
       title={property.address}
+      // The stage is in the line under the name (not again as a pill by the buttons).
       meta={[cityLine(property), property.stage, property.strategy].filter(Boolean).join(" · ")}
-      status={<StatusPill>{property.stage}</StatusPill>}
       actions={[
-        canWrite && <button key="delete" type="button" className="danger" onClick={() => removeProperty(id, property.address, router)}>Delete</button>,
+        // Delete: last in the phone's Options list; on a computer, in the ⋯ menu rather than beside the everyday buttons.
+        canWrite && <button key="delete" type="button" className="danger header-actions-phone" onClick={() => removeProperty(id, property.address, router)}>Delete</button>,
         <button key="report" type="button" className="import-button" onClick={() => setReporting(true)}>Make report</button>,
         canWrite && <button key="modify" type="button" className="primary" onClick={() => { setEditError(""); setEditing(propertyForm(property, draws?.recordBudget)) }}>Modify</button>,
+        canWrite && <span key="more" className="header-actions-desk"><RowMenu label="More for this property" items={[{ label: "Delete property", danger: true, onClick: () => removeProperty(id, property.address, router) }]} /></span>,
       ].filter(Boolean)}
     >
       <div className="property-switch" role="tablist" aria-label="Property sections">
@@ -249,7 +253,7 @@ export default function PropertyDetailPage({ params }) {
                 <ul className="property-draws">
                   {upcoming.map((bill) => (
                     <li key={bill.id}>
-                      <span>{bill.title} · {bill.due}</span>
+                      <span>{bill.title} · {shortDay(bill.due)}{bill.overdue && <em className="property-overdue"> · Overdue</em>}</span>
                       <b>{money(bill.amount)}</b>
                     </li>
                   ))}
@@ -353,6 +357,13 @@ export default function PropertyDetailPage({ params }) {
             </div>
           </div>
           <ExpenseTracking propertyId={id} version={trackingVersion} action={canFileReceipt ? <AddReceipt propertyId={id} label="Add receipt" className="primary" onFiled={() => { setTrackingVersion((value) => value + 1); setCostVersion((value) => value + 1); detail.reload() }} /> : null} />
+        </section>
+      )}
+
+      {/* The property's tasks, in the same table as Tasks (its own view settings). */}
+      {section === "tasks" && (
+        <section className="property-tasks">
+          <TaskBoard propertyId={id} />
         </section>
       )}
 
@@ -696,21 +707,24 @@ function ProofPhotos({ ids, urls = {} }) {
   )
 }
 
+// An empty figure reads as empty (grey, smaller), not as a headline.
 function Figure({ label, value, hint }) {
+  const empty = !value || value === "Not entered"
   return (
     <article className="property-figure">
       <span>{label}</span>
-      <strong>{value}</strong>
+      <strong className={empty ? "is-empty" : undefined}>{empty ? "Not entered" : value}</strong>
       {hint && <em>{hint}</em>}
     </article>
   )
 }
 
 function Fact({ label, value, wide }) {
+  const empty = !value || value === "Not entered"
   return (
     <div className={wide ? "wide" : undefined}>
       <dt>{label}</dt>
-      <dd>{value || "Not entered"}</dd>
+      <dd className={empty ? "is-empty" : undefined}>{empty ? "Not entered" : value}</dd>
     </div>
   )
 }

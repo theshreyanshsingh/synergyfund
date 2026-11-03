@@ -104,7 +104,7 @@ export default function HomePage() {
       {shows("greeting") && (
         <div className="home-hero">
           <p className="home-hero-date">{longDay(today)}</p>
-          <h2 className="home-hero-hello">{hello}.<br />Here's your day at a glance.</h2>
+          <h1 className="home-hero-hello">{hello}.<br />Here's your day at a glance.</h1>
           {summary && <p className="home-hero-summary">{capitalize(summary)}.</p>}
         </div>
       )}

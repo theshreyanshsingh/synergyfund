@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { BEHIND_STATUSES, can, TASK_LABELS, drawPulled, ensureTaskPermissions, insurancePolicies, isPaidOff, loanStatus, loanType, LOAN_TYPES, isRole, NOT_OWNED_STAGES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, loansEndedWithSale, policyActive, policyName, policyPaymentAmount, policyTitle, propertyDrawFigures, ROLES } from "@synergifund/shared"
+import { BEHIND_STATUSES, can, drawPulled, ensureTaskPermissions, insurancePolicies, isPaidOff, loanStatus, loanType, LOAN_TYPES, isRole, NOT_OWNED_STAGES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, loansEndedWithSale, policyActive, policyName, policyPaymentAmount, policyTitle, propertyDrawFigures, ROLES } from "@synergifund/shared"
 import {
   NativeDevice,
   Activity,
@@ -35,10 +35,10 @@ import { isDay, teamToday } from "../lib/dates.js"
 import { groupByProperty } from "../lib/group.js"
 import { stressRows } from "../services/stress.js"
 import { removeDraftReceipts } from "../services/receiptCleanup.js"
+import { assigneeMap, presentTask } from "./tasks.js"
 
 export const workspaceRouter = Router()
 
-const TASK_FIELDS = [["title", "Task"], ["due", "Due"], ["priority", "Priority"], ["labels", "Labels"], ["owner", "Assignee"], ["notes", "Note"]]
 const LOAN_FIELDS = [
   ["lender", "Lender"],
   ["loanNumber", "Loan number"],
@@ -240,124 +240,6 @@ workspaceRouter.get(
   blockContractors,
   asyncHandler(async (req, res) => {
     res.json(await stressRows(req.user, req.permissions))
-  }),
-)
-
-workspaceRouter.get(
-  "/tasks",
-  requirePermission("properties.read"),
-  asyncHandler(async (req, res) => {
-    await moveOpenReviewsOntoTasks()
-    // Contractors see only the tasks assigned to them, never the team's own task list.
-    let filter
-    if (req.user.role === "contractor") filter = { assigneeId: req.user._id }
-    else {
-      const properties = await Property.find(propertyFilter(req.user)).select("_id")
-      filter = { $or: [{ propertyId: { $in: properties.map((property) => property._id) } }, { propertyId: null }] }
-    }
-    const items = await Task.find(filter).sort({ done: 1, due: 1 })
-    const people = await assigneeMap(items)
-    const includeEmail = req.permissions.includes(PERMISSIONS.tasksAssign)
-    res.json({ items: items.map((task) => presentTask(task, people.get(String(task.assigneeId || "")), includeEmail)) })
-  }),
-)
-
-workspaceRouter.get(
-  "/tasks/assignees",
-  requirePermission(PERMISSIONS.tasksAssign),
-  asyncHandler(async (req, res) => {
-    const users = await User.find({ bot: { $ne: true } }).select("name email").sort({ name: 1, email: 1 })
-    res.json({ items: users.map((user) => ({ id: String(user._id), name: user.name, email: user.email })) })
-  }),
-)
-
-workspaceRouter.post(
-  "/tasks",
-  requirePermission(PERMISSIONS.tasksManage),
-  asyncHandler(async (req, res) => {
-    if (!req.body.title) {
-      sendError(res, 400, "Describe what needs to happen.")
-      return
-    }
-    const assignee = await readAssignee(req, res)
-    if (!assignee) return
-    const task = await Task.create({
-      title: req.body.title,
-      propertyId: req.body.propertyId || undefined,
-      assigneeId: assignee.assignee?._id,
-      owner: assignee.assignee?.name || "",
-      due: req.body.due || "",
-      priority: req.body.priority || "Medium",
-      labels: cleanLabels(req.body.labels),
-      notes: req.body.notes || "",
-    })
-    // A task added for yourself on Home (quiet) needs no notice that you assigned it to yourself.
-    const forSelf = req.body.quiet === true && assignee.assignee && String(assignee.assignee._id) === String(req.user._id)
-    const mail = forSelf ? { status: "Skipped" } : await mailAssignee({ user: req.user, task, assignee: assignee.assignee })
-    await recordActivity({
-      user: req.user,
-      title: "Task created",
-      detail: [task.title, task.owner ? `Assigned to ${task.owner}` : "Unassigned", task.due ? `Due ${task.due}` : ""].filter(Boolean).join(" · "),
-      propertyId: task.propertyId,
-    })
-    res.status(201).json({ task: presentTask(task, assignee.assignee, true), mail })
-  }),
-)
-
-workspaceRouter.patch(
-  "/tasks/:id",
-  requireAnyPermission(PERMISSIONS.tasksEdit, PERMISSIONS.tasksManage, PERMISSIONS.tasksAssign),
-  asyncHandler(async (req, res) => {
-    const task = await Task.findById(req.params.id)
-    // A contractor can only change a task assigned to them.
-    if (!task || (req.user.role === "contractor" && String(task.assigneeId || "") !== String(req.user._id))) {
-      sendError(res, 404, "That task was not found.")
-      return
-    }
-    const editing = ["title", "due", "priority", "labels", "notes", "done"].some((key) => key in req.body)
-    if (editing && !req.permissions.includes(PERMISSIONS.tasksEdit) && !req.permissions.includes(PERMISSIONS.tasksManage)) {
-      sendError(res, 403, "You do not have permission to edit tasks.")
-      return
-    }
-    const previousAssignee = String(task.assigneeId || "")
-    const before = task.toObject()
-    let assignee = null
-    if ("assigneeId" in req.body) {
-      const next = await readAssignee(req, res)
-      if (!next) return
-      assignee = next.assignee
-      task.assigneeId = assignee ? assignee._id : null
-      task.owner = assignee?.name || ""
-    }
-    if ("done" in req.body) task.done = Boolean(req.body.done)
-    if (req.body.title) task.title = req.body.title
-    if ("due" in req.body) task.due = req.body.due || ""
-    if (req.body.priority) task.priority = req.body.priority
-    if ("labels" in req.body) task.labels = cleanLabels(req.body.labels)
-    if ("notes" in req.body) task.notes = req.body.notes || ""
-    await task.save()
-    const changedAssignee = "assigneeId" in req.body && String(task.assigneeId || "") !== previousAssignee
-    const mail = changedAssignee ? await mailAssignee({ user: req.user, task, assignee }) : "Skipped"
-    const after = task.toObject()
-    const title = before.done !== after.done ? (after.done ? "Task completed" : "Task reopened") : changedAssignee ? "Task assigned" : "Task updated"
-    const changes = changeSummary(before, after, TASK_FIELDS.filter(([key]) => key !== "title"))
-    await recordActivity({ user: req.user, title, detail: [task.title, changes].filter(Boolean).join(" · "), propertyId: task.propertyId })
-    res.json({ task: presentTask(task, assignee, req.permissions.includes(PERMISSIONS.tasksAssign)), mail })
-  }),
-)
-
-workspaceRouter.delete(
-  "/tasks/:id",
-  requirePermission(PERMISSIONS.tasksManage),
-  asyncHandler(async (req, res) => {
-    const task = await Task.findById(req.params.id)
-    if (!task) {
-      sendError(res, 404, "That task was not found.")
-      return
-    }
-    await task.deleteOne()
-    await recordActivity({ user: req.user, title: "Task deleted", detail: task.title, propertyId: task.propertyId })
-    res.json({ ok: true })
   }),
 )
 
@@ -890,7 +772,7 @@ workspaceRouter.get(
     ])
     res.json({
       unread: items.filter((item) => !item.read).length,
-      items: items.map((item) => ({ id: String(item._id), title: item.title, body: item.body, href: item.href || "", read: item.read, createdAt: item.createdAt })),
+      items: items.map((item) => ({ id: String(item._id), title: item.title, body: item.body, href: item.href || "", read: item.read, event: item.event || "", createdAt: item.createdAt })),
       mail: mail.map((item) => ({ id: String(item._id), to: item.to, subject: item.subject, status: item.status, createdAt: item.createdAt })),
     })
   }),
@@ -1681,104 +1563,6 @@ function optionalNumber(value) {
   if (value === "" || value == null) return undefined
   const number = Number(String(value).replace(/[$,\s]/g, ""))
   return Number.isFinite(number) ? number : undefined
-}
-
-function presentTask(task, person, includeEmail) {
-  return {
-    id: String(task._id),
-    title: task.title,
-    owner: person?.name || task.owner || "",
-    assigneeId: task.assigneeId ? String(task.assigneeId) : "",
-    assigneeName: person?.name || task.owner || "",
-    assigneeEmail: includeEmail ? person?.email || "" : "",
-    due: task.due || "",
-    priority: task.priority,
-    labels: task.labels || [],
-    done: task.done,
-    propertyId: task.propertyId ? String(task.propertyId) : "",
-    notes: task.notes || "",
-  }
-}
-
-async function assigneeMap(tasks) {
-  const ids = [...new Set(tasks.map((task) => task.assigneeId).filter(Boolean).map(String))]
-  if (!ids.length) return new Map()
-  const people = await User.find({ _id: { $in: ids } }).select("name email")
-  return new Map(people.map((person) => [String(person._id), person]))
-}
-
-async function readAssignee(req, res) {
-  if (!("assigneeId" in req.body)) return { assignee: null }
-  if (!req.permissions.includes(PERMISSIONS.tasksAssign)) {
-    sendError(res, 403, "You do not have permission to assign tasks.")
-    return null
-  }
-  const value = String(req.body.assigneeId || "").trim()
-  if (!value) return { assignee: null }
-  if (!/^[a-f\d]{24}$/i.test(value)) {
-    sendError(res, 400, "Choose an assignee from the list.")
-    return null
-  }
-  const assignee = await User.findById(value).select("name email")
-  if (!assignee) {
-    sendError(res, 400, "Choose an assignee from the list.")
-    return null
-  }
-  return { assignee }
-}
-
-async function mailAssignee({ user, task, assignee }) {
-  if (!assignee) return { status: "Skipped" }
-  if (!assignee.email) return { status: "Failed", error: "The assignee has no email address." }
-  const property = task.propertyId ? await Property.findById(task.propertyId).select("address").catch(() => null) : null
-  return notify({
-    userIds: [assignee._id],
-    title: `Task assigned: ${task.title}`,
-    body: String(assignee._id) === String(user._id) ? `You assigned yourself “${task.title}”.` : `${user.name} assigned you “${task.title}”.`,
-    details: [
-      ["Property", property?.address || ""],
-      ["Due", task.due || "No due date"],
-      ["Priority", task.priority || ""],
-      ["Labels", (task.labels || []).join(", ")],
-      ["Note", task.notes || ""],
-      ["Assigned by", user.name],
-    ],
-    // Opens Tasks on this task.
-    href: `/tasks?task=${task._id}`,
-    event: "task.assigned",
-  })
-}
-
-function cleanLabels(value) {
-  const list = Array.isArray(value) ? value : String(value || "").split(",")
-  const labels = []
-  for (const item of list) {
-    const typed = String(item || "").trim().replace(/\s+/g, " ").slice(0, 32)
-    const label = TASK_LABELS.find((known) => known.toLowerCase() === typed.toLowerCase()) || typed
-    if (!label || labels.some((existing) => existing.toLowerCase() === label.toLowerCase())) continue
-    labels.push(label)
-    if (labels.length === 8) break
-  }
-  return labels
-}
-
-async function moveOpenReviewsOntoTasks() {
-  const open = await ReviewItem.find({ status: "Open" })
-  for (const item of open) {
-    const already = await Task.findOne({ reviewId: item._id })
-    if (!already) {
-      await Task.create({
-        title: item.title,
-        notes: item.detail || "",
-        propertyId: item.propertyId,
-        labels: ["Verify"],
-        priority: "High",
-        reviewId: item._id,
-      })
-    }
-    item.status = "Moved"
-    await item.save()
-  }
 }
 
 // What needs doing: everything overdue, and what comes up within the Overview's window (30, 60 or 90 days). Tasks keep

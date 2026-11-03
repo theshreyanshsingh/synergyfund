@@ -7,6 +7,9 @@ import { StatusPill } from "../ui/StatusPill"
 import { api } from "../../lib/api"
 import { money } from "../../lib/format"
 
+// An empty value, in grey.
+const BLANK = <span className="is-empty-text">Not entered</span>
+
 // The BRRRR refinance for one property (Financing tab, under Loans): its stage, and what the lender asks for.
 // Leverage desired comes from the purchase date (REFINANCE in the shared package holds the months and percentages).
 
@@ -118,22 +121,22 @@ export function RefinanceSection({ property, loans, writable, onChanged, onAddLo
         </div>
         <div>
           <dt>Purchase date</dt>
-          <dd>{leverage.missing ? (storedDate ? `${storedDate} (not a full date)` : "Not entered") : dayLabel(storedDate)}</dd>
+          <dd>{leverage.missing ? (storedDate ? `${storedDate} (not a full date)` : BLANK) : dayLabel(storedDate)}</dd>
           {writable && <button type="button" className="tool refinance-inline" onClick={() => setDating(true)}>{leverage.missing ? "Enter Purchase Date" : "Change"}</button>}
         </div>
         <div>
           <dt>Yearly taxes</dt>
-          <dd>{taxes ? money(taxes.amount) : "Not entered"}</dd>
+          <dd>{taxes ? money(taxes.amount) : BLANK}</dd>
           <small>{taxes ? `${taxes.year} · ` : ""}<a href={`/properties/${property.id}?tab=info`}>On Property Info</a></small>
         </div>
         <div>
           <dt>Yearly insurance</dt>
-          <dd>{insurance == null ? "Not entered" : money(insurance)}</dd>
+          <dd>{insurance == null ? BLANK : money(insurance)}</dd>
           <small>{policyCount > 1 ? `${policyCount} policies · ` : ""}<a href={`/properties/${property.id}?tab=info`}>On Property Info</a></small>
         </div>
         <div>
           <dt>Rental estimate</dt>
-          <dd>{rent == null ? "Not entered" : `${money(rent)}/month`}</dd>
+          <dd>{rent == null ? BLANK : `${money(rent)}/month`}</dd>
           <small>{property.marketRent != null ? "Market rent" : property.actualRent != null ? "Actual rent" : "Enter market rent with Modify"}</small>
         </div>
         <div className={leverage.missing ? "is-missing" : "is-key"}>

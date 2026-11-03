@@ -135,8 +135,8 @@ function PropertiesScreen() {
           ]),
           { key: "stage", label: "Status", peek: true, render: (row) => <StatusPill>{row.stage}</StatusPill> },
           ...(contractor ? [] : [
-            { key: "nextAction", label: "Next step", render: (row) => row.nextAction || "Set the next action" },
-            { key: "strategy", label: "Goal", render: (row) => row.strategy || "Not set" },
+            { key: "nextAction", label: "Next step", render: (row) => row.nextAction || <span className="is-empty-text">Set the next action</span> },
+            { key: "strategy", label: "Goal", render: (row) => row.strategy || <span className="is-empty-text">Not set</span> },
             { key: "loanStatus", label: "Loan status", render: (row) => <StatusPill>{row.loanStatus || "No loan"}</StatusPill> },
             { key: "loanBalance", label: "Loan balance", className: "num", render: (row) => row.loanBalance == null ? "—" : money(row.loanBalance) },
           ]),

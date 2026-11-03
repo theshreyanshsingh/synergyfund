@@ -284,7 +284,7 @@ export function Avatar({ name, online, size = "md" }) {
   return (
     <span className={`chat-avatar ${size}`} style={{ "--hue": hash }}>
       {letters || "?"}
-      {online !== undefined && <i className={online ? "is-online" : ""} aria-label={online ? "Online" : "Away"} />}
+      {online !== undefined && <i className={online ? "is-online" : ""} role="img" aria-label={online ? "Online" : "Away"} />}
     </span>
   )
 }
