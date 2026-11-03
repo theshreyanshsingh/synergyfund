@@ -14,6 +14,7 @@ import { CallLayer } from "../calls/CallLayer"
 import { SoundAlerts } from "./SoundAlerts"
 import { DownloadTray } from "./DownloadTray"
 import { Dock } from "./Dock"
+import { AgentSheet } from "../agent/AgentSheet"
 import { notePage } from "../../lib/back"
 
 const NARROW = "(max-width: 1100px)"
@@ -29,10 +30,18 @@ export function AppShell({ children }) {
   const closeSearch = useCallback(() => setSearchOpen(false), [])
   // Contractors have no sidebar, so their top bar shows what is waiting on Channels and Messages.
   const badges = useChatBadges(session?.user?.id, Boolean(session?.user?.role === "contractor" && can(session.user, PERMISSIONS.chatUse)))
+  // Phones: Agent in the menu slides up over the page instead of opening its own page.
+  const [agentOpen, setAgentOpen] = useState(false)
+  const openAgent = useCallback(() => {
+    setMenuOpen(false)
+    setAgentOpen(true)
+  }, [])
+  const closeAgent = useCallback(() => setAgentOpen(false), [])
 
   // Notes each page opened, so a detail page's Back can say where it goes ("← Calendar").
   useEffect(() => {
     setMenuOpen(false)
+    setAgentOpen(false)
     notePage(pathname)
   }, [pathname])
 
@@ -123,13 +132,14 @@ export function AppShell({ children }) {
         <Icon name="menu" size={18} />
       </button>
       <button type="button" className="menu-backdrop" aria-label="Close sidebar" onClick={() => setMenuOpen(false)} />
-      <Sidebar user={session.user} onSearch={openSearch} onToggle={toggleMenu} onNavigate={() => setMenuOpen(false)} />
+      <Sidebar user={session.user} onSearch={openSearch} onToggle={toggleMenu} onNavigate={() => setMenuOpen(false)} onAgent={openAgent} />
       <main className="main">
         <InstallCard className="bar-install main-install" />
         {children}
       </main>
       {/* Phones, tablets and narrow windows: the main pages and Search along the bottom; the sidebar keeps the rest. */}
       <Dock user={session.user} searching={searchOpen} onSearch={openSearch} />
+      {agentOpen && <AgentSheet onClose={closeAgent} />}
       <CommandPalette user={session.user} open={searchOpen} onClose={closeSearch} />
       {can(session.user, PERMISSIONS.chatUse) && <CallLayer user={session.user} />}
       <SoundAlerts user={session.user} chat={can(session.user, PERMISSIONS.chatUse)} />

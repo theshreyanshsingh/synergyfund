@@ -200,6 +200,20 @@ function evidenceText(evidence) {
   return text || "No records were looked up."
 }
 
+// A short title in sentence case ("Drafting greeting email to lender"). When the model answers in Title Case anyway,
+// its capitals come off every word but the first, except words the person wrote with a capital (names and places,
+// like Kiavi or Demo Rd). A title already in sentence case is left alone.
+const stem = (word) => word.replace(/(ing|ed|es|s)$/i, "")
+
+export function sentenceCaseTitle(name, prompts = []) {
+  const words = String(name || "").split(/\s+/).filter(Boolean)
+  const capped = (word) => /^[A-Z][a-z'’-]+$/.test(word)
+  const rest = words.slice(1)
+  if (!rest.length || rest.filter(capped).length / rest.length < 0.75) return words.join(" ")
+  const named = (prompts.join(" ").match(/\b[A-Z][a-z'’-]+/g) || []).map(stem)
+  return words.map((word, index) => (index === 0 || !capped(word) || named.includes(stem(word)) ? word : word.toLowerCase())).join(" ")
+}
+
 async function chatTitle({ prompts, model, tracker }) {
   const fallback = chatTitleFromPrompt(prompts[0])
   try {
@@ -212,12 +226,12 @@ async function chatTitle({ prompts, model, tracker }) {
         { role: "system", content: "You are a helpful assistant that creates descriptive chat names. Reply with only the chat name, no explanations." },
         {
           role: "user",
-          content: `Generate a descriptive chat name based on what the user is trying to accomplish. Their messages so far, in order:\n${prompts.map((text, index) => `${index + 1}. "${text.slice(0, 400)}"`).join("\n")}\nIgnore greetings and fix obvious spelling mistakes in names and places. Requirements: 3 to 7 words.\nReply with ONLY the chat name, nothing else.`,
+          content: `Generate a descriptive chat name based on what the user is trying to accomplish. Their messages so far, in order:\n${prompts.map((text, index) => `${index + 1}. "${text.slice(0, 400)}"`).join("\n")}\nIgnore greetings and fix obvious spelling mistakes in names and places. Requirements: 3 to 7 words, in sentence case: capitalize only the first word and real names (people, companies, places), for example "Drafting greeting email to lender" or "Kiavi loan maturing next month".\nReply with ONLY the chat name, nothing else.`,
         },
       ],
     })
-    const name = response.content.replace(/["'`*#]/g, "").split("\n")[0].trim().split(/\s+/).slice(0, 7).join(" ")
-    return name || fallback
+    const name = response.content.replace(/["'`*#]/g, "").split("\n")[0].trim().split(/\s+/).slice(0, 7).join(" ").replace(/[.:;,]+$/, "")
+    return sentenceCaseTitle(name, prompts) || fallback
   } catch {
     return fallback
   }

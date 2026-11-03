@@ -78,7 +78,7 @@ export default function LoansPage() {
           action={writable ? { label: "Add loan", onClick: () => { setError(""); setOpen("loan") } } : null}
           stats={[
             { label: "Current loan amounts", value: money(openLoans.reduce((sum, item) => sum + Number(item.balance || 0), 0)), hint: "Open loans, from the loan records" },
-            { label: "Monthly payments", value: money(openLoans.reduce((sum, item) => sum + Number(item.payment || 0), 0)), hint: "Same figure as Overview" },
+            { label: "Monthly payments", value: money(openLoans.reduce((sum, item) => sum + Number(item.payment || 0), 0)), hint: "Same figure as Insights" },
             { label: "Loan records", value: String(items.length), hint: "One loan, one property" },
             { label: "Lenders", value: String(lenders.length), hint: "Shared lender records" },
           ]}
@@ -133,7 +133,7 @@ export default function LoansPage() {
         />
       )}
       {open === "loan" && (
-        <FormSheet eyebrow="Loans" title="Add a loan" hint="The payment recorded here is the monthly mortgage used on Overview." onClose={() => setOpen("")} onSubmit={submitLoan} submitLabel="Save loan" pending={pending} error={error}>
+        <FormSheet eyebrow="Loans" title="Add a loan" hint="The payment recorded here is the monthly mortgage used on Insights." onClose={() => setOpen("")} onSubmit={submitLoan} submitLabel="Save loan" pending={pending} error={error}>
           <LoanFields lenders={lenders} properties={properties.data?.items || []} />
         </FormSheet>
       )}

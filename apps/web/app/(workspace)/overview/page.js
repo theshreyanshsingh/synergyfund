@@ -6,8 +6,9 @@ import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from 
 import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 import { can } from "@synergifund/shared"
+import { Attention } from "../../../components/overview/Attention"
+import { CustomizeSheet } from "../../../components/ui/CustomizeSheet"
 import { Icon } from "../../../components/ui/Icon"
-import { Modal } from "../../../components/ui/Modal"
 import { PageSpinner } from "../../../components/ui/Spinner"
 import { useSession } from "../../../components/shell/Providers"
 import { api } from "../../../lib/api"
@@ -26,6 +27,10 @@ export default function OverviewPage() {
   const sourceCards = overview.data?.cards || []
   const [order, setOrder] = useState([])
   const cards = useMemo(() => arrangeCards(sourceCards, order), [sourceCards, order])
+  // Each person's own Insights: the sections they hid with Customize.
+  const [hidden, setHidden] = useState([])
+  const [customizing, setCustomizing] = useState(false)
+  const shownCards = cards.filter((card) => !hidden.includes(card.id))
   const projection = overview.data?.projection
   const attention = overview.data?.attention || []
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
@@ -38,6 +43,17 @@ export default function OverviewPage() {
     setOrder(overview.data.order)
   }, [overview.data])
 
+  useEffect(() => {
+    if (Array.isArray(overview.data?.hidden)) setHidden(overview.data.hidden)
+  }, [overview.data])
+
+  const sections = overview.data ? [
+    { id: "attention", name: "Needs attention", hint: `Overdue and the next ${overview.data.days} days, tasks this week` },
+    { id: "projection", name: `Next ${overview.data.days} days`, hint: `Costs expected at the pace of the past ${overview.data.days} days` },
+    ...cards.map((card) => ({ id: card.id, name: card.title, hint: card.hint })),
+  ] : []
+  const nothingShown = sections.length > 0 && sections.every((section) => hidden.includes(section.id))
+
   function choose(next) {
     setDays(next)
   }
@@ -46,7 +62,7 @@ export default function OverviewPage() {
     <div className={updating ? "workspace is-updating" : "workspace"} aria-busy={updating || undefined}>
       <div className="workspace-top">
         <div className="page-heading">
-          <h1 className="page-title">Overview</h1>
+          <h1 className="page-title">Insights</h1>
         </div>
         <div className="overview-actions">
           <div className="overview-controls" role="group" aria-label="Projection window">
@@ -54,6 +70,12 @@ export default function OverviewPage() {
               <button key={option} type="button" className={days === option ? "on" : ""} onClick={() => choose(option)}>{option} days</button>
             ))}
           </div>
+          {overview.data && (
+            <button type="button" className="import-button overview-customize" onClick={() => setCustomizing(true)} aria-label="Customize Insights" title="Choose what your Insights page shows">
+              <Icon name="sliders" size={14} />
+              <span>Customize</span>
+            </button>
+          )}
           {writable && (
             <button type="button" className="primary" onClick={() => router.push("/properties?new=1")}>
               <Icon name="plus" size={14} />
@@ -63,12 +85,20 @@ export default function OverviewPage() {
         </div>
       </div>
       {!overview.data && !overview.error && <PageSpinner />}
-      {overview.data && <Attention items={attention} days={overview.data.days} onOpen={(href) => router.push(href)} />}
-      {projection && <Projection days={projection.days} projection={projection} />}
+      {nothingShown && (
+        <section className="overview-attention overview-empty">
+          <h2>Your Insights page is empty</h2>
+          <p>Everything is hidden. Choose what to show here; only your Insights page changes.</p>
+          <button type="button" className="primary" onClick={() => setCustomizing(true)}>Customize</button>
+        </section>
+      )}
+      {overview.data && !hidden.includes("attention") && <Attention items={attention} days={overview.data.days} onOpen={(href) => router.push(href)} />}
+      {projection && !hidden.includes("projection") && <Projection days={projection.days} projection={projection} />}
       {overview.error && <p className="draws-empty">{overview.error}</p>}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={async (event) => {
         const { active, over } = event
         if (!over || active.id === over.id) return
+        // Moved among all the cards, so a hidden card keeps its place for when it is shown again.
         const next = arrayMove(cards.map((card) => card.id), cards.findIndex((card) => card.id === active.id), cards.findIndex((card) => card.id === over.id))
         savingOrder.current = true
         setOrder(next)
@@ -81,87 +111,28 @@ export default function OverviewPage() {
           savingOrder.current = false
         }
       }}>
-        <SortableContext items={cards.map((card) => card.id)} strategy={rectSortingStrategy}>
+        <SortableContext items={shownCards.map((card) => card.id)} strategy={rectSortingStrategy}>
           <div className="overview-grid">
-            {cards.map((card) => (
+            {shownCards.map((card) => (
               <SortableCard key={card.id} card={card} labels={card.labels || overview.data?.labels || []} />
             ))}
           </div>
         </SortableContext>
       </DndContext>
+      {customizing && (
+        <CustomizeSheet
+          eyebrow="Insights"
+          title="Customize Insights"
+          hint="Choose what your Insights page shows. Only yours changes; drag a chart card by its handle to move it."
+          path="/overview/hidden"
+          sections={sections}
+          hidden={hidden}
+          onClose={() => setCustomizing(false)}
+          onSaved={(next) => { setHidden(next); setCustomizing(false) }}
+        />
+      )}
     </div>
   )
-}
-
-function Attention({ items, days, onOpen }) {
-  const [showAll, setShowAll] = useState(false)
-  const overdue = items.filter((item) => item.tone === "bad").length
-  const preview = items.slice(0, 3)
-  const openItem = (href) => {
-    setShowAll(false)
-    onOpen(href)
-  }
-  return (
-    <section className="overview-attention">
-      <header>
-        <div>
-          <h2>Needs attention</h2>
-          <p>{items.length > 0 ? `${items.length} ${items.length === 1 ? "item" : "items"}${overdue ? ` · ${overdue} overdue` : ""} · ` : ""}Overdue and the next {days} days, tasks this week</p>
-        </div>
-        {items.length > 3 && <button type="button" className="overview-attention-more" onClick={() => setShowAll(true)}>View all</button>}
-      </header>
-      {items.length === 0 && <p className="overview-attention-empty">Nothing in those books is overdue or coming up in the next {days} days.</p>}
-      {items.length > 0 && (
-        <ul className="overview-attention-list">
-          {preview.map((item) => <AttentionItem key={item.id} item={item} onOpen={openItem} />)}
-        </ul>
-      )}
-      {showAll && (
-        <Modal title={`Needs attention · ${items.length}`} wide onClose={() => setShowAll(false)}>
-          <p className="overview-attention-summary">{overdue ? `${overdue} overdue · ` : ""}Ordered by urgency and due date</p>
-          <ul className="overview-attention-list is-all">
-            {items.map((item) => <AttentionItem key={item.id} item={item} onOpen={openItem} />)}
-          </ul>
-        </Modal>
-      )}
-    </section>
-  )
-}
-
-function AttentionItem({ item, onOpen }) {
-  return (
-    <li>
-      <button type="button" className={`overview-attn tone-${item.tone}`} onClick={() => onOpen(item.href)}>
-        <span className="overview-attn-icon">
-          <Icon name={attentionIcon(item.kind)} size={16} />
-        </span>
-        <span className="overview-attn-copy">
-          <small>{item.kind}{item.tone === "bad" ? " · Overdue" : ""}</small>
-          <strong>{item.title}</strong>
-          {/* Lines break between the parts ("12 Oak Lane · Due within 30 days · Oct 24"), never inside a date. */}
-          <em>{[item.property, item.detail, dayLabel(item.date)].filter(Boolean).join("\u00a0· ")}</em>
-        </span>
-        {item.amount != null && <b>{formatMoney(item.amount)}</b>}
-      </button>
-    </li>
-  )
-}
-
-// "2026-10-21" as "Oct 21", with the year only when it is not this year.
-function dayLabel(value) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return value || ""
-  const date = new Date(`${value}T12:00:00`)
-  const options = { month: "short", day: "numeric" }
-  if (date.getFullYear() !== new Date().getFullYear()) options.year = "numeric"
-  return date.toLocaleDateString("en-US", options).replace(/ /g, "\u00a0")
-}
-
-function attentionIcon(kind) {
-  if (kind === "Draw") return "layers"
-  if (kind === "Mortgage" || kind === "Loan") return "bank"
-  if (kind === "Insurance") return "file"
-  if (kind === "Verify") return "alert"
-  return "check"
 }
 
 function SortableCard({ card, labels }) {

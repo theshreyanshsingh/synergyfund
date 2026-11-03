@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Icon } from "../ui/Icon"
 import { prepareFile } from "../photos/CameraCapture"
 import { useSpeechInput } from "./useSpeechInput"
@@ -25,7 +25,10 @@ async function ready(file) {
   return { id: shot.id, file: named, url: shot.url, name: named.name }
 }
 
-export function AgentComposer({ onSend, streaming, connected }) {
+// Under the box a grey line: that answers may be wrong, or in a temporary chat (`temporary`, with a dashed box) that it
+// is not kept. `autoFocus` opens the keyboard at once (it
+// runs in the tap that opened it, which phones require). `fill` ({ text, key }) puts a prompt in the box to send or edit.
+export function AgentComposer({ onSend, streaming, connected, temporary = false, autoFocus = false, fill = null, placeholder = "Ask Agent" }) {
   const [message, setMessage] = useState("")
   const [files, setFiles] = useState([])
   const [menu, setMenu] = useState(false)
@@ -51,6 +54,19 @@ export function AgentComposer({ onSend, streaming, connected }) {
   }
 
   useEffect(grow, [message])
+
+  useLayoutEffect(() => {
+    if (autoFocus) textareaRef.current?.focus()
+  }, [autoFocus])
+
+  useEffect(() => {
+    if (!fill?.key) return
+    setMessage(fill.text.slice(0, MAX_PROMPT))
+    const element = textareaRef.current
+    if (!element) return
+    element.focus()
+    requestAnimationFrame(() => element.setSelectionRange(element.value.length, element.value.length))
+  }, [fill?.key])
 
   useEffect(() => {
     if (!menu) return
@@ -114,13 +130,7 @@ export function AgentComposer({ onSend, streaming, connected }) {
   }
 
   return (
-    <form className="agent-composer" onSubmit={send}>
-      {streaming && (
-        <div className="agent-building" role="status">
-          <span className="spinner spinner-md tw:animate-spin" />
-          <span>Agent is working</span>
-        </div>
-      )}
+    <form className={temporary ? "agent-composer is-temporary" : "agent-composer"} onSubmit={send}>
       {connected === false && (
         <p className="agent-composer-note">The agent is not connected to a model yet. Add OPENROUTER_API_KEY to the server .env file.</p>
       )}
@@ -160,7 +170,7 @@ export function AgentComposer({ onSend, streaming, connected }) {
           rows={1}
           value={message}
           disabled={speech.listening}
-          placeholder="Ask Agent"
+          placeholder={placeholder}
           enterKeyHint={touch ? "enter" : "send"}
           onChange={(event) => setMessage(event.target.value)}
           onPaste={(event) => {
@@ -235,6 +245,9 @@ export function AgentComposer({ onSend, streaming, connected }) {
           </div>
         </div>
       </div>
+      <p className={temporary ? "agent-composer-foot agent-temp-note" : "agent-composer-foot"}>
+        {temporary ? "Temporary chats stay out of your history and are deleted within a day." : "AI-generated content may be inaccurate."}
+      </p>
     </form>
   )
 }

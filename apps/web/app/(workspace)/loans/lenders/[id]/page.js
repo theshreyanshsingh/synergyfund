@@ -77,7 +77,7 @@ export default function LenderPage({ params }) {
           <section className="property-figures">
             <article className="property-figure"><span>Properties</span><strong>{lender.properties}</strong></article>
             <article className="property-figure"><span>Balances</span><strong>{money(lender.balance)}</strong></article>
-            <article className="property-figure"><span>Monthly mortgage</span><strong>{money(lender.payment)}</strong><em>Same loans as Overview</em></article>
+            <article className="property-figure"><span>Monthly mortgage</span><strong>{money(lender.payment)}</strong><em>Same loans as Insights</em></article>
           </section>
           <section className="panel property-card">
             <h2>Custom terms</h2>

@@ -1,279 +1,355 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
-import { chatTitleFromPrompt } from "@synergifund/shared"
+import { useEffect, useRef, useState } from "react"
 import { AgentComposer } from "../../../components/agent/AgentComposer"
 import { AgentMessages } from "../../../components/agent/AgentMessages"
+import { AgentWelcome } from "../../../components/agent/AgentWelcome"
+import { chatWhen, useAgentChat } from "../../../components/agent/useAgentChat"
 import { Icon } from "../../../components/ui/Icon"
+import { RowMenu } from "../../../components/ui/RowMenu"
 import { PageSpinner } from "../../../components/ui/Spinner"
-import { api } from "../../../lib/api"
-import { streamAgent, streamPayloadToAssistantParts } from "../../../lib/agentStream"
 import { useApi } from "../../../lib/useApi"
 
-const THREAD_KEY = "synergifund-agent-thread"
+const PANEL_KEY = "synergifund-agent-panel"
+const NARROW = "(max-width: 900px)"
+const RECENTS = 10
 
-function rowId() {
-  return `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-function threadRows(messages) {
-  return messages.flatMap((message) => {
-    if (message.role === "user") return [{ id: message.id, role: "user", content: message.content, attachments: (message.attachments || []).map((file) => ({ ...file, url: `/api/documents/${file.id}/raw` })) }]
-    const tools = (message.toolCalls || []).map((call, index) => ({
-      id: `${message.id}-tool-${index}`,
-      role: "assistant",
-      content: "",
-      toolResult: { UsedTool: call.tool, result: call.result },
-    }))
-    return [...tools, { id: message.id, role: "assistant", content: message.content, error: message.error, agentRun: { durationMs: message.agentRunDurationMs } }]
-  })
-}
-
-function when(value) {
-  if (!value) return ""
-  const date = new Date(value)
-  const days = Math.floor((Date.now() - date.getTime()) / 86400000)
-  if (days < 1) return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
-  if (days < 7) return date.toLocaleDateString("en-US", { weekday: "short" })
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
-}
-
-function storeThread(id) {
-  try {
-    if (id) sessionStorage.setItem(THREAD_KEY, id)
-    else sessionStorage.removeItem(THREAD_KEY)
-  } catch {}
-}
-
-// Throws a temporary chat away. It also expires on its own a day after its last message.
-function discardTemporaryThread(id) {
-  if (!id) return
-  fetch(`/api/agent/threads/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include", keepalive: true }).catch(() => {})
-}
-
-function History({ threads, activeId, onOpen, onDelete }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef(null)
+// The Agent: a panel of chats and prompts on the left (it folds away; on narrow screens it opens over the chat), and
+// the chat in one centered column. A new chat is a big greeting with the box under it.
+export default function AgentPage() {
+  const chat = useAgentChat()
+  const [view, setView] = useState("chat")
+  const [query, setQuery] = useState("")
+  const [panel, setPanel] = useState(true)
+  const [drawer, setDrawer] = useState(false)
+  const [fill, setFill] = useState(null)
+  const [renaming, setRenaming] = useState(false)
 
   useEffect(() => {
-    if (!open) return
-    function onDown(event) {
-      if (!ref.current?.contains(event.target)) setOpen(false)
+    try {
+      if (localStorage.getItem(PANEL_KEY) === "closed") setPanel(false)
+    } catch {}
+  }, [])
+
+  function togglePanel() {
+    if (window.matchMedia(NARROW).matches) {
+      setDrawer((open) => !open)
+      return
     }
-    function onKey(event) {
-      if (event.key === "Escape") setOpen(false)
+    const next = !panel
+    setPanel(next)
+    try {
+      localStorage.setItem(PANEL_KEY, next ? "open" : "closed")
+    } catch {}
+  }
+
+  const go = (next) => {
+    setView(next)
+    setDrawer(false)
+  }
+  const startNew = () => {
+    chat.newChat()
+    go("chat")
+  }
+  const open = (id) => {
+    chat.openThread(id)
+    go("chat")
+  }
+  const use = (text) => {
+    go("chat")
+    setFill({ text, key: Date.now() })
+  }
+  const starred = (text) => chat.prompts.some((prompt) => prompt.text === String(text || "").trim())
+  const star = async (text) => {
+    if (starred(text)) return
+    try {
+      await chat.savePrompt(text)
+    } catch (err) {
+      window.alert(err.message)
     }
-    document.addEventListener("mousedown", onDown)
-    document.addEventListener("keydown", onKey)
-    return () => {
-      document.removeEventListener("mousedown", onDown)
-      document.removeEventListener("keydown", onKey)
-    }
-  }, [open])
+  }
+  const empty = !chat.rows.length && !chat.streaming && !chat.opening
+  const canRename = view === "chat" && Boolean(chat.threadId) && !chat.temporary
 
   return (
-    <div className="agent-history" ref={ref}>
-      <button type="button" className="import-button" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
-        <Icon name="history" size={14} />
-        <span className="agent-history-label">History</span>
-      </button>
-      {open && (
-        <div className="agent-history-menu">
-          {threads.length === 0 && <p className="agent-history-empty">No conversations yet.</p>}
-          {threads.map((thread) => (
-            <div key={thread.id} className={thread.id === activeId ? "agent-history-row is-on" : "agent-history-row"}>
-              <button type="button" onClick={() => { setOpen(false); onOpen(thread.id) }}>
-                <span>{thread.title}</span>
-                <small>{when(thread.updatedAt)}</small>
-              </button>
-              <button type="button" className="agent-history-delete" aria-label={`Delete ${thread.title}`} onClick={() => onDelete(thread)}>
-                <Icon name="trash" size={14} />
-              </button>
-            </div>
-          ))}
+    <div className={["agent-page", panel ? "" : "is-folded", drawer ? "is-drawer" : ""].filter(Boolean).join(" ")}>
+      <AgentPanel chat={chat} view={view} query={query} onQuery={(value) => { setQuery(value); go("chats") }} onNew={startNew} onView={go} onOpen={open} onFold={togglePanel} />
+      <button type="button" className="agent-panel-scrim" aria-label="Close the chat list" onClick={() => setDrawer(false)} />
+      <section className="agent-main">
+        <div className="workspace-top agent-top">
+          <button type="button" className="agent-icon-button agent-panel-open" onClick={togglePanel} aria-label="Show chats and prompts" title="Show chats and prompts">
+            <Icon name="panel" size={18} />
+          </button>
+          <div className="page-heading">
+            {view !== "chat" ? (
+              <h1 className="page-title agent-title">{view === "chats" ? "Chats" : "Prompts"}</h1>
+            ) : renaming && canRename ? (
+              <TitleEditor title={chat.chatTitle} onDone={async (name) => {
+                setRenaming(false)
+                if (name && name !== chat.chatTitle) await chat.renameThread(chat.threadId, name).catch((err) => window.alert(err.message))
+              }} />
+            ) : canRename ? (
+              <h1 className="page-title agent-title">
+                <button type="button" className="agent-title-button" onClick={() => setRenaming(true)} title="Rename this chat">{chat.chatTitle}</button>
+              </h1>
+            ) : (
+              <h1 className="page-title agent-title">{chat.chatTitle}</h1>
+            )}
+          </div>
+          <div className="agent-head-actions">
+            <button
+              type="button"
+              className={chat.temporary ? "import-button agent-temp-toggle is-on" : "import-button agent-temp-toggle"}
+              aria-pressed={chat.temporary}
+              disabled={chat.streaming}
+              title={chat.temporary ? "Leave the temporary chat" : "Start a chat that is not saved to History"}
+              onClick={() => { chat.toggleTemporary(); go("chat") }}
+            >
+              <Icon name="tempChat" size={14} />
+              <span className="agent-history-label">Temporary</span>
+            </button>
+            <button type="button" className="primary" disabled={chat.streaming} onClick={startNew}>
+              <Icon name="plus" size={14} />
+              New chat
+            </button>
+          </div>
         </div>
-      )}
+
+        {view === "chat" && (
+          <div className={empty ? "agent-chat is-empty" : "agent-chat"}>
+            <div className="agent-scroll">
+              <div className="agent-column">
+                {chat.error && <div className="banner">{chat.error}</div>}
+                {chat.opening ? (
+                  <PageSpinner />
+                ) : (
+                  <AgentMessages
+                    rows={chat.rows}
+                    streaming={chat.streaming}
+                    empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} />}
+                    onRetry={chat.retry}
+                    onEdit={chat.edit}
+                    onRate={chat.rate}
+                    onStar={star}
+                    starred={starred}
+                  />
+                )}
+              </div>
+            </div>
+            <div className="agent-column agent-dock-box">
+              <AgentComposer onSend={chat.send} streaming={chat.streaming} connected={chat.connected} temporary={chat.temporary} fill={fill} />
+            </div>
+          </div>
+        )}
+        {view === "chats" && <ChatsView chat={chat} query={query} onQuery={setQuery} onOpen={open} />}
+        {view === "prompts" && <PromptsView chat={chat} onUse={use} />}
+      </section>
     </div>
   )
 }
 
-export default function AgentPage() {
-  const settingsApi = useApi("/agent/settings")
-  const threadsApi = useApi("/agent/threads")
-  const [threadId, setThreadId] = useState("")
-  const [title, setTitle] = useState("")
-  const [rows, setRows] = useState([])
-  const [streaming, setStreaming] = useState(false)
-  const [opening, setOpening] = useState(false)
+// The chat's name, being renamed: Enter or leaving the box saves, Escape keeps the old one.
+function TitleEditor({ title, onDone }) {
+  const [value, setValue] = useState(title)
+  const done = useRef(false)
+  const finish = (name) => {
+    if (done.current) return
+    done.current = true
+    onDone(name)
+  }
+  return (
+    <input
+      className="agent-title-input"
+      value={value}
+      autoFocus
+      maxLength={80}
+      aria-label="Chat name"
+      onChange={(event) => setValue(event.target.value)}
+      onFocus={(event) => event.target.select()}
+      onBlur={() => finish(value.trim())}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") finish(value.trim())
+        if (event.key === "Escape") finish("")
+      }}
+    />
+  )
+}
+
+// The left panel: search, New chat, Chats, Prompts, then pinned chats and the last few. Each chat's ⋯: Rename, Pin,
+// Delete.
+function AgentPanel({ chat, view, query, onQuery, onNew, onView, onOpen, onFold }) {
+  const pinned = chat.threads.filter((thread) => thread.pinned)
+  const recents = chat.threads.filter((thread) => !thread.pinned).slice(0, RECENTS)
+  return (
+    <aside className="agent-panel" aria-label="Chats and prompts">
+      <div className="agent-panel-head">
+        <span>Agent</span>
+        <button type="button" className="agent-icon-button" onClick={onFold} aria-label="Hide chats and prompts" title="Hide chats and prompts">
+          <Icon name="panel" size={18} />
+        </button>
+      </div>
+      <label className="agent-panel-search">
+        <Icon name="search" size={15} />
+        <span className="sr-only">Search chats</span>
+        <input type="search" value={query} placeholder="Search chats" onChange={(event) => onQuery(event.target.value)} />
+      </label>
+      <nav className="agent-panel-nav">
+        <button type="button" onClick={onNew} disabled={chat.streaming}><Icon name="plus" size={16} /> New chat</button>
+        <button type="button" className={view === "chats" ? "is-on" : ""} onClick={() => onView("chats")}><Icon name="history" size={16} /> Chats</button>
+        <button type="button" className={view === "prompts" ? "is-on" : ""} onClick={() => onView("prompts")}><Icon name="starLine" size={16} /> Prompts</button>
+      </nav>
+      <div className="agent-panel-scroll">
+        {pinned.length > 0 && (
+          <>
+            <p className="agent-panel-label">Pinned</p>
+            <ul className="agent-panel-list">{pinned.map((thread) => <ChatItem key={thread.id} thread={thread} chat={chat} active={view === "chat" && thread.id === chat.threadId} onOpen={onOpen} />)}</ul>
+          </>
+        )}
+        <p className="agent-panel-label">Recents</p>
+        {recents.length ? (
+          <ul className="agent-panel-list">{recents.map((thread) => <ChatItem key={thread.id} thread={thread} chat={chat} active={view === "chat" && thread.id === chat.threadId} onOpen={onOpen} />)}</ul>
+        ) : (
+          <p className="agent-panel-none">{chat.threadsLoaded ? (pinned.length ? "No other chats yet." : "No chats yet.") : "Loading…"}</p>
+        )}
+      </div>
+    </aside>
+  )
+}
+
+// One chat in a list: click to open; ⋯ on hover for Rename, Pin and Delete. `wide` is the full Chats list.
+function ChatItem({ thread, chat, active, onOpen, wide = false }) {
+  const [renaming, setRenaming] = useState(false)
+  if (renaming) {
+    return (
+      <li className="agent-chat-item is-renaming">
+        <TitleEditor title={thread.title} onDone={async (name) => {
+          setRenaming(false)
+          if (name && name !== thread.title) await chat.renameThread(thread.id, name).catch((err) => window.alert(err.message))
+        }} />
+      </li>
+    )
+  }
+  return (
+    <li className={active ? "agent-chat-item is-on" : "agent-chat-item"}>
+      <button type="button" className="agent-chat-item-open" onClick={() => onOpen(thread.id)} title={thread.title}>
+        {thread.pinned && <Icon name="star" size={12} />}
+        <span>{thread.title}</span>
+        {wide && <small>{chatWhen(thread.updatedAt)}</small>}
+      </button>
+      <RowMenu
+        label={`More for ${thread.title}`}
+        className="keep-case"
+        items={[
+          { label: "Rename", onClick: () => setRenaming(true) },
+          { label: thread.pinned ? "Unpin" : "Pin", onClick: () => chat.pinThread(thread.id, !thread.pinned).catch((err) => window.alert(err.message)) },
+          { label: "Delete", danger: true, divider: true, onClick: () => chat.deleteThread(thread) },
+        ]}
+      />
+    </li>
+  )
+}
+
+// Every past chat, searched by title and what was said.
+function ChatsView({ chat, query, onQuery, onOpen }) {
+  const [needle, setNeedle] = useState(query.trim())
+  useEffect(() => {
+    const timer = setTimeout(() => setNeedle(query.trim()), 250)
+    return () => clearTimeout(timer)
+  }, [query])
+  const found = useApi(needle ? `/agent/threads?q=${encodeURIComponent(needle)}` : null)
+  // The found chats as the list has them now, so renames, pins and deletes made here show at once.
+  const all = needle ? (found.data?.items || []).flatMap((item) => chat.threads.filter((thread) => thread.id === item.id)) : chat.threads
+  const loading = needle ? !found.data && !found.error : !chat.threadsLoaded
+  return (
+    <div className="agent-page-list">
+      <div className="agent-column">
+        <label className="agent-list-search">
+          <Icon name="search" size={16} />
+          <span className="sr-only">Search chats</span>
+          <input type="search" value={query} placeholder="Search your chats" onChange={(event) => onQuery(event.target.value)} autoFocus />
+        </label>
+        <p className="agent-list-count">{loading ? "Loading…" : needle ? `${all.length} ${all.length === 1 ? "chat" : "chats"} with “${needle}”` : `${all.length} ${all.length === 1 ? "chat" : "chats"}`}</p>
+        {found.error && <p className="banner">{found.error}</p>}
+        {!loading && !all.length ? (
+          <p className="agent-panel-none">{needle ? "No chats match that." : "No chats yet. Ask the Agent something to start one."}</p>
+        ) : (
+          <ul className="agent-panel-list is-wide">{all.map((thread) => <ChatItem key={thread.id} thread={thread} chat={chat} active={false} onOpen={onOpen} wide />)}</ul>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Saved prompts: New, and for each Use (into the box), Edit, Delete. The star under an answer saves its question here.
+function PromptsView({ chat, onUse }) {
+  const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState("")
   const [error, setError] = useState("")
-  const [temporary, setTemporary] = useState(false)
-  const streamingRef = useRef(false)
-  // The current temporary chat's id, so it can be thrown away when the person leaves it.
-  const temporaryIdRef = useRef("")
-
-  function leaveTemporary() {
-    discardTemporaryThread(temporaryIdRef.current)
-    temporaryIdRef.current = ""
-    setTemporary(false)
-  }
-
-  // Leaving the page (or closing the tab) ends a temporary chat.
-  useEffect(() => {
-    const onHide = () => discardTemporaryThread(temporaryIdRef.current)
-    window.addEventListener("pagehide", onHide)
-    return () => {
-      window.removeEventListener("pagehide", onHide)
-      discardTemporaryThread(temporaryIdRef.current)
-    }
-  }, [])
-
-  const openThread = useCallback(async (id) => {
-    if (streamingRef.current) return
-    // Opening a saved chat ends any temporary one.
-    discardTemporaryThread(temporaryIdRef.current)
-    temporaryIdRef.current = ""
-    setTemporary(false)
-    setOpening(true)
+  const save = async (id, text) => {
     setError("")
     try {
-      const data = await api(`/agent/threads/${id}`)
-      setThreadId(id)
-      setTitle(data.thread.title)
-      storeThread(id)
-      setRows(threadRows(data.thread.messages))
-    } catch (err) {
-      storeThread("")
-      if (err.status !== 404) setError(err.message)
-    } finally {
-      setOpening(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    let stored = ""
-    try {
-      stored = sessionStorage.getItem(THREAD_KEY) || ""
-    } catch {}
-    if (stored) openThread(stored)
-  }, [openThread])
-
-  function newChat() {
-    if (streamingRef.current) return
-    if (temporary) leaveTemporary()
-    setThreadId("")
-    setTitle("")
-    storeThread("")
-    setRows([])
-    setError("")
-  }
-
-  // A temporary chat is not saved to History. Pressing it again goes back to a normal new chat.
-  function toggleTemporary() {
-    if (streamingRef.current) return
-    const starting = !temporary
-    newChat()
-    if (starting) setTemporary(true)
-  }
-
-  async function deleteThread(thread) {
-    if (!window.confirm(`Delete "${thread.title}"?`)) return
-    try {
-      await api(`/agent/threads/${thread.id}`, { method: "DELETE" })
-      if (thread.id === threadId) newChat()
-      threadsApi.reload()
+      if (id) await chat.updatePrompt(id, text)
+      else await chat.savePrompt(text)
+      setAdding(false)
+      setEditing("")
     } catch (err) {
       setError(err.message)
     }
   }
-
-  async function send(prompt, files = []) {
-    if (streamingRef.current) return
-    streamingRef.current = true
-    setStreaming(true)
+  const remove = async (prompt) => {
+    if (!window.confirm("Delete this prompt?")) return
     setError("")
-    const startedAt = Date.now()
-    if (!threadId) setTitle(chatTitleFromPrompt(prompt || `About ${files.map((file) => file.name).join(", ")}`))
-    setRows((current) => [...current, { id: rowId(), role: "user", content: prompt, attachments: files.map((file, index) => ({ id: `local-${index}`, name: file.name, mime: file.mime, url: file.url })) }])
-    const add = (row) => setRows((current) => [...current, row])
     try {
-      await streamAgent(
-        { prompt, threadId, temporary, files: files.map((file) => file.file) },
-        {
-          onChatId: (id) => {
-            setThreadId(id)
-            if (temporary) temporaryIdRef.current = id
-            else storeThread(id)
-          },
-          onPacket: (parsed) => {
-            const parts = streamPayloadToAssistantParts(parsed)
-            if (parts.skipMessage) return
-            add({ id: rowId(), role: "assistant", content: parts.userMessage, toolResult: parts.toolResult, error: parts.error })
-          },
-        },
-      )
+      await chat.deletePrompt(prompt.id)
     } catch (err) {
-      add({ id: rowId(), role: "assistant", content: err.message, error: true })
-    } finally {
-      const durationMs = Date.now() - startedAt
-      setRows((current) => {
-        const next = [...current]
-        for (let index = next.length - 1; index >= 0; index -= 1) {
-          if (next[index].role === "user") break
-          if (!next[index].toolResult && next[index].content) {
-            next[index] = { ...next[index], agentRun: { durationMs } }
-            break
-          }
-        }
-        return next
-      })
-      streamingRef.current = false
-      setStreaming(false)
-      threadsApi.reload()
-      for (const delay of [3000, 8000, 15000]) setTimeout(() => threadsApi.reload(), delay)
+      setError(err.message)
     }
   }
-
-  const listed = (threadsApi.data?.items || []).find((thread) => thread.id === threadId)
-  const chatTitle = temporary ? "Temporary chat" : listed?.title || title || "New chat"
-
   return (
-    <div className="workspace agent-page">
-      <div className="workspace-top">
-        <div className="page-heading">
-          <h1 className="page-title agent-title" title={chatTitle}>{chatTitle}</h1>
+    <div className="agent-page-list">
+      <div className="agent-column">
+        <div className="agent-prompts-head">
+          <p>Questions you ask often, ready to use in any chat.</p>
+          <button type="button" className="primary" onClick={() => { setAdding(true); setEditing("") }} disabled={adding}><Icon name="plus" size={14} /> New</button>
         </div>
-        <div className="agent-head-actions">
-          <History threads={threadsApi.data?.items || []} activeId={threadId} onOpen={openThread} onDelete={deleteThread} />
-          <button
-            type="button"
-            className={temporary ? "import-button agent-temp-toggle is-on" : "import-button agent-temp-toggle"}
-            aria-pressed={temporary}
-            disabled={streaming}
-            title={temporary ? "Leave the temporary chat" : "Start a chat that is not saved to History"}
-            onClick={toggleTemporary}
-          >
-            <Icon name="tempChat" size={14} />
-            <span className="agent-history-label">Temporary</span>
-          </button>
-          <button type="button" className="primary" disabled={streaming} onClick={newChat}>
-            <Icon name="plus" size={14} />
-            New chat
-          </button>
-        </div>
-      </div>
-      <div className="agent-scroll">
-        {error && <div className="banner">{error}</div>}
-        {opening ? (
-          <PageSpinner />
+        {error && <p className="banner">{error}</p>}
+        {adding && <PromptEditor onCancel={() => setAdding(false)} onSave={(text) => save("", text)} />}
+        {!chat.promptsLoaded ? <p className="agent-panel-none">Loading…</p> : !chat.prompts.length && !adding ? (
+          <p className="agent-panel-none">No saved prompts yet. Press New, or the star under an answer to save the question you asked.</p>
         ) : (
-          <AgentMessages
-            rows={rows}
-            streaming={streaming}
-            emptyHint={temporary ? "Temporary chat: it is not saved to History and is deleted within a day." : "Ask about properties, lenders, draws, loans or upcoming payments"}
-          />
+          <ul className="agent-prompt-list">
+            {chat.prompts.map((prompt) => (
+              <li key={prompt.id} className="agent-prompt-item">
+                {editing === prompt.id ? (
+                  <PromptEditor text={prompt.text} onCancel={() => setEditing("")} onSave={(text) => save(prompt.id, text)} />
+                ) : (
+                  <>
+                    <p>{prompt.text}</p>
+                    <div className="agent-prompt-actions">
+                      <button type="button" className="import-button" onClick={() => onUse(prompt.text)}>Use</button>
+                      <button type="button" className="tool" onClick={() => { setEditing(prompt.id); setAdding(false) }}>Edit</button>
+                      <button type="button" className="tool agent-prompt-delete" onClick={() => remove(prompt)}>Delete</button>
+                    </div>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
-      <AgentComposer onSend={send} streaming={streaming} connected={settingsApi.data?.settings?.modelConnected} />
     </div>
+  )
+}
+
+function PromptEditor({ text = "", onCancel, onSave }) {
+  const [value, setValue] = useState(text)
+  return (
+    <form className="agent-prompt-editor" onSubmit={(event) => { event.preventDefault(); if (value.trim()) onSave(value.trim()) }}>
+      <textarea value={value} onChange={(event) => setValue(event.target.value)} rows={3} maxLength={10000} placeholder="Write the prompt, e.g. Which loans mature in the next 90 days?" aria-label="Prompt" autoFocus />
+      <div className="agent-prompt-actions">
+        <button type="button" className="tool" onClick={onCancel}>Cancel</button>
+        <button type="submit" className="primary" disabled={!value.trim()}>Save</button>
+      </div>
+    </form>
   )
 }

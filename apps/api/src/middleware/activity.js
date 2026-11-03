@@ -15,7 +15,8 @@ const RESOURCES = {
   members: "Member",
   agent: "Agent",
   "photo-sets": "Photos",
-  overview: "Overview",
+  overview: "Insights",
+  home: "Home",
   notifications: "Notifications",
 }
 const VERBS = { POST: "changed", PUT: "updated", PATCH: "updated", DELETE: "removed" }
@@ -40,7 +41,9 @@ export function trackActivity(req, res, next) {
   res.on("finish", () => {
     if (res.statusCode >= 400 || !req.user || activityRecorded(req.user)) return
     // Chat messages and call plumbing (AI notes speech pieces every few seconds, declines, test rings) are not activity.
-    if (path.startsWith("/chat/") || path.startsWith("/calls/")) return
+    // Nor is someone's own use of the Agent (temporary chats, thumbs, pins, saved prompts): what counts there, like a
+    // question or a deleted chat, is recorded by the Agent routes themselves.
+    if (path.startsWith("/chat/") || path.startsWith("/calls/") || path.startsWith("/agent/")) return
     Activity.create({ actorId: req.user._id, actorName: req.user.name, title: fallbackTitle(req, path), detail: fallbackDetail(req) }).catch((error) => console.error("Activity log failed", error))
   })
   next()

@@ -90,17 +90,19 @@ async function failure(response) {
   return new Error(data.error || "The agent could not answer. Try again.")
 }
 
-// files: attached File objects; the question then goes as a form so they travel with it.
-export async function streamAgent({ prompt, threadId, temporary = false, files = [] }, { onPacket, onChatId }) {
+// files: attached File objects; the question then goes as a form so they travel with it. replaceFrom: the id of an
+// earlier question this one replaces, with everything after it (Retry, Edit).
+export async function streamAgent({ prompt, threadId, temporary = false, files = [], replaceFrom = "" }, { onPacket, onChatId }) {
   let body
   if (files.length) {
     body = new FormData()
     body.append("prompt", prompt)
     if (threadId) body.append("threadId", threadId)
     if (temporary) body.append("temporary", "true")
+    if (replaceFrom) body.append("replaceFrom", replaceFrom)
     for (const file of files) body.append("files", file, file.name)
   } else {
-    body = JSON.stringify({ prompt, threadId: threadId || undefined, temporary: temporary || undefined })
+    body = JSON.stringify({ prompt, threadId: threadId || undefined, temporary: temporary || undefined, replaceFrom: replaceFrom || undefined })
   }
   const response = await fetch("/api/agent/run", {
     method: "POST",

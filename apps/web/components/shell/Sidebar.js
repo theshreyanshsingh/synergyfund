@@ -9,6 +9,8 @@ import { useChatEvents } from "../../lib/chatSocket"
 import { Icon } from "../ui/Icon"
 import { InstallCard } from "../pwa/InstallCard"
 import { DOCK, isActive } from "./Dock"
+
+const PHONE = "(max-width: 760px)"
 import { useSession } from "./Providers"
 
 // Unread @mentions in channels and unread direct messages, kept live (for the contractor's top bar).
@@ -37,7 +39,7 @@ export function useChatBadges(me, enabled) {
   return counts
 }
 
-export const Sidebar = memo(function Sidebar({ user, onSearch, onToggle, onNavigate }) {
+export const Sidebar = memo(function Sidebar({ user, onSearch, onToggle, onNavigate, onAgent }) {
   const [open, setOpen] = useState(false)
   const items = navFor(user)
   const primary = items.filter((item) => item.zone === "primary")
@@ -68,7 +70,7 @@ export const Sidebar = memo(function Sidebar({ user, onSearch, onToggle, onNavig
         <span>Quick Actions</span>
         <kbd>⌘K</kbd>
       </button>
-      <SidebarNav primary={primary} sections={sections} onNavigate={onNavigate} chat={can(user, PERMISSIONS.chatUse)} me={user.id} />
+      <SidebarNav primary={primary} sections={sections} onNavigate={onNavigate} onAgent={onAgent} chat={can(user, PERMISSIONS.chatUse)} me={user.id} />
       <div className="user-dock">
         {open && (
           <div className="user-pop">
@@ -115,7 +117,7 @@ function ThemeButton() {
   )
 }
 
-function SidebarNav({ primary, sections, onNavigate, chat, me }) {
+function SidebarNav({ primary, sections, onNavigate, onAgent, chat, me }) {
   const pathname = usePathname()
   const [counts, setCounts] = useState({ notifications: 0, channels: 0, direct: 0 })
   const timer = useRef(null)
@@ -148,7 +150,7 @@ function SidebarNav({ primary, sections, onNavigate, chat, me }) {
   return (
     <nav className="nav">
       {primary.map((item) => (
-        <NavLink key={item.label} item={item} count={counts[item.countKey] || 0} onNavigate={onNavigate} />
+        <NavLink key={item.label} item={item} count={counts[item.countKey] || 0} onNavigate={onNavigate} onAgent={item.href === "/knowledge" ? onAgent : null} />
       ))}
       {sections.map((section) => (
         <div key={section.label} className={section.items.every((item) => DOCK.includes(item.href)) ? "nav-section is-docked" : "nav-section"}>
@@ -162,12 +164,24 @@ function SidebarNav({ primary, sections, onNavigate, chat, me }) {
   )
 }
 
-function NavLink({ item, count = 0, onNavigate }) {
+// On a phone, Agent opens the Agent sheet over the page (`onAgent`) instead of going to its page.
+function NavLink({ item, count = 0, onNavigate, onAgent = null }) {
   const pathname = usePathname()
   // A page in the dock is left out of the sidebar wherever the dock shows (CSS).
   const className = ["nav-link", isActive(item.href, pathname) ? "is-active" : "", DOCK.includes(item.href) ? "is-docked" : ""].filter(Boolean).join(" ")
   return (
-    <Link href={item.href} className={className} onClick={() => onNavigate?.()}>
+    <Link
+      href={item.href}
+      className={className}
+      onClick={(event) => {
+        if (onAgent && pathname !== item.href && window.matchMedia(PHONE).matches) {
+          event.preventDefault()
+          onAgent()
+          return
+        }
+        onNavigate?.()
+      }}
+    >
       <Icon name={item.icon} />
       <span>{item.label}</span>
       {item.badge && <em className="nav-badge">{item.badge}</em>}

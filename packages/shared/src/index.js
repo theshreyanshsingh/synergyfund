@@ -1290,16 +1290,19 @@ export function initials(name = "") {
 }
 
 export const NAV = [
+  // Everyone's own start page (not contractors, who start on Properties).
+  { href: "/home", label: "Home", icon: "home", zone: "primary" },
   { href: "/knowledge", label: "Agent", icon: "spark", permission: PERMISSIONS.agentAsk, badge: "NEW", zone: "primary" },
   { href: "/chat", label: "Channels", icon: "hash", permission: PERMISSIONS.chatUse, zone: "primary", countKey: "channels" },
   { href: "/messages", label: "Direct Messages", icon: "chat", permission: PERMISSIONS.chatUse, zone: "primary", countKey: "direct" },
   { href: "/calls", label: "Calls", icon: "phone", permission: PERMISSIONS.chatUse, zone: "primary" },
   { href: "/notifications", label: "Notifications", icon: "bell", permission: PERMISSIONS.activityRead, zone: "primary", countKey: "notifications" },
   { href: "/draws", label: "Draws", icon: "layers", permission: PERMISSIONS.drawsRead, zone: "primary" },
-  { href: "/overview", label: "Overview", icon: "grid", permission: PERMISSIONS.propertiesRead, section: "Plan Your Day" },
   { href: "/tasks", label: "Tasks", icon: "check", permission: PERMISSIONS.propertiesRead, section: "Plan Your Day" },
   { href: "/payments", label: "Upcoming Payments", icon: "card", permission: PERMISSIONS.expensesRead, section: "Plan Your Day" },
   { href: "/calendar", label: "Calendar", icon: "calendar", permission: PERMISSIONS.expensesRead, section: "Plan Your Day" },
+  // The portfolio's figures and charts (the page was called Overview; its address stays /overview).
+  { href: "/overview", label: "Insights", icon: "grid", permission: PERMISSIONS.propertiesRead, section: "Projects" },
   { href: "/properties", label: "Properties", icon: "building", permission: PERMISSIONS.propertiesRead, section: "Projects" },
   { href: "/companies", label: "Companies", icon: "buildings", permission: PERMISSIONS.propertiesRead, section: "Projects" },
   { href: "/construction", label: "Construction Intelligence", icon: "chart", permission: PERMISSIONS.drawsRead, section: "Projects", badge: "Soon" },
@@ -1321,7 +1324,7 @@ export function navFor(user) {
 }
 
 export function homeFor(user) {
-  return user?.role === "contractor" ? "/properties" : "/overview"
+  return user?.role === "contractor" ? "/properties" : "/home"
 }
 
 export const AGENT_DEFAULTS = {

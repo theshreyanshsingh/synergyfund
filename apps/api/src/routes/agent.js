@@ -1,6 +1,7 @@
 import { Router } from "express"
 import { AGENT_DEFAULTS, chatTitleFromPrompt } from "@synergifund/shared"
-import { AgentProposal, AgentSetting, AgentThread, Property } from "../models/index.js"
+import mongoose from "mongoose"
+import { AgentPrompt, AgentProposal, AgentSetting, AgentThread, DocumentFile, Property } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
 import { ownsProperty } from "../services/access.js"
@@ -9,6 +10,7 @@ import { applyProposal, changedSince, freshProposals, presentProposal } from "..
 import { runAgent } from "../services/agent/run.js"
 import { resumeRun } from "../services/agent/stream.js"
 import { recordActivity } from "../services/notify.js"
+import { escapeRegex } from "../services/chat.js"
 import { upload } from "../services/files.js"
 import { MAX_ATTACHMENTS, attachmentProblem, removeAttachments, saveAttachments, sweepAttachments, threadFileIds } from "../services/agent/attachments.js"
 
@@ -18,6 +20,9 @@ const MAX_PROMPT = 10000
 const MODEL_ID = /^[a-z0-9][\w.-]*\/[\w.:-]+$/i
 const CATALOG_TTL_MS = 60 * 60 * 1000
 const TEMPORARY_CHAT_TTL_MS = 24 * 60 * 60 * 1000
+const MAX_TITLE = 80
+const MAX_PROMPTS = 200
+const FEEDBACK = ["up", "down", ""]
 let catalog = { at: 0, models: null }
 
 export async function agentSettings() {
@@ -105,12 +110,23 @@ function presentMessage(message) {
     agentRunDurationMs: message.agentRunDurationMs ?? null,
     error: Boolean(message.error),
     attachments: (message.attachments || []).map((item) => ({ id: String(item.fileId), name: item.name || "File", mime: item.mime || "", size: item.size || 0 })),
+    feedback: FEEDBACK.includes(message.feedback) ? message.feedback : "",
     createdAt: message.at,
   }
 }
 
 function presentThread(thread) {
-  return { id: String(thread._id), title: thread.title || "New chat", updatedAt: thread.updatedAt }
+  return { id: String(thread._id), title: thread.title || "New chat", pinned: Boolean(thread.pinned), updatedAt: thread.updatedAt }
+}
+
+function presentPrompt(prompt) {
+  return { id: String(prompt._id), text: prompt.text, updatedAt: prompt.updatedAt }
+}
+
+async function ownThread(req, res, select = "") {
+  const thread = mongoose.isValidObjectId(req.params.id) ? await AgentThread.findOne({ _id: req.params.id, userId: req.user._id }).select(select) : null
+  if (!thread) sendError(res, 404, "That conversation was not found.")
+  return thread
 }
 
 agentRouter.use(requirePermission("agent.ask"))
@@ -175,7 +191,14 @@ agentRouter.patch(
 agentRouter.get(
   "/threads",
   asyncHandler(async (req, res) => {
-    const threads = await AgentThread.find({ userId: req.user._id, temporary: { $ne: true } }).select("title updatedAt").sort({ updatedAt: -1 }).limit(100)
+    // `q` searches the titles and what was said.
+    const filter = { userId: req.user._id, temporary: { $ne: true } }
+    const needle = String(req.query.q || "").trim().slice(0, 100)
+    if (needle) {
+      const pattern = new RegExp(escapeRegex(needle), "i")
+      filter.$or = [{ title: pattern }, { "messages.content": pattern }]
+    }
+    const threads = await AgentThread.find(filter).select("title pinned updatedAt").sort({ updatedAt: -1 }).limit(200)
     sweepAttachments(req.user._id).catch((error) => console.error("Agent attachment clean-up failed", error))
     res.json({ items: threads.map(presentThread) })
   }),
@@ -211,6 +234,91 @@ agentRouter.delete(
   }),
 )
 
+// Rename a chat, or pin it to the top of the list.
+agentRouter.patch(
+  "/threads/:id",
+  asyncHandler(async (req, res) => {
+    const thread = await ownThread(req, res, "title pinned updatedAt temporary")
+    if (!thread) return
+    if ("title" in req.body) {
+      const title = String(req.body.title || "").replace(/\s+/g, " ").trim().slice(0, MAX_TITLE)
+      if (!title) return sendError(res, 400, "Give the chat a name.")
+      thread.title = title
+    }
+    if ("pinned" in req.body) thread.pinned = req.body.pinned === true
+    // Renaming or pinning does not move the chat up the list.
+    await thread.save({ timestamps: false })
+    res.json({ thread: presentThread(thread) })
+  }),
+)
+
+// Thumbs up or down on an answer ("" takes it back).
+agentRouter.patch(
+  "/threads/:id/messages/:messageId",
+  asyncHandler(async (req, res) => {
+    const thread = await ownThread(req, res)
+    if (!thread) return
+    const message = mongoose.isValidObjectId(req.params.messageId) ? thread.messages.id(req.params.messageId) : null
+    if (!message || message.role === "user") return sendError(res, 404, "That answer was not found.")
+    const feedback = String(req.body.feedback ?? "")
+    if (!FEEDBACK.includes(feedback)) return sendError(res, 400, "Send up, down or nothing.")
+    message.feedback = feedback
+    await thread.save({ timestamps: false })
+    res.json({ feedback })
+  }),
+)
+
+// Saved prompts: each person's own questions to ask again.
+agentRouter.get(
+  "/prompts",
+  asyncHandler(async (req, res) => {
+    const prompts = await AgentPrompt.find({ userId: req.user._id }).sort({ updatedAt: -1 }).limit(MAX_PROMPTS)
+    res.json({ items: prompts.map(presentPrompt) })
+  }),
+)
+
+function promptText(value) {
+  return String(value || "").replace(/\r\n/g, "\n").trim()
+}
+
+agentRouter.post(
+  "/prompts",
+  asyncHandler(async (req, res) => {
+    const text = promptText(req.body.text)
+    if (!text) return sendError(res, 400, "Write the prompt to save.")
+    if (text.length > MAX_PROMPT) return sendError(res, 400, "Keep a prompt under 10,000 characters.")
+    // Saving the same words again keeps the one already there.
+    const existing = await AgentPrompt.findOne({ userId: req.user._id, text })
+    if (existing) return res.json({ prompt: presentPrompt(existing) })
+    if ((await AgentPrompt.countDocuments({ userId: req.user._id })) >= MAX_PROMPTS) return sendError(res, 400, `Keep up to ${MAX_PROMPTS} prompts. Delete one you no longer use.`)
+    const prompt = await AgentPrompt.create({ userId: req.user._id, text })
+    res.status(201).json({ prompt: presentPrompt(prompt) })
+  }),
+)
+
+agentRouter.patch(
+  "/prompts/:id",
+  asyncHandler(async (req, res) => {
+    const prompt = mongoose.isValidObjectId(req.params.id) ? await AgentPrompt.findOne({ _id: req.params.id, userId: req.user._id }) : null
+    if (!prompt) return sendError(res, 404, "That prompt was not found.")
+    const text = promptText(req.body.text)
+    if (!text) return sendError(res, 400, "Write the prompt to save.")
+    if (text.length > MAX_PROMPT) return sendError(res, 400, "Keep a prompt under 10,000 characters.")
+    prompt.text = text
+    await prompt.save()
+    res.json({ prompt: presentPrompt(prompt) })
+  }),
+)
+
+agentRouter.delete(
+  "/prompts/:id",
+  asyncHandler(async (req, res) => {
+    const result = mongoose.isValidObjectId(req.params.id) ? await AgentPrompt.deleteOne({ _id: req.params.id, userId: req.user._id }) : null
+    if (!result?.deletedCount) return sendError(res, 404, "That prompt was not found.")
+    res.json({ ok: true })
+  }),
+)
+
 // A question can come with files (sent as a form); a plain question is JSON.
 function receiveAttachments(req, res, next) {
   if (!req.is("multipart/form-data")) return next()
@@ -231,7 +339,7 @@ agentRouter.post(
   asyncHandler(async (req, res) => {
     const prompt = String(req.body.prompt || "").trim()
     const files = req.files || []
-    if (!prompt && !files.length) {
+    if (!prompt && !files.length && !req.body.replaceFrom) {
       sendError(res, 400, "Ask a question about the records you can see.")
       return
     }
@@ -252,7 +360,24 @@ agentRouter.post(
         return
       }
     }
-    const attachments = files.length ? await saveAttachments(files, req.user) : []
+    // Retry or Edit: the question `replaceFrom` (one of this person's) and everything after it is replaced by this one.
+    // Its files come along when none are sent with it.
+    let carried = []
+    if (req.body.replaceFrom) {
+      const at = thread ? thread.messages.findIndex((message) => String(message._id) === String(req.body.replaceFrom) && message.role === "user") : -1
+      if (at === -1) {
+        sendError(res, 404, "That question was not found.")
+        return
+      }
+      const fileIds = (thread.messages[at].attachments || []).map((item) => item.fileId).filter(Boolean)
+      if (!files.length && fileIds.length) carried = await DocumentFile.find({ _id: { $in: fileIds }, kind: "agent", uploadedBy: req.user._id })
+      thread.messages.splice(at)
+    }
+    if (!prompt && !files.length && !carried.length) {
+      sendError(res, 400, "Ask a question about the records you can see.")
+      return
+    }
+    const attachments = files.length ? await saveAttachments(files, req.user) : carried
     const asked = prompt || `About ${attachments.map((file) => file.name).join(", ")}`
     if (!thread) {
       thread = new AgentThread({ userId: req.user._id, title: chatTitleFromPrompt(asked), messages: [], temporary: req.body.temporary === true || req.body.temporary === "true" })

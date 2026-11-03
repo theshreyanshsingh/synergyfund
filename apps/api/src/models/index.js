@@ -35,6 +35,10 @@ export const User = register(
       deniedPermissions: [String],
       propertyIds: [{ type: Schema.Types.ObjectId, ref: "Property" }],
       overviewOrder: [String],
+      // The Insights sections this person hid (Customize on Insights): "attention", "projection" or a card's id.
+      overviewHidden: [String],
+      // The Home sections this person hid (Customize Home): "greeting", "attention", "today", "tasks", "catchup".
+      homeHidden: [String],
       // The call ringtone and message chime this person picked in Settings.
       sounds: { ringtone: String, chime: String },
       // The AI teammate's account: it posts in property chats, never signs in, and gets no notifications.
@@ -751,15 +755,31 @@ export const AgentThread = register(
           // Files the person attached to a question, and what was read from them (the agent works from these notes).
           attachments: [{ fileId: { type: Schema.Types.ObjectId, ref: "Document" }, name: String, mime: String, size: Number, _id: false }],
           attachmentNotes: String,
+          // The person's thumbs on an answer: "up", "down" or "".
+          feedback: { type: String, default: "" },
           at: { type: Date, default: Date.now },
         },
       ],
+      // Pinned chats are listed first on the Agent page.
+      pinned: { type: Boolean, default: false },
       // A temporary chat is never listed in History. MongoDB removes it once `expiresAt` passes.
       temporary: { type: Boolean, default: false },
       expiresAt: { type: Date, default: undefined },
     },
     { timestamps: true },
   ).index({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+)
+
+// A question someone saved to ask again (Prompts on the Agent page). Each person has their own.
+export const AgentPrompt = register(
+  "AgentPrompt",
+  new Schema(
+    {
+      userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+      text: { type: String, required: true },
+    },
+    { timestamps: true },
+  ).index({ userId: 1, updatedAt: -1 }),
 )
 
 // A change the Agent prepared for a person to confirm (see services/agent/proposals.js). status: pending, saved,

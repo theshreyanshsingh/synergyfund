@@ -7,7 +7,7 @@ import { Icon } from "../ui/Icon"
 
 // The pages in the dock along the bottom on phones, tablets and narrow windows (then Search, five in all). The
 // sidebar leaves them out there; a computer screen keeps the full sidebar and no dock.
-export const DOCK = ["/overview", "/properties", "/draws", "/tasks"]
+export const DOCK = ["/home", "/properties", "/draws", "/tasks"]
 
 export function isActive(href, pathname) {
   return pathname === href || (href !== "/overview" && pathname.startsWith(href))

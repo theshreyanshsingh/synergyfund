@@ -226,7 +226,7 @@ export function PropertyInfoSection({ property, company = null, writable, canPay
             </li>
           ))}
         </ul>
-        <p className="info-hint">An active policy's expiration date shows on the calendar, and in Needs attention on the Overview from 30 days before. Mark paid puts a payment on the cost sheet and adds one to No. of Payments Paid.</p>
+        <p className="info-hint">An active policy's expiration date shows on the calendar, and in Needs attention on Insights from 30 days before (and on Home once it has expired). Mark paid puts a payment on the cost sheet and adds one to No. of Payments Paid.</p>
       </section>
 
       <section className="panel property-card info-card">

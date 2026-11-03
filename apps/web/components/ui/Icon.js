@@ -68,6 +68,18 @@ function At() { return <><circle cx="12" cy="12" r="4" /><path d="M16 8v5a2.5 2.
 function Reply() { return <path d="M5 6h14v9H9l-4 3V6zM9 10h6" /> }
 function Edit() { return <path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4" /> }
 function Back() { return <path d="M15 18l-6-6 6-6" /> }
+// Ask again (Retry under an Agent answer).
+function Retry() { return <path d="M4 12a8 8 0 1 0 2.4-5.7M4 4.5v4h4" /> }
+function ThumbUp() { return <path d="M7 11v9H4v-9h3zM7 11l4-7c1.4 0 2.3 1.1 2 2.4L12.4 10H18a2 2 0 0 1 2 2.3l-1 6A2 2 0 0 1 17 20H7" /> }
+function ThumbDown() { return <path d="M7 13V4H4v9h3zM7 13l4 7c1.4 0 2.3-1.1 2-2.4l-.6-3.6H18a2 2 0 0 0 2-2.3l-1-6A2 2 0 0 0 17 4H7" /> }
+// An outline star (not saved yet); `star` is the filled one.
+function StarLine() { return <path d="M12 3.2l2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 17.1 6.6 20l1-6.1-4.4-4.3 6.1-.9z" /> }
+// A side panel to show or hide (the Agent page's chat list).
+function Panel() { return <><rect x="3.5" y="4.5" width="17" height="15" rx="2.5" /><path d="M9.5 4.5v15" /></> }
+// ⋮ (a menu of more actions, on the phone's Agent sheet).
+function Kebab() { return <><circle cx="12" cy="5" r="1.4" fill="currentColor" /><circle cx="12" cy="12" r="1.4" fill="currentColor" /><circle cx="12" cy="19" r="1.4" fill="currentColor" /></> }
+// A curved arrow: a suggested prompt.
+function Forward() { return <path d="M5 18v-2.5A5.5 5.5 0 0 1 10.5 10H19M15 6l4 4-4 4" /> }
 function Grip() { return <><circle cx="9" cy="6" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="6" r="1.3" fill="currentColor" stroke="none" /><circle cx="9" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="9" cy="18" r="1.3" fill="currentColor" stroke="none" /><circle cx="15" cy="18" r="1.3" fill="currentColor" stroke="none" /></> }
 function Phone() { return <path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" /> }
 function PhoneOff() { return <><path d="M10.7 13.3a11 11 0 0 1-2.2-3.8L11 8 9 3H5a2 2 0 0 0-2 2 16 16 0 0 0 4.4 11.6" /><path d="M10.6 17.6A16 16 0 0 0 18 20a2 2 0 0 0 2-2v-4l-5-2-1.5 2.5" /><path d="M3 21 21 3" /></> }
@@ -87,4 +99,4 @@ function Camera() { return <><path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12
 function Photo() { return <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="9.5" r="1.8" /><path d="m21 16-5-5-9 9" /></> }
 function Share() { return <><path d="M12 15V3M8 7l4-4 4 4" /><path d="M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7" /></> }
 
-const icons = { camera: Camera, image: Photo, popout: Popout, userPlus: UserPlus, link: Link, share: Share, phone: Phone, phoneOff: PhoneOff, video: Video, videoOff: VideoOff, micOff: MicOff, screen: Screen, expand: Expand, shrink: Shrink, arrowIn: ArrowIn, arrowOut: ArrowOut, grip: Grip, hash: Hash, lock: Lock, paperclip: Paperclip, smile: Smile, at: At, reply: Reply, edit: Edit, back: Back, search: Search, spark: Spark, bell: Bell, home: Home, chat: Chat, tempChat: TempChat, grid: Grid, check: Check, card: Card, calendar: Calendar, building: Building, buildings: Buildings, briefcase: Briefcase, folder: Folder, download: Download, upload: Upload, copy: Copy, eye: Eye, play: Play, layers: Layers, chart: Chart, bank: Bank, receipt: Receipt, file: File, pulse: Pulse, alert: Alert, users: Users, chevron: Chevron, plus: Plus, filter: Filter, sliders: Sliders, logout: Logout, settings: Settings, help: Help, sun: Sun, moon: Moon, menu: Menu, more: More, star: Star, close: Close, mic: Mic, stop: Stop, arrowUp: ArrowUp, tick: Tick, history: History, trash: Trash, globe: Globe, mail: Mail }
+const icons = { camera: Camera, image: Photo, popout: Popout, userPlus: UserPlus, link: Link, share: Share, phone: Phone, phoneOff: PhoneOff, video: Video, videoOff: VideoOff, micOff: MicOff, screen: Screen, expand: Expand, shrink: Shrink, arrowIn: ArrowIn, arrowOut: ArrowOut, grip: Grip, hash: Hash, lock: Lock, paperclip: Paperclip, smile: Smile, at: At, reply: Reply, edit: Edit, back: Back, search: Search, spark: Spark, bell: Bell, home: Home, chat: Chat, tempChat: TempChat, grid: Grid, check: Check, card: Card, calendar: Calendar, building: Building, buildings: Buildings, briefcase: Briefcase, folder: Folder, download: Download, upload: Upload, copy: Copy, eye: Eye, play: Play, layers: Layers, chart: Chart, bank: Bank, receipt: Receipt, file: File, pulse: Pulse, alert: Alert, users: Users, chevron: Chevron, plus: Plus, filter: Filter, sliders: Sliders, logout: Logout, settings: Settings, help: Help, sun: Sun, moon: Moon, menu: Menu, more: More, kebab: Kebab, forward: Forward, retry: Retry, thumbUp: ThumbUp, thumbDown: ThumbDown, starLine: StarLine, panel: Panel, star: Star, close: Close, mic: Mic, stop: Stop, arrowUp: ArrowUp, tick: Tick, history: History, trash: Trash, globe: Globe, mail: Mail }

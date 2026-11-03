@@ -151,6 +151,7 @@ workspaceRouter.get(
       attention: attentionItems({ properties, budgetsByProperty, draws, drawsByProperty, loans, bills, tasks: openTasks, names, days }),
       projection: expenseProjection(expenses, bills, days),
       order: cleanOverviewOrder(req.user.overviewOrder),
+      hidden: cleanOverviewHidden(req.user.overviewHidden),
       cards: cards.map((card) => ({ ...card, labels })),
     })
   }),
@@ -163,8 +164,71 @@ workspaceRouter.patch(
     const order = cleanOverviewOrder(req.body.order)
     req.user.overviewOrder = order
     await req.user.save()
-    await recordActivity({ user: req.user, title: "Overview rearranged", detail: "Changed the order of the overview cards" })
+    await recordActivity({ user: req.user, title: "Insights rearranged", detail: "Changed the order of the Insights cards" })
     res.json({ order })
+  }),
+)
+
+// Each person's own Insights (the Overview page): the sections they hid with Customize. Nobody else's changes.
+workspaceRouter.patch(
+  "/overview/hidden",
+  requirePermission("properties.read"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    if (!Array.isArray(req.body.hidden)) return sendError(res, 400, "Send the sections to hide as a list.")
+    const hidden = cleanOverviewHidden(req.body.hidden)
+    req.user.overviewHidden = hidden
+    await req.user.save()
+    await recordActivity({ user: req.user, title: "Insights customized", detail: hidden.length ? `Hid ${hidden.length} ${hidden.length === 1 ? "section" : "sections"} on their Insights` : "Shows every section on their Insights" })
+    res.json({ hidden })
+  }),
+)
+
+// Home: each person's own start page. What needs attention now (overdue only, and of the tasks only theirs), their
+// open tasks, and the sections they hid. The page adds today's calendar, unread messages and missed calls from those
+// pages' own feeds.
+workspaceRouter.get(
+  "/home",
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const today = todayKey()
+    const seesProperties = req.permissions.includes("properties.read")
+    const seesDraws = req.permissions.includes("draws.read")
+    const properties = seesProperties ? await Property.find(propertyFilter(req.user)) : []
+    const ids = properties.map((property) => property._id)
+    const [loans, budgets, draws, bills, tasks] = await Promise.all([
+      seesProperties ? Loan.find({ propertyId: { $in: ids } }) : [],
+      seesProperties && seesDraws ? DrawBudget.find({ propertyId: { $in: ids } }) : [],
+      seesProperties && seesDraws ? Draw.find({ propertyId: { $in: ids } }) : [],
+      seesProperties && req.permissions.includes("expenses.read") ? Bill.find({ $or: [{ propertyId: { $in: ids } }, { propertyId: null }] }) : [],
+      // The same tasks the Tasks page lists, of those the ones assigned to this person.
+      seesProperties ? Task.find({ assigneeId: req.user._id, done: false, $or: [{ propertyId: { $in: ids } }, { propertyId: null }] }).sort({ due: 1, createdAt: 1 }) : [],
+    ])
+    const names = new Map(properties.map((property) => [String(property._id), property.address]))
+    const attention = seesProperties
+      ? attentionItems({ properties, budgetsByProperty: groupByProperty(budgets), draws, drawsByProperty: groupByProperty(draws), loans, bills, tasks, names }).filter((item) => item.tone === "bad")
+      : []
+    const people = await assigneeMap(tasks)
+    res.json({
+      today,
+      attention,
+      tasks: tasks.map((task) => ({ ...presentTask(task, people.get(String(task.assigneeId || "")), false), property: names.get(String(task.propertyId || "")) || "" })),
+      hidden: cleanHomeHidden(req.user.homeHidden),
+    })
+  }),
+)
+
+// Customize Home: the sections this person hid. Nobody else's Home changes.
+workspaceRouter.patch(
+  "/home/hidden",
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    if (!Array.isArray(req.body.hidden)) return sendError(res, 400, "Send the sections to hide as a list.")
+    const hidden = cleanHomeHidden(req.body.hidden)
+    req.user.homeHidden = hidden
+    await req.user.save()
+    await recordActivity({ user: req.user, title: "Home customized", detail: hidden.length ? `Hid ${hidden.length} ${hidden.length === 1 ? "section" : "sections"} on their Home` : "Shows every section on their Home" })
+    res.json({ hidden })
   }),
 )
 
@@ -227,7 +291,9 @@ workspaceRouter.post(
       labels: cleanLabels(req.body.labels),
       notes: req.body.notes || "",
     })
-    const mail = await mailAssignee({ user: req.user, task, assignee: assignee.assignee })
+    // A task added for yourself on Home (quiet) needs no notice that you assigned it to yourself.
+    const forSelf = req.body.quiet === true && assignee.assignee && String(assignee.assignee._id) === String(req.user._id)
+    const mail = forSelf ? { status: "Skipped" } : await mailAssignee({ user: req.user, task, assignee: assignee.assignee })
     await recordActivity({
       user: req.user,
       title: "Task created",
@@ -1982,6 +2048,28 @@ function cleanOverviewOrder(value) {
     order.push(title)
   }
   return order
+}
+
+const OVERVIEW_SECTIONS = ["attention", "projection", ...OVERVIEW_CARDS]
+
+function cleanOverviewHidden(value) {
+  const hidden = []
+  for (const id of Array.isArray(value) ? value : []) {
+    const section = String(id || "")
+    if (OVERVIEW_SECTIONS.includes(section) && !hidden.includes(section)) hidden.push(section)
+  }
+  return hidden
+}
+
+const HOME_SECTIONS = ["greeting", "attention", "today", "tasks", "catchup"]
+
+function cleanHomeHidden(value) {
+  const hidden = []
+  for (const id of Array.isArray(value) ? value : []) {
+    const section = String(id || "")
+    if (HOME_SECTIONS.includes(section) && !hidden.includes(section)) hidden.push(section)
+  }
+  return hidden
 }
 
 function lineCard(title, value, hint, note, money, lines) {

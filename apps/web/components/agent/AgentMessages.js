@@ -8,6 +8,7 @@ import { PERMISSIONS, can } from "@synergifund/shared"
 import { useSession } from "../shell/Providers"
 import { Icon } from "../ui/Icon"
 import { api } from "../../lib/api"
+import { savedMessage } from "./useAgentChat"
 
 const AGENT_NAME = "SynergiFund"
 
@@ -64,7 +65,7 @@ const markdown = {
     const language = [].concat(code?.properties?.className || []).find((name) => String(name).startsWith("language-"))
     if (language === "language-email") return <EmailDraft text={hastText(code)} />
     if (language === "language-draft") return <TextDraft text={hastText(code)} />
-    return <pre className="agent-md-pre" {...props} />
+    return <CodeBlock text={hastText(code)} language={language ? language.replace("language-", "") : ""} />
   },
   blockquote: tag("blockquote", "agent-md-quote"),
   table: function MarkdownTable({ node, ...props }) {
@@ -382,8 +383,44 @@ function TextDraft({ text }) {
   )
 }
 
-function AgentAnswer({ content }) {
-  const { text, downloads } = useMemo(() => splitDownloads(content), [content])
+// Code the agent wrote: dark, with Copy.
+function CodeBlock({ text, language }) {
+  const [copied, copy] = useCopy()
+  const code = String(text || "").replace(/\n$/, "")
+  return (
+    <div className="agent-code">
+      <div className="agent-code-head">
+        <span>{language || "code"}</span>
+        <button type="button" onClick={() => copy(code)}>
+          <Icon name={copied === "yes" ? "tick" : "copy"} size={13} /> {copied === "yes" ? "Copied" : copied === "no" ? "Couldn't copy" : "Copy"}
+        </button>
+      </div>
+      <pre className="agent-code-body"><code>{code}</code></pre>
+    </div>
+  )
+}
+
+// A new answer appears word by word from `revealFrom` (when it arrived), over at most a couple of seconds.
+function useReveal(text, revealFrom) {
+  const words = useMemo(() => String(text || "").split(/(\s+)/), [text])
+  const count = Math.ceil(words.length / 2)
+  const duration = Math.min(2200, Math.max(500, count * 18))
+  const [now, setNow] = useState(() => Date.now())
+  const done = !revealFrom || now - revealFrom >= duration
+  useEffect(() => {
+    if (done) return undefined
+    const timer = setInterval(() => setNow(Date.now()), 40)
+    return () => clearInterval(timer)
+  }, [done])
+  if (done) return text
+  const shown = Math.max(1, Math.floor((count * (now - revealFrom)) / duration))
+  return words.slice(0, shown * 2).join("")
+}
+
+// The answer as formatted text (headings, lists, tables, quotes, code), the downloads it made as buttons.
+function AgentAnswer({ content, revealFrom }) {
+  const shown = useReveal(content, revealFrom)
+  const { text, downloads } = useMemo(() => splitDownloads(shown), [shown])
   return (
     <div className="agent-md">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdown}>{text}</ReactMarkdown>
@@ -667,42 +704,24 @@ function stepText(toolResult) {
   return { verb: "Read", detail: title || STATUS_LABELS[name] || name }
 }
 
-function AgentRunBanner({ durationMs }) {
-  return (
-    <div className="agent-run-banner">
-      <i />
-      <span>Worked for {formatAgentDuration(durationMs)}</span>
-      <i />
-    </div>
-  )
-}
-
-function StepsChip({ steps }) {
+// A finished answer's "Worked for 6s": opens to what the agent did (its plan and the records it read).
+function WorkedFor({ durationMs, steps, todos }) {
   const [open, setOpen] = useState(false)
-  if (!steps.length) return null
-  if (steps.length === 1) {
-    const step = stepText(steps[0])
-    return (
-      <div className="agent-chip">
-        <div className={step.failed ? "agent-chip-line is-failed" : "agent-chip-line"}><span>{step.verb}</span> {step.detail}</div>
-      </div>
-    )
-  }
+  const has = steps.length > 0 || todos.length > 0
+  if (durationMs == null && !has) return null
+  const label = durationMs == null ? "Worked" : `Worked for ${formatAgentDuration(durationMs)}`
   return (
-    <div className="agent-chip">
-      <button type="button" className="agent-chip-toggle" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
-        <span>Checked {steps.length} sources</span>
-        <Icon name="chevron" size={12} />
+    <div className="agent-worked">
+      <button type="button" className="agent-worked-toggle" aria-expanded={open} disabled={!has} onClick={() => setOpen((current) => !current)}>
+        {label}
+        {has && <Icon name="chevron" size={12} />}
       </button>
       {open && (
-        <div className="agent-chip-list">
+        <div className="agent-worked-body">
+          {todos.length > 0 && <TasksCard todos={todos} />}
           {steps.map((item, index) => {
             const step = stepText(item)
-            return (
-              <div key={index} className={step.failed ? "agent-chip-line is-failed" : "agent-chip-line"}>
-                <span>{step.verb}</span> {step.detail}
-              </div>
-            )
+            return <p key={index} className={step.failed ? "agent-chip-line is-failed" : "agent-chip-line"}><span>{step.verb}</span> {step.detail}</p>
           })}
         </div>
       )}
@@ -744,41 +763,89 @@ function PromptFiles({ files }) {
   )
 }
 
-function UserPrompt({ text, files }) {
+// What the person asked: a light grey bubble on the right, as wide as its words (a long one folds; tap it to open).
+// Edit, underneath on hover, opens it to change and ask again.
+function UserPrompt({ row, onEdit }) {
   const ref = useRef(null)
   const [collapsible, setCollapsible] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(row.content || "")
 
   useLayoutEffect(() => {
-    if (ref.current) setCollapsible(ref.current.scrollHeight > 100)
-  }, [text])
+    if (ref.current) setCollapsible(ref.current.scrollHeight > 160)
+  }, [row.content])
 
-  const body = <p ref={ref} className={collapsible ? (expanded ? "agent-prompt-text is-open" : "agent-prompt-text is-clamped") : "agent-prompt-text"}>{text}</p>
-  return (
-    <div className="agent-prompt-card">
-      <div className="agent-prompt-body">
-        <PromptFiles files={files} />
-        {!text ? null : collapsible ? (
-          <div
-            className="agent-prompt-collapse"
-            role="button"
-            tabIndex={0}
-            aria-expanded={expanded}
-            style={{ maxHeight: expanded ? 4000 : 100 }}
-            onClick={() => setExpanded((current) => !current)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault()
-                setExpanded((current) => !current)
-              }
-            }}
-          >
-            {body}
-            <span className="agent-prompt-chevron"><Icon name="chevron" size={12} /></span>
-          </div>
-        ) : body}
+  if (editing) {
+    const submit = () => {
+      setEditing(false)
+      onEdit(draft)
+    }
+    return (
+      <div className="agent-user agent-user-editing">
+        <GrowingText value={draft} onChange={setDraft} label="Edit your question" />
+        <div className="agent-user-edit-foot">
+          <button type="button" className="tool" onClick={() => { setEditing(false); setDraft(row.content || "") }}>Cancel</button>
+          <button type="button" className="primary" disabled={!draft.trim() && !row.attachments?.length} onClick={submit}>Send</button>
+        </div>
       </div>
-      <div className="agent-prompt-rule" aria-hidden="true" />
+    )
+  }
+  return (
+    <div className="agent-user">
+      <div className="agent-bubble">
+        <PromptFiles files={row.attachments} />
+        {row.content && (
+          <p
+            ref={ref}
+            className={collapsible && !expanded ? "agent-bubble-text is-clamped" : "agent-bubble-text"}
+            onClick={collapsible ? () => setExpanded((current) => !current) : undefined}
+            title={collapsible ? (expanded ? "Show less" : "Show all") : undefined}
+          >
+            {row.content}
+          </p>
+        )}
+      </div>
+      {onEdit && (
+        <div className="agent-actions is-user">
+          <button type="button" className="agent-action" onClick={() => { setDraft(row.content || ""); setEditing(true) }} aria-label="Edit" title="Edit">
+            <Icon name="edit" size={15} />
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Under an answer, on hover (always on the last one, and on touch screens): Copy, Retry, thumbs, and Star to save
+// the question as a prompt.
+function ReplyActions({ row, onRetry, onRate, onStar, starred }) {
+  const [copied, copy] = useCopy()
+  return (
+    <div className="agent-actions">
+      <button type="button" className="agent-action" onClick={() => copy(row.content)} aria-label={copied === "yes" ? "Copied" : "Copy"} title={copied === "yes" ? "Copied" : "Copy"}>
+        <Icon name={copied === "yes" ? "tick" : "copy"} size={15} />
+      </button>
+      {onRetry && (
+        <button type="button" className="agent-action" onClick={onRetry} aria-label="Retry" title="Retry">
+          <Icon name="retry" size={15} />
+        </button>
+      )}
+      {onRate && (
+        <>
+          <button type="button" className={row.feedback === "up" ? "agent-action is-on" : "agent-action"} aria-pressed={row.feedback === "up"} onClick={() => onRate("up")} aria-label="Good answer" title="Good answer">
+            <Icon name="thumbUp" size={15} />
+          </button>
+          <button type="button" className={row.feedback === "down" ? "agent-action is-on" : "agent-action"} aria-pressed={row.feedback === "down"} onClick={() => onRate("down")} aria-label="Bad answer" title="Bad answer">
+            <Icon name="thumbDown" size={15} />
+          </button>
+        </>
+      )}
+      {onStar && (
+        <button type="button" className={starred ? "agent-action is-starred" : "agent-action"} aria-pressed={starred} onClick={onStar} aria-label={starred ? "Saved as a prompt" : "Save the question as a prompt"} title={starred ? "Saved as a prompt" : "Save the question as a prompt"}>
+          <Icon name={starred ? "star" : "starLine"} size={15} />
+        </button>
+      )}
     </div>
   )
 }
@@ -801,34 +868,15 @@ function groupTurns(rows) {
   return turns
 }
 
-function Shimmer({ rows, showHeader }) {
-  const last = rows[rows.length - 1]
-  const tool = last?.toolResult?.UsedTool
-  const result = last?.toolResult?.result || {}
-  const text = tool === "status" ? result.title || "" : (tool && STATUS_LABELS[tool]) || ""
-  const info = tool === "web_search" ? result.query : tool === "read_webpage" ? result.url : ""
-  return (
-    <div className="agent-shimmer">
-      {showHeader && <p className="agent-label">{AGENT_NAME}</p>}
-      <p className="agent-shimmer-text">
-        {text && <span className="agent-pulse">{text}</span>}
-        {!text && (
-          <span className="agent-dots" aria-label="Working">
-            <span>.</span><span>.</span><span>.</span>
-          </span>
-        )}
-      </p>
-      {info && (
-        <p className="agent-shimmer-info">
-          {tool === "web_search" ? "Searching: " : "Visiting: "}
-          <span>{info}</span>
-        </p>
-      )}
-    </div>
-  )
+// While the agent works: one shimmering "Thinking…" line where the answer will appear.
+function Thinking() {
+  return <p className="agent-thinking" role="status"><span>Thinking…</span></p>
 }
 
-export function AgentMessages({ rows, streaming, emptyHint }) {
+// The conversation. `empty` is the new-chat screen. The rest act on a turn: onRetry(question), onEdit(question, text),
+// onRate(answer, "up" | "down"), onStar(question text); `starred(text)` says whether a question is already a prompt.
+// They only show on messages the server has saved (and not while an answer is coming).
+export function AgentMessages({ rows, streaming, empty = null, onRetry, onEdit, onRate, onStar, starred = () => false }) {
   const endRef = useRef(null)
 
   useEffect(() => {
@@ -837,48 +885,43 @@ export function AgentMessages({ rows, streaming, emptyHint }) {
   }, [rows, streaming])
 
   const turns = groupTurns(rows)
-  if (!rows.length && !streaming) {
-    return (
-      <div className="agent-empty">
-        <p>Say hi to the agent</p>
-        <span>{emptyHint}</span>
-      </div>
-    )
-  }
+  if (!rows.length && !streaming) return empty
 
   return (
     <div className="agent-list">
       {turns.map((turn, turnIndex) => {
         const live = streaming && turnIndex === turns.length - 1
+        const last = turnIndex === turns.length - 1
         const steps = turn.replies.filter((row) => row.toolResult && !HIDDEN_STEPS.has(row.toolResult.UsedTool))
         const texts = turn.replies.filter((row) => !row.toolResult && row.content)
         const todos = lastTodos(turn.replies)
         const finalRow = [...turn.replies].reverse().find((row) => !row.toolResult && row.content)
-        const visible = steps.length > 0 || texts.length > 0 || todos.length > 0
+        const question = turn.user
+        const acts = Boolean(!streaming && question && savedMessage(question.id))
         return (
-          <div key={turn.user?.id || `lead-${turnIndex}`} className="agent-turn">
-            {turn.user && (
-              <div className="agent-prompt-sticky" style={{ zIndex: 10 + (turns.length - turnIndex) }}>
-                <UserPrompt text={turn.user.content} files={turn.user.attachments} />
-              </div>
-            )}
+          <div key={question?.id || `lead-${turnIndex}`} className={last ? "agent-turn is-last" : "agent-turn"}>
+            {question && <UserPrompt row={question} onEdit={acts && onEdit ? (text) => onEdit(question, text) : null} />}
             <div className="agent-replies">
-              {visible && <p className="agent-label">{AGENT_NAME}</p>}
-              {steps.length > 0 && <StepsChip steps={steps.map((row) => row.toolResult)} />}
-              {todos.length > 0 && <TasksCard todos={todos} />}
+              <div className="agent-reply-head">
+                <span className="agent-mark" aria-label={AGENT_NAME}><Icon name="spark" size={14} /></span>
+                {live ? <Thinking /> : <WorkedFor durationMs={finalRow?.agentRun?.durationMs ?? null} steps={steps.map((row) => row.toolResult)} todos={todos} />}
+              </div>
               {texts.map((row) => (
                 <div key={row.id} className="agent-reply">
-                  {row === finalRow && !live && row.agentRun?.durationMs != null && <AgentRunBanner durationMs={row.agentRun.durationMs} />}
-                  {row.error ? (
-                    <p className="agent-error">{row.content}</p>
-                  ) : (
-                    <AgentAnswer content={row.content} />
-                  )}
+                  {row.error ? <p className="agent-error">{row.content}</p> : <AgentAnswer content={row.content} revealFrom={row.revealFrom} />}
                 </div>
               ))}
-              {!live && arvOf(turn.replies) && <ArvCard key={`arv-${turn.user?.id || turnIndex}`} analysis={arvOf(turn.replies)} />}
+              {!live && arvOf(turn.replies) && <ArvCard key={`arv-${question?.id || turnIndex}`} analysis={arvOf(turn.replies)} />}
               {!live && proposalsOf(turn.replies).map((proposal) => <ChangeCard key={proposal.id} proposal={proposal} />)}
-              {live && <Shimmer rows={turn.replies} showHeader={!visible} />}
+              {!live && finalRow && (
+                <ReplyActions
+                  row={finalRow}
+                  onRetry={acts && onRetry ? () => onRetry(question) : null}
+                  onRate={acts && onRate && savedMessage(finalRow.id) && !finalRow.error ? (value) => onRate(finalRow, value) : null}
+                  onStar={acts && onStar && question.content ? () => onStar(question.content) : null}
+                  starred={Boolean(question?.content && starred(question.content))}
+                />
+              )}
             </div>
           </div>
         )
