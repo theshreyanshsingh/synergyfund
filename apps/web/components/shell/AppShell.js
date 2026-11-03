@@ -13,6 +13,7 @@ import { InstallCard } from "../pwa/InstallCard"
 import { CallLayer } from "../calls/CallLayer"
 import { SoundAlerts } from "./SoundAlerts"
 import { DownloadTray } from "./DownloadTray"
+import { Dock } from "./Dock"
 import { notePage } from "../../lib/back"
 
 const NARROW = "(max-width: 1100px)"
@@ -114,7 +115,7 @@ export function AppShell({ children }) {
     )
   }
 
-  const shellClass = `app${menuOpen ? " menu-open" : ""}${collapsed ? " menu-collapsed" : ""}`
+  const shellClass = `app has-dock${menuOpen ? " menu-open" : ""}${collapsed ? " menu-collapsed" : ""}`
 
   return (
     <div className={shellClass}>
@@ -127,6 +128,8 @@ export function AppShell({ children }) {
         <InstallCard className="bar-install main-install" />
         {children}
       </main>
+      {/* Phones, tablets and narrow windows: the main pages and Search along the bottom; the sidebar keeps the rest. */}
+      <Dock user={session.user} searching={searchOpen} onSearch={openSearch} />
       <CommandPalette user={session.user} open={searchOpen} onClose={closeSearch} />
       {can(session.user, PERMISSIONS.chatUse) && <CallLayer user={session.user} />}
       <SoundAlerts user={session.user} chat={can(session.user, PERMISSIONS.chatUse)} />

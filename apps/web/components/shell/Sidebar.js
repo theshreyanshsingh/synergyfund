@@ -8,6 +8,7 @@ import { api } from "../../lib/api"
 import { useChatEvents } from "../../lib/chatSocket"
 import { Icon } from "../ui/Icon"
 import { InstallCard } from "../pwa/InstallCard"
+import { DOCK, isActive } from "./Dock"
 import { useSession } from "./Providers"
 
 // Unread @mentions in channels and unread direct messages, kept live (for the contractor's top bar).
@@ -150,7 +151,7 @@ function SidebarNav({ primary, sections, onNavigate, chat, me }) {
         <NavLink key={item.label} item={item} count={counts[item.countKey] || 0} onNavigate={onNavigate} />
       ))}
       {sections.map((section) => (
-        <div key={section.label} className="nav-section">
+        <div key={section.label} className={section.items.every((item) => DOCK.includes(item.href)) ? "nav-section is-docked" : "nav-section"}>
           <div className="nav-label">{section.label}</div>
           {section.items.map((item) => (
             <NavLink key={item.href + item.label} item={item} onNavigate={onNavigate} />
@@ -163,9 +164,10 @@ function SidebarNav({ primary, sections, onNavigate, chat, me }) {
 
 function NavLink({ item, count = 0, onNavigate }) {
   const pathname = usePathname()
-  const active = pathname === item.href || (item.href !== "/overview" && pathname.startsWith(item.href))
+  // A page in the dock is left out of the sidebar wherever the dock shows (CSS).
+  const className = ["nav-link", isActive(item.href, pathname) ? "is-active" : "", DOCK.includes(item.href) ? "is-docked" : ""].filter(Boolean).join(" ")
   return (
-    <Link href={item.href} className={active ? "nav-link is-active" : "nav-link"} onClick={() => onNavigate?.()}>
+    <Link href={item.href} className={className} onClick={() => onNavigate?.()}>
       <Icon name={item.icon} />
       <span>{item.label}</span>
       {item.badge && <em className="nav-badge">{item.badge}</em>}
