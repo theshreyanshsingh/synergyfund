@@ -3,13 +3,21 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 
+const PHONE = "(max-width: 760px)"
+
 // A small panel opened from a button (`anchor`, its element): below it, or above when there is no room, kept on
-// screen. A tap outside, Escape, or scrolling the page closes it.
+// screen. A tap outside, Escape, or scrolling the page closes it. On a phone it is a sheet from the bottom over a
+// dimmed page instead (a tap on the dimmed page closes it).
 export function Popover({ anchor, onClose, children, className = "", align = "start", width = null }) {
   const ref = useRef(null)
   const [place, setPlace] = useState(null)
+  const [sheet] = useState(() => typeof window !== "undefined" && window.matchMedia(PHONE).matches)
 
   useLayoutEffect(() => {
+    if (sheet) {
+      setPlace({})
+      return undefined
+    }
     function measure() {
       if (!anchor || !ref.current) return
       const box = anchor.getBoundingClientRect()
@@ -25,34 +33,38 @@ export function Popover({ anchor, onClose, children, className = "", align = "st
     measure()
     window.addEventListener("resize", measure)
     return () => window.removeEventListener("resize", measure)
-  }, [anchor, align])
+  }, [anchor, align, sheet])
 
   useEffect(() => {
     const away = (event) => {
-      if (ref.current?.contains(event.target) || anchor?.contains(event.target)) return
+      // The sheet's dimmed page closes it on its click (closing on the press would let the tap land on what is under it).
+      if (ref.current?.contains(event.target) || anchor?.contains(event.target) || event.target.classList?.contains("popover-backdrop")) return
       onClose()
     }
     const key = (event) => { if (event.key === "Escape") onClose() }
     const scroll = (event) => { if (!ref.current?.contains(event.target)) onClose() }
     document.addEventListener("pointerdown", away, true)
     document.addEventListener("keydown", key)
-    window.addEventListener("scroll", scroll, true)
+    if (!sheet) window.addEventListener("scroll", scroll, true)
     return () => {
       document.removeEventListener("pointerdown", away, true)
       document.removeEventListener("keydown", key)
       window.removeEventListener("scroll", scroll, true)
     }
-  }, [anchor, onClose])
+  }, [anchor, onClose, sheet])
 
   return createPortal(
-    <div
-      ref={ref}
-      className={`popover ${className}`.trim()}
-      role="dialog"
-      style={{ top: place?.top ?? -9999, left: place?.left ?? -9999, maxHeight: place?.maxHeight, width: width || undefined, visibility: place ? "visible" : "hidden" }}
-    >
-      {children}
-    </div>,
+    <>
+      {sheet && <div className="popover-backdrop" onClick={onClose} />}
+      <div
+        ref={ref}
+        className={["popover", sheet ? "is-sheet" : "", className].filter(Boolean).join(" ")}
+        role="dialog"
+        style={sheet ? undefined : { top: place?.top ?? -9999, left: place?.left ?? -9999, maxHeight: place?.maxHeight, width: width || undefined, visibility: place ? "visible" : "hidden" }}
+      >
+        {children}
+      </div>
+    </>,
     document.body,
   )
 }

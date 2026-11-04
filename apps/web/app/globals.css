@@ -3812,7 +3812,9 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
     padding: 0 2px; border: 0; background: none; color: var(--muted); font-size: 12px; font-weight: 600; line-height: 1.15;
     -webkit-tap-highlight-color: transparent;
   }
-  .dock-icon { display: grid; place-items: center; width: 54px; height: 30px; border-radius: 999px; transition: background 0.15s ease; }
+  .dock-icon { position: relative; display: grid; place-items: center; width: 54px; height: 30px; border-radius: 999px; transition: background 0.15s ease; }
+  /* Unread messages on Messages. */
+  .dock-count { position: absolute; top: -4px; right: 6px; display: grid; place-items: center; min-width: 19px; height: 19px; padding: 0 5px; box-sizing: border-box; border: 2px solid var(--white); border-radius: 999px; background: var(--bad); color: #fff; font-size: 11px; font-style: normal; font-weight: 700; line-height: 1; }
   .dock-link span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dock-link.is-on { color: var(--text); }
   .dock-link.is-on .dock-icon { background: var(--active); }
@@ -3961,8 +3963,10 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 /* Tasks: the toolbar, then the groups (a colored edge, the name, a count), each a table with the same columns; every
    cell edits in place. The status fills its cell; the priority is a softer pill. Completing ticks and strikes the row,
    then it slides out (and into Completed). */
-/* Deep enough for white text on the status fills (4.5:1 or more). */
-.tasks { --task-grey: #687080; --task-blue: #1c6bd0; --task-orange: #b85c0c; --task-green: #107a4a; display: grid; gap: 14px; min-width: 0; }
+/* The status colors, deep enough for white text on the fills (4.5:1 or more). On :root, not .tasks, because pickers
+   open outside the board (at the end of the page). */
+:root { --task-grey: #687080; --task-blue: #1c6bd0; --task-orange: #b85c0c; --task-green: #107a4a; }
+.tasks { display: grid; gap: 14px; min-width: 0; }
 .tasks-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 .tasks-new { display: inline-flex; align-items: center; gap: 6px; margin: 0 6px 0 0; white-space: nowrap; }
 .tasks-search { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; border: 1px solid transparent; border-radius: 9px; color: var(--muted); }
@@ -4080,6 +4084,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .tasks-bulk { position: fixed; left: 50%; bottom: calc(20px + var(--dock-lift, 0px)); z-index: 50; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; max-width: calc(100vw - 24px); padding: 8px 10px 8px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--white); box-shadow: var(--shadow); transform: translateX(-50%); }
 .tasks-bulk strong { margin-right: 6px; font-size: 14px; white-space: nowrap; }
 .tasks.is-selecting .tasks-scroll { padding-bottom: 90px; }
+.tasks.is-selecting .tasks-list { padding-bottom: 140px; }
 
 /* Pickers: a small panel under the cell. */
 .popover { position: fixed; z-index: 70; min-width: 160px; padding: 8px; overflow-y: auto; box-sizing: border-box; border: 1px solid var(--line); border-radius: 12px; background: var(--white); color: var(--text); box-shadow: var(--shadow); }
@@ -4212,19 +4217,73 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
 .task-activity ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .task-activity li { color: var(--faint); font-size: 12.5px; line-height: 1.4; }
 .property-tasks { margin-top: 4px; }
+
+/* Tasks on a phone: each group a card of rows, one per task. */
+.tasks-group-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tasks-group-all { padding: 6px 2px; border: 0; background: transparent; color: var(--accent); font-size: 14px; font-weight: 600; }
+.tasks-tools { display: contents; }
+.tasks-list .tasks-group { margin-bottom: 18px; }
+.tasks-list .tasks-group-head { position: static; }
+.tasks-cards { overflow: hidden; border: 1px solid var(--line); border-left: 4px solid var(--group); border-radius: 12px; background: var(--white); }
+.task-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--white); }
+/* Selecting: the card's selection box takes the checkbox's place (one box per card, not two). */
+.tasks.is-selecting .task-card .task-check { display: none; }
+.tasks.is-selecting .task-card .tasks-select { width: 22px; height: 22px; opacity: 1; }
+.task-card:last-child { border-bottom: 0; }
+.task-card.is-selected { background: color-mix(in srgb, var(--accent) 7%, var(--white)); }
+.task-card-main { display: grid; gap: 5px; min-width: 0; padding: 4px 0; border: 0; background: transparent; color: var(--text); text-align: left; }
+.task-card .task-name { display: -webkit-box; align-self: auto; min-height: 0; padding: 0; overflow: hidden; font-size: 15px; font-weight: 550; line-height: 1.3; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.task-card.is-ticked .task-name { color: var(--faint); text-decoration: line-through; }
+.task-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; color: var(--muted); font-size: 13px; }
+.task-card-meta .task-due { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+.task-card-place { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-card-meta .task-priority { padding: 1px 8px; font-size: 12px; }
+.task-card-side { display: grid; justify-items: end; gap: 6px; }
+.task-card-status { display: inline-flex; padding: 0; border: 0; border-radius: 999px; background: transparent; }
+.task-card-status .task-status { padding: 4px 10px; font-size: 12.5px; }
+.task-card-status.is-locked { opacity: 1; }
+.task-card-who { display: flex; align-items: center; gap: 6px; }
+.task-card-who .task-bubble { width: 28px; height: 28px; }
+.task-card.is-leaving { overflow: hidden; animation: task-card-leave 0.4s ease forwards; }
+.task-card.is-arriving { animation: task-arrive 0.55s ease; }
+@keyframes task-card-leave { 0% { max-height: 140px; opacity: 1; } 55% { opacity: 0; transform: translateY(8px); } 100% { max-height: 0; padding-top: 0; padding-bottom: 0; border-bottom-width: 0; opacity: 0; transform: translateY(12px); } }
+.task-card.is-add { display: block; padding: 0; }
+.task-card.is-add form { display: flex; }
+.task-card.is-add .tasks-add-input { height: 48px; padding: 0 16px; }
+.tasks-cards .tasks-empty { padding: 14px 16px; }
+
+/* Pickers on a phone: a sheet from the bottom over a dimmed page (the Filter, a status, a date…). */
+.popover-backdrop { position: fixed; inset: 0; z-index: 89; background: rgba(8, 10, 14, 0.45); }
+.popover.is-sheet { top: auto !important; right: 0; bottom: 0; left: 0 !important; z-index: 90; width: auto !important; max-height: min(80vh, 640px) !important; padding: 16px 14px calc(16px + env(safe-area-inset-bottom)); border-bottom: 0; border-radius: 18px 18px 0 0; animation: sheet-up 0.2s ease-out; }
+@keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+.popover.is-sheet .tasks-filter-cols { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
+.popover.is-sheet .date-picker { margin: 0 auto; max-width: 360px; }
 @media (max-width: 760px) {
-  .tasks-toolbar { flex-wrap: nowrap; margin: 0 -16px; padding: 0 16px 2px; overflow-x: auto; scrollbar-width: none; }
-  .tasks-toolbar::-webkit-scrollbar { display: none; }
-  .tasks-toolbar > * { flex: none; }
-  .tasks-search input { width: 110px; font-size: 16px; }
-  /* The side gutter sits on the groups, not the scroller, so the sticky checkbox and name pin to the screen's edge
-     (a padded scroller would pin them 16px in, with the scrolled cells showing past them). */
+  /* The toolbar: search and New task on one line, the tools under them as chips that scroll sideways. */
+  .tasks-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 8px; }
+  .tasks-search { grid-row: 1; grid-column: 1; height: 44px; border-color: var(--line); background: var(--white); }
+  .tasks-toolbar:not(:has(.tasks-new)) .tasks-search { grid-column: 1 / -1; }
+  .tasks-search input { width: 100%; min-width: 0; font-size: 16px; }
+  .tasks-new { grid-row: 1; grid-column: 2; height: 44px; margin: 0; }
+  .tasks-tools { grid-row: 2; grid-column: 1 / -1; display: flex; gap: 6px; margin: 0 -16px; padding: 0 16px 2px; overflow-x: auto; scrollbar-width: none; }
+  .tasks-tools::-webkit-scrollbar { display: none; }
+  .tasks-tools > * { flex: none; }
+  .tasks-tools .tasks-tool { height: 36px; border: 1px solid var(--line); border-radius: 999px; background: var(--white); }
+  .tasks-tools .tasks-tool.is-on { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: color-mix(in srgb, var(--accent) 10%, var(--white)); }
+  /* Columns are the table's; the cards show the same things on every phone. */
+  .tasks-tools .tasks-tool.is-hide { display: none; }
+  /* The table (a wide window narrowed to phone size before the cards take over): the side gutter sits on the groups,
+     not the scroller, so the sticky checkbox and name pin to the screen's edge. */
   .tasks-scroll { margin: 0 -16px; padding: 0 0 8px; }
-  .tasks-group { min-width: calc(var(--task-min, 0px) + 32px); padding: 0 16px; }
-  .tasks-group-head { left: 16px; }
+  .tasks-scroll .tasks-group { min-width: calc(var(--task-min, 0px) + 32px); padding: 0 16px; }
+  .tasks-scroll .tasks-group-head { left: 16px; }
   .tasks-cell.is-title { min-width: 0; }
   .task-panel { width: 100vw; border-left: 0; }
   .task-field { grid-template-columns: 96px minmax(0, 1fr); }
   .task-description, .task-composer textarea, .tasks-add-input, .date-picker-input, .task-pick-search input, .task-label-new input { font-size: 16px; }
-  .tasks-bulk { bottom: calc(12px + var(--dock-lift, 0px)); }
+  /* Select's bar on a phone: across the bottom above the dock; the count and Cancel, then the four actions. */
+  .tasks-bulk { right: 8px; bottom: calc(8px + var(--dock-lift, 0px)); left: 8px; justify-content: space-between; gap: 4px; max-width: none; padding: 8px; border-radius: 14px; transform: none; }
+  .tasks-bulk > strong { order: 0; flex: 1 1 calc(100% - 110px); margin: 0; padding-left: 8px; }
+  .tasks-bulk > .is-cancel { order: 1; flex: none; }
+  .tasks-bulk > :not(strong):not(.is-cancel) { order: 2; flex: 1 1 calc(25% - 4px); flex-direction: column; gap: 3px; min-width: 0; height: auto; padding: 6px 2px; font-size: 12.5px; }
 }

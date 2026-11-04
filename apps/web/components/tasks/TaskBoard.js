@@ -20,6 +20,20 @@ const ARRIVE_MS = 600
 const TOAST_MS = 5000
 const WIDTHS = { property: "150px", assignee: "160px", status: "128px", due: "108px", priority: "104px", labels: "170px", createdBy: "140px" }
 const NO_FILTERS = { status: [], priority: [], assignee: [], property: [], label: [], due: [] }
+const PHONE = "(max-width: 760px)"
+
+// True on a phone: the table becomes a list of cards there.
+function usePhone() {
+  const [phone, setPhone] = useState(() => typeof window !== "undefined" && window.matchMedia(PHONE).matches)
+  useEffect(() => {
+    const query = window.matchMedia(PHONE)
+    const update = () => setPhone(query.matches)
+    update()
+    query.addEventListener("change", update)
+    return () => query.removeEventListener("change", update)
+  }, [])
+  return phone
+}
 
 function mailProblem(mail) {
   const status = typeof mail === "string" ? mail : mail?.status
@@ -61,6 +75,7 @@ export function TaskBoard({ propertyId = "" }) {
   const saving = useRef({})
   const toastTimer = useRef(null)
   const firstView = useRef(true)
+  const phone = usePhone()
 
   useEffect(() => {
     if (!list.data) return
@@ -298,30 +313,33 @@ export function TaskBoard({ propertyId = "" }) {
           <Icon name="search" size={15} />
           <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search" aria-label="Search tasks" />
         </label>
-        <button type="button" className={view.me ? "tasks-tool is-on" : "tasks-tool"} aria-pressed={view.me} onClick={() => setViewPart({ me: !view.me })} title="Only tasks assigned to me">
-          <Icon name="person" size={16} /> Me
-        </button>
-        <ToolMenu icon="filter" label="Filter" on={filterCount > 0} count={filterCount} width={640}>
-          {() => <FilterPanel tasks={tasks} today={today} shownCount={shown.length} filters={filters} fixedProperty={Boolean(propertyId)} onChange={(next) => setViewPart({ filters: next })} />}
-        </ToolMenu>
-        <ToolMenu icon="sort" label="Sort" on={Boolean(view.sort.key)} width={260}>
-          {() => <SortPanel sort={view.sort} fixedProperty={Boolean(propertyId)} onChange={(sort) => setViewPart({ sort })} />}
-        </ToolMenu>
-        <ToolMenu icon="eyeOff" label="Hide" quiet count={view.hidden.filter((key) => !(propertyId && key === "property")).length} width={260}>
-          {() => <HidePanel hidden={view.hidden} fixedProperty={Boolean(propertyId)} onChange={(hidden) => setViewPart({ hidden })} />}
-        </ToolMenu>
-        <ToolMenu icon="group" label="Group by" on={groupBy !== "status"} width={220}>
-          {(close) => <GroupPanel value={groupBy} fixedProperty={Boolean(propertyId)} onPick={(next) => { close(); setViewPart({ groupBy: next }) }} />}
-        </ToolMenu>
-        <button type="button" className={selecting ? "tasks-tool is-on" : "tasks-tool"} aria-pressed={selecting} onClick={() => { setSelecting(!selecting); setSelected([]) }}>
-          <Icon name="check" size={16} /> Select
-        </button>
+        {/* On a phone: a row of its own that scrolls sideways, under the search and New task. */}
+        <div className="tasks-tools">
+          <button type="button" className={view.me ? "tasks-tool is-on" : "tasks-tool"} aria-pressed={view.me} onClick={() => setViewPart({ me: !view.me })} title="Only tasks assigned to me">
+            <Icon name="person" size={16} /> Me
+          </button>
+          <ToolMenu icon="filter" label="Filter" on={filterCount > 0} count={filterCount} width={640}>
+            {() => <FilterPanel tasks={tasks} today={today} shownCount={shown.length} filters={filters} fixedProperty={Boolean(propertyId)} onChange={(next) => setViewPart({ filters: next })} />}
+          </ToolMenu>
+          <ToolMenu icon="sort" label="Sort" on={Boolean(view.sort.key)} width={260}>
+            {() => <SortPanel sort={view.sort} fixedProperty={Boolean(propertyId)} onChange={(sort) => setViewPart({ sort })} />}
+          </ToolMenu>
+          <ToolMenu icon="eyeOff" label="Hide" className="is-hide" quiet count={view.hidden.filter((key) => !(propertyId && key === "property")).length} width={260}>
+            {() => <HidePanel hidden={view.hidden} fixedProperty={Boolean(propertyId)} onChange={(hidden) => setViewPart({ hidden })} />}
+          </ToolMenu>
+          <ToolMenu icon="group" label="Group by" on={groupBy !== "status"} width={220}>
+            {(close) => <GroupPanel value={groupBy} fixedProperty={Boolean(propertyId)} onPick={(next) => { close(); setViewPart({ groupBy: next }) }} />}
+          </ToolMenu>
+          <button type="button" className={selecting ? "tasks-tool is-on" : "tasks-tool"} aria-pressed={selecting} onClick={() => { setSelecting(!selecting); setSelected([]) }}>
+            <Icon name="check" size={16} /> Select
+          </button>
+        </div>
       </div>
 
       {error && <p className="banner tasks-banner">{error}</p>}
       {caughtUp && <p className="tasks-caught-up">You're all caught up</p>}
 
-      <div className="tasks-scroll" style={{ "--task-grid": template, "--task-min": `${minWidth}px` }}>
+      <div className={phone ? "tasks-list" : "tasks-scroll"} style={phone ? undefined : { "--task-grid": template, "--task-min": `${minWidth}px` }}>
         {groups.map((group) => (
           <TaskGroup
             key={group.key}
@@ -335,6 +353,7 @@ export function TaskBoard({ propertyId = "" }) {
             onSelect={(id) => setSelected((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))}
             onSelectAll={(ids, on) => setSelected((current) => (on ? [...new Set([...current, ...ids])] : current.filter((id) => !ids.includes(id))))}
             rowProps={rowProps}
+            phone={phone}
           />
         ))}
       </div>
@@ -343,22 +362,22 @@ export function TaskBoard({ propertyId = "" }) {
         <div className="tasks-bulk" role="toolbar" aria-label="Selected tasks">
           <strong>{selected.length} selected</strong>
           {can.edit && (
-            <ToolMenu icon="layers" label="Change status" disabled={!selected.length} width={200}>
+            <ToolMenu icon="layers" label={phone ? "Status" : "Change status"} disabled={!selected.length} width={200}>
               {(close) => <StatusOptions value="" onPick={(status) => { close(); bulk("status", status) }} />}
             </ToolMenu>
           )}
           {can.assign && (
-            <ToolMenu icon="users" label="Change assignee" disabled={!selected.length} width={300}>
+            <ToolMenu icon="users" label={phone ? "Assignee" : "Change assignee"} disabled={!selected.length} width={300}>
               {(close) => <PeopleOptions people={people} value={null} onPick={(id) => { close(); bulk("assignee", id) }} />}
             </ToolMenu>
           )}
           {can.edit && (
-            <ToolMenu icon="calendar" label="Change due" disabled={!selected.length} width={300}>
+            <ToolMenu icon="calendar" label={phone ? "Due date" : "Change due"} disabled={!selected.length} width={300}>
               {(close) => <DatePicker value="" today={today} onPick={(due) => { close(); bulk("due", due) }} />}
             </ToolMenu>
           )}
           {can.manage && <button type="button" className="tasks-tool is-danger" disabled={!selected.length} onClick={() => bulk("delete")}><Icon name="trash" size={15} /> Delete</button>}
-          <button type="button" className="tasks-tool" onClick={() => { setSelecting(false); setSelected([]) }}>Cancel</button>
+          <button type="button" className="tasks-tool is-cancel" onClick={() => { setSelecting(false); setSelected([]) }}>Cancel</button>
         </div>
       )}
 
@@ -396,9 +415,9 @@ export function TaskBoard({ propertyId = "" }) {
 
 // A toolbar button with its panel underneath.
 // `quiet`: its count is grey (Hide: hidden columns are a choice, not a filter on what shows).
-function ToolMenu({ icon, label, on = false, quiet = false, count = 0, disabled = false, width, children }) {
+function ToolMenu({ icon, label, on = false, quiet = false, count = 0, disabled = false, width, className = "", children }) {
   return (
-    <PickerCell className={on ? "tasks-tool is-on" : "tasks-tool"} disabled={disabled} label={label} width={width} pick={children}>
+    <PickerCell className={["tasks-tool", on ? "is-on" : "", className].filter(Boolean).join(" ")} disabled={disabled} label={label} width={width} pick={children}>
       <Icon name={icon} size={16} /> {label}{count > 0 && <em className={quiet ? "tasks-tool-count is-quiet" : "tasks-tool-count"}>{count}</em>}
     </PickerCell>
   )
@@ -498,18 +517,32 @@ function GroupPanel({ value, fixedProperty, onPick }) {
   )
 }
 
-function TaskGroup({ group, collapsed, onFold, canAdd, focusAdd, onAdd, selected, onSelect, onSelectAll, rowProps }) {
+function TaskGroup({ group, collapsed, onFold, canAdd, focusAdd, onAdd, selected, onSelect, onSelectAll, rowProps, phone = false }) {
   const { columns, selecting } = rowProps
   const ids = group.items.map((task) => task.id)
   const all = ids.length > 0 && ids.every((id) => selected.includes(id))
   return (
     <section className={[`tasks-group tone-${group.tone || "plain"}`, collapsed ? "is-collapsed" : ""].filter(Boolean).join(" ")} aria-label={group.name}>
-      <button type="button" className="tasks-group-head" aria-expanded={!collapsed} onClick={onFold}>
-        <Icon name="chevron" size={14} />
-        <span className="tasks-group-name">{group.name}</span>
-        <em>{group.items.length}</em>
-      </button>
-      {!collapsed && (
+      <div className="tasks-group-bar">
+        <button type="button" className="tasks-group-head" aria-expanded={!collapsed} onClick={onFold}>
+          <Icon name="chevron" size={14} />
+          <span className="tasks-group-name">{group.name}</span>
+          <em>{group.items.length}</em>
+        </button>
+        {phone && selecting && !collapsed && ids.length > 0 && (
+          <button type="button" className="tasks-group-all" onClick={() => onSelectAll(ids, !all)}>{all ? "Clear" : "Select all"}</button>
+        )}
+      </div>
+      {/* A phone: one card per task (tap to open it; the status and checkbox work in place). */}
+      {!collapsed && phone && (
+        <div className="tasks-cards" role="list" aria-label={`${group.name} tasks`}>
+          {group.items.length ? group.items.map((task) => (
+            <TaskCard key={task.id} task={task} selected={selected.includes(task.id)} onSelect={() => onSelect(task.id)} {...rowProps} />
+          )) : <p className="tasks-empty" role="listitem">No tasks here</p>}
+          {canAdd && <AddRow focus={focusAdd} onAdd={onAdd} card />}
+        </div>
+      )}
+      {!collapsed && !phone && (
         <div className="tasks-table" role="table" aria-label={`${group.name} tasks`}>
           <div className="tasks-row is-head" role="row">
             {selecting && (
@@ -531,7 +564,8 @@ function TaskGroup({ group, collapsed, onFold, canAdd, focusAdd, onAdd, selected
   )
 }
 
-function AddRow({ focus, onAdd, selecting }) {
+// `card`: the phone's list, where it is the last card of the group.
+function AddRow({ focus, onAdd, selecting, card = false }) {
   const [title, setTitle] = useState("")
   const [busy, setBusy] = useState(false)
   const ref = useRef(null)
@@ -541,24 +575,70 @@ function AddRow({ focus, onAdd, selecting }) {
       ref.current?.scrollIntoView({ block: "center", behavior: "smooth" })
     }
   }, [focus])
+  const form = (
+    <form onSubmit={async (event) => {
+      event.preventDefault()
+      const name = title.trim()
+      if (!name || busy) return
+      setBusy(true)
+      if (await onAdd(name)) setTitle("")
+      setBusy(false)
+    }}>
+      {/* Read-only while saving (not disabled), so it keeps focus for the next one. */}
+      <input ref={ref} className="tasks-add-input" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="+ Add task" aria-label="Add a task" maxLength={300} readOnly={busy} enterKeyHint="done" />
+    </form>
+  )
+  if (card) return <div className="task-card is-add" role="listitem">{form}</div>
   // A row of the table like the others (the form sits in its cell: a form can't be a table row).
   return (
     <div className="tasks-row is-add" role="row">
       {selecting && <span className="tasks-cell is-select" role="cell" />}
       <span className="tasks-cell is-check" role="cell" />
-      <span className="tasks-add-cell" role="cell">
-        <form onSubmit={async (event) => {
-          event.preventDefault()
-          const name = title.trim()
-          if (!name || busy) return
-          setBusy(true)
-          if (await onAdd(name)) setTitle("")
-          setBusy(false)
-        }}>
-          {/* Read-only while saving (not disabled), so it keeps focus for the next one. */}
-          <input ref={ref} className="tasks-add-input" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="+ Add task" aria-label="Add a task" maxLength={300} readOnly={busy} />
-        </form>
-      </span>
+      <span className="tasks-add-cell" role="cell">{form}</span>
+    </div>
+  )
+}
+
+// One task on a phone: the checkbox, its name and what matters at a glance (property, due date, who), and its status,
+// which changes in place. Tapping the card opens the task (in Select, it picks the card instead).
+function TaskCard({ task, today, can, selecting, flags, selected, onSelect, onToggle, onSetStatus, onOpen }) {
+  const state = flags[task.id]
+  const done = task.status === "Completed"
+  const ticked = done || state === "checked" || state === "leaving"
+  const overdue = isOverdue(task, today) && !ticked
+  const comments = task.commentCount ? `${task.commentCount} ${task.commentCount === 1 ? "comment" : "comments"}` : ""
+  return (
+    <div
+      className={["task-card", ticked ? "is-ticked" : "", state === "leaving" ? "is-leaving" : "", state === "arriving" ? "is-arriving" : "", selected ? "is-selected" : ""].filter(Boolean).join(" ")}
+      role="listitem"
+      data-task-id={task.id}
+    >
+      {selecting && <input type="checkbox" className="tasks-select" checked={selected} onChange={onSelect} aria-label={`Select ${task.title}`} />}
+      <button type="button" role="checkbox" aria-checked={ticked} className={ticked ? "task-check is-on" : "task-check"} disabled={!can.edit} onClick={() => onToggle(task)} aria-label={ticked ? `Reopen ${task.title}` : `Complete ${task.title}`}>
+        {ticked && <Icon name="tick" size={13} />}
+      </button>
+      <button type="button" className="task-card-main" onClick={() => (selecting ? onSelect() : onOpen(task))} aria-label={selecting ? `Select ${task.title}` : undefined}>
+        <span className="task-name">{task.title}</span>
+        <span className="task-card-meta">
+          {task.due && <span className={["task-due", overdue ? "is-overdue" : "", ticked ? "is-done" : ""].filter(Boolean).join(" ")}><Icon name="calendar" size={12} /> {dueLabel(task.due)}</span>}
+          {task.property && <span className="task-card-place"><Icon name="building" size={12} /> {task.property}</span>}
+          {task.priority === "High" && <PriorityPill priority="High" />}
+        </span>
+      </button>
+      <div className="task-card-side">
+        <PickerCell className="task-card-status" disabled={!can.edit} label={`Status of ${task.title}: ${ticked ? "Completed" : task.status}`} width={220} pick={(close) => <StatusOptions value={task.status} onPick={(status) => { close(); onSetStatus(task, status) }} />}>
+          <StatusPill status={ticked ? "Completed" : task.status} />
+        </PickerCell>
+        <span className="task-card-who">
+          {comments && (
+            <button type="button" className="task-bubble has-count" onClick={() => onOpen(task, true)} aria-label={comments} title={comments}>
+              <Icon name="comment" size={16} />
+              <em>{task.commentCount}</em>
+            </button>
+          )}
+          {task.assigneeName && <span title={task.assigneeName}><Avatar name={task.assigneeName} /></span>}
+        </span>
+      </div>
     </div>
   )
 }

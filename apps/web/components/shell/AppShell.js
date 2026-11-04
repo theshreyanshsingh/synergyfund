@@ -28,8 +28,8 @@ export function AppShell({ children }) {
   const [collapsed, setCollapsed] = useState(false)
   const openSearch = useCallback(() => setSearchOpen(true), [])
   const closeSearch = useCallback(() => setSearchOpen(false), [])
-  // Contractors have no sidebar, so their top bar shows what is waiting on Channels and Messages.
-  const badges = useChatBadges(session?.user?.id, Boolean(session?.user?.role === "contractor" && can(session.user, PERMISSIONS.chatUse)))
+  // What is waiting on Channels and Messages: on the contractor's top bar, and on Messages in the dock.
+  const badges = useChatBadges(session?.user?.id, Boolean(session?.user && can(session.user, PERMISSIONS.chatUse)))
   // Phones: Agent in the menu slides up over the page instead of opening its own page.
   const [agentOpen, setAgentOpen] = useState(false)
   const openAgent = useCallback(() => {
@@ -141,7 +141,7 @@ export function AppShell({ children }) {
         {children}
       </main>
       {/* Phones, tablets and narrow windows: the main pages and Search along the bottom; the sidebar keeps the rest. */}
-      <Dock user={session.user} searching={searchOpen} onSearch={openSearch} />
+      <Dock user={session.user} searching={searchOpen} onSearch={openSearch} agentOpen={agentOpen} onAgent={openAgent} unread={badges.channels + badges.direct} />
       {agentOpen && <AgentSheet onClose={closeAgent} />}
       <CommandPalette user={session.user} open={searchOpen} onClose={closeSearch} />
       {can(session.user, PERMISSIONS.chatUse) && <CallLayer user={session.user} />}
