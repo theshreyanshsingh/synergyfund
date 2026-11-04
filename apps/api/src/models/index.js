@@ -3,11 +3,12 @@ import { sealedFields } from "../lib/sealed.js"
 
 const { Schema, model, models } = mongoose
 
-// Encrypted before they reach the database (lib/sealed.js): a company's tax and bank details, and a property's
-// lockbox and door codes. Nothing looks these up by value.
+// Encrypted before they reach the database (lib/sealed.js): a company's tax and bank details, a property's lockbox and
+// door codes, and what the Agent read in a document (it holds the document's contents). Nothing looks these up by value.
 export const SEALED_FIELDS = {
   Company: ["ein", "wireBankName", "wireRoutingNumber", "wireAccountNumber", "wireEntityName", "wireAddress"],
   Property: ["accessInfo"],
+  Document: ["insight"],
 }
 
 function register(name, schema) {
@@ -486,9 +487,21 @@ export const DocumentFile = register(
       // encryption job reads only files not yet under the current key.
       fileKeyId: String,
       uploadedBy: { type: Schema.Types.ObjectId, ref: "User" },
+      // What the Agent read in it (services/agent/documents.js): the kind of document (DOCUMENT_TYPES) and, sealed,
+      // a JSON note with its title, summary, parties, dates, amounts and words to find it by. insightState: "" not read
+      // yet, "reading", "read", "failed" (insightError says why) or "skipped" (nothing to read, such as a video).
+      docType: String,
+      insight: String,
+      insightState: { type: String, default: "" },
+      insightAt: Date,
+      insightError: String,
+      insightTries: { type: Number, default: 0 },
     },
     { timestamps: true },
-  ),
+  )
+    .plugin(sealedFields, { model: "Document", fields: SEALED_FIELDS.Document })
+    // The Agent's reader looks for the newest document not read yet, every half minute.
+    .index({ insightState: 1, createdAt: -1 }),
 )
 
 export const ReviewItem = register(
@@ -831,6 +844,26 @@ export const AgentProposal = register(
   ),
 )
 
+// A rename of a document the Agent prepared: only the person's Confirm renames the file (services/agent/renames.js).
+export const AgentRename = register(
+  "AgentRename",
+  new Schema(
+    {
+      userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+      threadId: { type: Schema.Types.ObjectId, ref: "AgentThread" },
+      documentId: { type: Schema.Types.ObjectId, ref: "Document", required: true },
+      from: String,
+      to: String,
+      // Where the file is (a property's address or a company's name), for the card.
+      place: String,
+      status: { type: String, default: "pending" },
+      decidedAt: Date,
+      expiresAt: Date,
+    },
+    { timestamps: true },
+  ),
+)
+
 export const AgentSetting = register(
   "AgentSetting",
   new Schema(
@@ -846,6 +879,10 @@ export const AgentSetting = register(
       teammateUserId: { type: Schema.Types.ObjectId, ref: "User" },
       followUpDays: Number,
       drawEmail: String,
+      // Documents the Agent reads: everything added from docsReadFrom on (set when the reader first starts), and the
+      // documents already there before it once an admin turns on docsReadAll.
+      docsReadFrom: Date,
+      docsReadAll: { type: Boolean, default: false },
       updatedBy: String,
     },
     { timestamps: true },

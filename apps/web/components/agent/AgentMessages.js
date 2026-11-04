@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import Link from "next/link"
@@ -28,6 +28,8 @@ const STATUS_LABELS = {
   list_team: "Looking up the team",
   search_documents: "Searching documents",
   find_documents: "Finding documents",
+  read_document: "Reading the document",
+  rename_document: "Preparing the rename",
   zip_documents: "Zipping documents",
   propose_property_change: "Preparing the change",
   web_search: "Searching the web",
@@ -44,18 +46,89 @@ function tag(Tag, className, extra = {}) {
   }
 }
 
+// The documents the answer's steps found (id → name, kind, place…), for its document cards.
+const AnswerDocuments = createContext(new Map())
+const DOCUMENT_HREF = /^\/documents\/([a-f0-9]{24})(?:[?#].*)?$/i
+
+function linkOf(node) {
+  return node?.type === "element" && node.tagName === "a" ? String(node.properties?.href || "") : ""
+}
+
+function hastPlain(node) {
+  if (!node) return ""
+  if (node.type === "text") return node.value || ""
+  return (node.children || []).map(hastPlain).join("")
+}
+
+// A paragraph or list item that starts with a link to a document is that document's card; the words after the link
+// ("— the signed contract, Oct 2") stay on the card.
+function documentLead(node) {
+  const children = (node?.children || []).filter((child) => !(child.type === "text" && !child.value.trim()))
+  const first = children[0]?.tagName === "p" ? (children[0].children || []).filter((child) => !(child.type === "text" && !child.value.trim()))[0] : children[0]
+  const match = DOCUMENT_HREF.exec(linkOf(first))
+  if (!match) return null
+  const rest = hastPlain(node).slice(hastPlain(first).length).replace(/^[\s\-–—:·,]+/, "").trim()
+  return { id: match[1], name: hastPlain(first).trim(), note: rest }
+}
+
+const DOCUMENT_LINK = /\[([^\]\n]+)\]\(\/documents\/([a-f0-9]{24})\)/gi
+
+// Documents the answer links only inside a sentence: they get their card under the answer too (once each). A link that
+// starts its line or list item is already a card where it is.
+export function looseDocuments(text) {
+  const lead = new Set()
+  const found = []
+  for (const line of String(text || "").split("\n")) {
+    const start = /^\s*(?:[-*+]|\d+[.)])?\s*\[[^\]\n]+\]\(\/documents\/([a-f0-9]{24})\)/i.exec(line)
+    if (start) lead.add(start[1])
+    for (const match of line.matchAll(DOCUMENT_LINK)) if (!(start && match.index === line.indexOf("["))) found.push({ id: match[2], name: match[1] })
+  }
+  return found.filter((item, index) => !lead.has(item.id) && found.findIndex((other) => other.id === item.id) === index)
+}
+
+function DocumentCard({ id, name, note }) {
+  const known = useContext(AnswerDocuments).get(id)
+  const meta = [known?.kind, known?.place, known?.folder, known?.added ? `added ${new Date(`${known.added}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""].filter(Boolean).join(" · ")
+  return (
+    <div className="agent-doc">
+      <span className="agent-doc-icon" aria-hidden="true"><Icon name="file" size={18} /></span>
+      <div className="agent-doc-copy">
+        <Link className="agent-doc-name" href={`/documents/${id}`}>{known?.name || name}</Link>
+        {meta && <small>{meta}</small>}
+        {note && <p>{note}</p>}
+      </div>
+      <div className="agent-doc-actions">
+        <Link className="tool" href={`/documents/${id}`}>Open</Link>
+        <a className="tool" href={`/api/documents/${id}/download`} aria-label={`Download ${known?.name || name}`}><Icon name="download" size={15} /></a>
+      </div>
+    </div>
+  )
+}
+
 const markdown = {
   h1: tag("h1", "agent-md-h1"),
   h2: tag("h2", "agent-md-h2"),
   h3: tag("h3", "agent-md-h3"),
   h4: tag("h4", "agent-md-h4"),
-  p: tag("p", "agent-md-p"),
-  ul: tag("ul", "agent-md-ul"),
+  p: function MarkdownParagraph({ node, ...props }) {
+    const lead = documentLead(node)
+    return lead ? <DocumentCard {...lead} /> : <p className="agent-md-p" {...props} />
+  },
+  ul: function MarkdownList({ node, ...props }) {
+    // A list of documents is a stack of cards, without bullets.
+    const items = (node?.children || []).filter((child) => child.tagName === "li")
+    return <ul className={items.length && items.every(documentLead) ? "agent-md-ul agent-doc-list" : "agent-md-ul"} {...props} />
+  },
   ol: tag("ol", "agent-md-ol"),
-  li: tag("li", "agent-md-li"),
-  // A zip or file the agent gathered downloads in place, as a button; other links open in a new tab.
+  li: function MarkdownItem({ node, ...props }) {
+    const lead = documentLead(node)
+    return lead ? <li className="agent-md-li is-document"><DocumentCard {...lead} /></li> : <li className="agent-md-li" {...props} />
+  },
+  // A zip or file the agent gathered downloads in place, as a button; a page in the app opens in place; other links
+  // (the web) open in a new tab.
   a: function MarkdownLink({ node, href = "", children, ...props }) {
     if (/^\/api\/documents\//.test(href)) return <a className="agent-md-a agent-download" href={href} {...props}><Icon name="download" size={14} />{children}</a>
+    if (/^\/(?!\/)/.test(href)) return <Link className="agent-md-a" href={href} {...props}>{children}</Link>
     return <a className="agent-md-a" href={href} target="_blank" rel="noreferrer" {...props}>{children}</a>
   },
   code: tag("code", "agent-md-code"),
@@ -417,13 +490,18 @@ function useReveal(text, revealFrom) {
   return words.slice(0, shown * 2).join("")
 }
 
-// The answer as formatted text (headings, lists, tables, quotes, code), the downloads it made as buttons.
-function AgentAnswer({ content, revealFrom }) {
+// The answer as formatted text (headings, lists, tables, quotes, code), the documents it gives as cards, the
+// downloads it made as buttons.
+function AgentAnswer({ content, revealFrom, documents }) {
   const shown = useReveal(content, revealFrom)
   const { text, downloads } = useMemo(() => splitDownloads(shown), [shown])
+  const loose = useMemo(() => looseDocuments(text), [text])
   return (
     <div className="agent-md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdown}>{text}</ReactMarkdown>
+      <AnswerDocuments.Provider value={documents || new Map()}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdown}>{text}</ReactMarkdown>
+        {loose.map((item) => <DocumentCard key={item.id} id={item.id} name={item.name} />)}
+      </AnswerDocuments.Provider>
       {downloads.length > 0 && (
         <div className="agent-downloads">
           {downloads.map((item) => (
@@ -433,6 +511,17 @@ function AgentAnswer({ content, revealFrom }) {
       )}
     </div>
   )
+}
+
+// The documents this answer's steps found or read (their names, kinds and places ride along with the steps).
+function documentsOf(rows) {
+  const found = new Map()
+  for (const row of rows) {
+    const step = row.toolResult
+    if (!["find_documents", "read_document"].includes(step?.UsedTool)) continue
+    for (const item of step.result?.documents || []) if (item?.id && !found.has(item.id)) found.set(item.id, item)
+  }
+  return found
 }
 
 // The last ARV the agent worked out in this answer (the full analysis rides along with the tool step).
@@ -614,6 +703,69 @@ function ArvCard({ analysis }) {
 }
 
 // Changes the Agent prepared in this turn, one card each.
+// The renames this answer prepared (one card each).
+function renamesOf(rows) {
+  const found = new Map()
+  for (const row of rows) {
+    const step = row.toolResult
+    if (step?.UsedTool === "rename_document" && step.result?.rename?.id) found.set(step.result.rename.id, step.result.rename)
+  }
+  return [...found.values()]
+}
+
+const RENAME_STATES = {
+  saved: "Renamed. It has this name everywhere now.",
+  cancelled: "Cancelled. Nothing was renamed.",
+  outdated: "Not renamed: the file's name changed since. Ask the agent again.",
+  expired: "Not renamed: this has expired. Ask the agent again.",
+  closed: "This rename can no longer be confirmed.",
+}
+
+// A rename the Agent prepared. Only Confirm renames the file, with this person's own access.
+function RenameCard({ rename }) {
+  const session = useSession()
+  const [status, setStatus] = useState(rename.status)
+  const [pending, setPending] = useState("")
+  const [error, setError] = useState("")
+  const canRename = Boolean(session?.user && can(session.user, PERMISSIONS.documentsWrite))
+  async function decide(action) {
+    setPending(action)
+    setError("")
+    try {
+      const data = await api(`/agent/renames/${rename.id}/${action}`, { method: "POST" })
+      setStatus(data.rename.status)
+    } catch (err) {
+      setError(err.message)
+      if (err.status === 409 || err.status === 404) setStatus("closed")
+    } finally {
+      setPending("")
+    }
+  }
+  return (
+    <section className="agent-arv agent-change" aria-label="Rename to confirm" data-rename={rename.id}>
+      <header className="agent-arv-head">
+        <span><Icon name="edit" size={15} /> {status === "saved" ? "File renamed" : status === "pending" ? "Rename to confirm" : "Not renamed"}</span>
+        <small>{status === "saved" ? <Link href={`/documents/${rename.documentId}`}>Open the file</Link> : rename.place}</small>
+      </header>
+      <ul className="agent-change-list">
+        <li>
+          <span>Name</span>
+          <span className="agent-change-figures agent-rename-names"><s>{rename.from}</s><i aria-hidden="true">→</i><b>{rename.to}</b></span>
+        </li>
+      </ul>
+      {error && <p className="agent-arv-warn">{error}</p>}
+      {status !== "pending" && !error && <p className={status === "saved" ? "agent-change-note is-saved" : "agent-change-note"}>{RENAME_STATES[status]}</p>}
+      {status === "pending" && !canRename && <p className="agent-change-note">You don't have access to change documents, so this can't be confirmed.</p>}
+      {status === "pending" && (
+        <footer className="agent-draft-foot">
+          <button type="button" className="agent-change-cancel" disabled={Boolean(pending)} onClick={() => decide("cancel")}>Cancel</button>
+          {canRename && <button type="button" className="agent-arv-save" disabled={Boolean(pending)} onClick={() => decide("confirm")}>{pending === "confirm" ? "Renaming…" : "Confirm"}</button>}
+        </footer>
+      )}
+    </section>
+  )
+}
+
 function proposalsOf(rows) {
   const found = new Map()
   for (const row of rows) {
@@ -908,11 +1060,12 @@ export function AgentMessages({ rows, streaming, empty = null, onRetry, onEdit, 
               </div>
               {texts.map((row) => (
                 <div key={row.id} className="agent-reply">
-                  {row.error ? <p className="agent-error">{row.content}</p> : <AgentAnswer content={row.content} revealFrom={row.revealFrom} />}
+                  {row.error ? <p className="agent-error">{row.content}</p> : <AgentAnswer content={row.content} revealFrom={row.revealFrom} documents={documentsOf(turn.replies)} />}
                 </div>
               ))}
               {!live && arvOf(turn.replies) && <ArvCard key={`arv-${question?.id || turnIndex}`} analysis={arvOf(turn.replies)} />}
               {!live && proposalsOf(turn.replies).map((proposal) => <ChangeCard key={proposal.id} proposal={proposal} />)}
+              {!live && renamesOf(turn.replies).map((rename) => <RenameCard key={rename.id} rename={rename} />)}
               {!live && finalRow && (
                 <ReplyActions
                   row={finalRow}

@@ -68,7 +68,7 @@ test("refuses to run without a key", async () => {
 test("encrypts every record, log entry, file and backup copy saved before encryption", async () => {
   process.env.FIELD_ENCRYPTION_KEYS = KEY1
   const done = await encryptStoredData()
-  assert.deepEqual(done, { companies: 1, properties: 1, logEntries: 2, files: 2, fileCopies: 3, missing: 1 })
+  assert.deepEqual(done, { companies: 1, properties: 1, documentNotes: 0, logEntries: 2, files: 2, fileCopies: 3, missing: 1 })
 
   const company = await raw(Company, ids.company)
   for (const field of ["ein", "wireBankName", "wireRoutingNumber", "wireAccountNumber", "wireEntityName", "wireAddress"]) assert.match(company[field], /^enc1:k1:/, field)
@@ -103,7 +103,7 @@ test("running it again changes nothing and reads no file again", async () => {
   const before = { company: await raw(Company, ids.company), file: Buffer.from(s3.object("synergifund/2026-10-01/1790000000000-Operating agreement.pdf")) }
   const reads = [...s3.gets.values()].reduce((total, count) => total + count, 0)
   const done = await encryptStoredData()
-  assert.deepEqual(done, { companies: 0, properties: 0, logEntries: 0, files: 0, fileCopies: 0, missing: 1 })
+  assert.deepEqual(done, { companies: 0, properties: 0, documentNotes: 0, logEntries: 0, files: 0, fileCopies: 0, missing: 1 })
   assert.deepEqual(await raw(Company, ids.company), before.company)
   assert.ok(s3.object("synergifund/2026-10-01/1790000000000-Operating agreement.pdf").equals(before.file))
   const readsAfter = [...s3.gets.values()].reduce((total, count) => total + count, 0)
@@ -113,7 +113,7 @@ test("running it again changes nothing and reads no file again", async () => {
 test("a rotation moves everything to the new key, after which the old key can go", async () => {
   process.env.FIELD_ENCRYPTION_KEYS = `${KEY2},${KEY1}`
   const done = await encryptStoredData()
-  assert.deepEqual(done, { companies: 1, properties: 1, logEntries: 0, files: 2, fileCopies: 3, missing: 1 })
+  assert.deepEqual(done, { companies: 1, properties: 1, documentNotes: 0, logEntries: 0, files: 2, fileCopies: 3, missing: 1 })
   assert.match((await raw(Company, ids.company)).ein, /^enc1:k2:/)
   assert.equal(keyOf(s3.object("synergifund/2026-10-01/1790000000000-Operating agreement.pdf")), "k2")
   assert.equal(keyOf(localCopy()), "k2")
@@ -124,7 +124,7 @@ test("a rotation moves everything to the new key, after which the old key can go
   assert.equal((await Company.findById(ids.company)).ein, "12-3456789")
   assert.equal((await Property.findById(ids.property)).accessInfo, "Lockbox 4821 on the back door")
   assert.ok((await files.readStoredFile(await DocumentFile.findById(ids.s3File))).equals(PDF))
-  assert.deepEqual(await encryptStoredData(), { companies: 0, properties: 0, logEntries: 0, files: 0, fileCopies: 0, missing: 1 })
+  assert.deepEqual(await encryptStoredData(), { companies: 0, properties: 0, documentNotes: 0, logEntries: 0, files: 0, fileCopies: 0, missing: 1 })
 })
 
 test("a wrong key is refused before anything is written with it", async () => {

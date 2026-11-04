@@ -477,8 +477,9 @@ export function taskStatus(task) {
 
 export const PROPERTY_LABELS = ["Financed", "Refinanced", "Flip", "Hold", "Rent"]
 
-// The first five are the Quick Access documents on a property (see QUICK_ACCESS).
-export const DOCUMENT_LABELS = ["Purchase Contract", "Reassignment Contract", "Closing Contract", "Settlement Statement (ALTA)", "Scope of Work (SOW)", "Closing Statement", "Title", "Insurance", "Loan", "Appraisal", "Inspection", "Permit", "Invoice", "Lease", "Tax", "Other"]
+// The first four are the Quick Access documents on a property (see QUICK_ACCESS). Closing Contract is a label like the
+// others after them (files labeled with it keep it), no longer a Quick Access document.
+export const DOCUMENT_LABELS = ["Purchase Contract", "Reassignment Contract", "Settlement Statement (ALTA)", "Scope of Work (SOW)", "Closing Contract", "Closing Statement", "Title", "Insurance", "Loan", "Appraisal", "Inspection", "Permit", "Invoice", "Lease", "Tax", "Other"]
 
 // Key documents every property may need, shown under Quick Access on its Documents. A file counts as one when it
 // carries that label (older spellings too); uploading from Quick Access files it in the main folder with the label.
@@ -486,7 +487,6 @@ export const DOCUMENT_LABELS = ["Purchase Contract", "Reassignment Contract", "C
 export const QUICK_ACCESS = [
   { id: "purchase-contract", name: "Purchase Contract", folder: "contracts", aliases: ["purchase contract"] },
   { id: "reassignment-contract", name: "Reassignment Contract", folder: "contracts", aliases: ["reassignment contract", "assignment contract"] },
-  { id: "closing-contract", name: "Closing Contract", folder: "title", aliases: ["closing contract"] },
   { id: "settlement-statement", name: "Settlement Statement (ALTA)", folder: "title", aliases: ["settlement statement (alta)", "settlement statement", "alta settlement statement", "alta"] },
   { id: "scope-of-work", name: "Scope of Work (SOW)", folder: "renovation", aliases: ["scope of work (sow)", "scope of work", "sow"] },
 ]
@@ -570,6 +570,61 @@ export function foldersFor(place) {
 
 export function folderName(place, id) {
   return foldersFor(place).find((folder) => folder.id === id)?.name || ""
+}
+
+// What a document is, as the Agent recognizes it: the team's own document names first (the labels above), then other
+// kinds it tells apart. `words`: what people call it when they ask for it. `label`: the document label that makes a
+// file this kind for certain (set by a person, so it wins over what the Agent read). `folder`: a company folder that
+// does the same. `labelOnly`: only a label makes a file this kind (the Agent never guesses it from the contents).
+export const DOCUMENT_TYPES = [
+  { id: "purchase_contract", name: "Purchase Contract", label: "Purchase Contract", words: ["purchase contract", "purchase agreement", "purchase and sale", "sale and purchase", "contract for sale", "sales contract", "as is contract", "psa", "contract"] },
+  { id: "reassignment_contract", name: "Reassignment Contract", label: "Reassignment Contract", words: ["reassignment contract", "reassignment", "assignment contract", "assignment of contract", "assignment"] },
+  { id: "closing_contract", name: "Closing Contract", label: "Closing Contract", labelOnly: true, words: ["closing contract"] },
+  { id: "settlement_statement", name: "Settlement Statement (ALTA)", label: "Settlement Statement (ALTA)", words: ["settlement statement", "alta", "alta statement", "settlement"] },
+  { id: "closing_statement", name: "Closing Statement", label: "Closing Statement", words: ["closing statement", "hud", "hud 1", "closing disclosure", "final statement", "seller statement", "buyer statement", "closing"] },
+  { id: "scope_of_work", name: "Scope of Work (SOW)", label: "Scope of Work (SOW)", words: ["scope of work", "sow", "scope", "rehab budget", "renovation budget", "rehab estimate", "bid", "contractor estimate", "budget"] },
+  { id: "title", name: "Title", label: "Title", words: ["title", "title commitment", "title policy", "title search", "title report", "owners policy", "lenders policy"] },
+  { id: "deed", name: "Deed", words: ["deed", "warranty deed", "quitclaim", "quit claim", "special warranty deed"] },
+  { id: "survey", name: "Survey", words: ["survey", "boundary survey", "plat"] },
+  { id: "insurance", name: "Insurance", label: "Insurance", words: ["insurance", "insurance policy", "builders risk", "hazard insurance", "flood insurance", "binder", "declarations page", "dec page", "certificate of insurance", "coi", "policy"] },
+  { id: "loan", name: "Loan", label: "Loan", words: ["loan", "term sheet", "loan agreement", "promissory note", "note", "mortgage", "deed of trust", "loan approval", "commitment letter", "loan estimate", "payoff", "payoff letter", "loan statement", "mortgage statement", "guaranty", "loan documents", "loan docs"] },
+  { id: "draw", name: "Draw request", words: ["draw", "draw request", "draw form", "draw approval", "draw inspection", "funding request"] },
+  { id: "appraisal", name: "Appraisal", label: "Appraisal", words: ["appraisal", "valuation", "bpo", "broker price opinion"] },
+  { id: "inspection", name: "Inspection", label: "Inspection", words: ["inspection", "inspection report", "home inspection", "four point", "4 point", "wind mitigation", "termite", "wdo"] },
+  { id: "contractor_agreement", name: "Contractor agreement", words: ["contractor agreement", "construction contract", "contractor contract", "subcontractor agreement", "independent contractor agreement"] },
+  { id: "lien_waiver", name: "Lien waiver", words: ["lien waiver", "lien release", "release of lien", "waiver"] },
+  { id: "invoice", name: "Invoice", label: "Invoice", words: ["invoice", "receipt", "bill"] },
+  { id: "permit", name: "Permit", label: "Permit", words: ["permit", "building permit", "certificate of occupancy", "certificate of completion", "final inspection"] },
+  { id: "lease", name: "Lease", label: "Lease", words: ["lease", "rental agreement", "lease agreement", "tenant", "rental application"] },
+  { id: "tax", name: "Tax", label: "Tax", words: ["tax", "property tax", "tax bill", "tax notice", "trim notice", "tax return", "w9", "w 9", "1099", "k 1"] },
+  { id: "utility", name: "Utility bill", words: ["utility", "utility bill", "water bill", "electric bill", "power bill", "gas bill"] },
+  { id: "hoa", name: "HOA document", words: ["hoa", "homeowners association", "estoppel", "covenants"] },
+  { id: "articles", name: "Articles of organization", label: "Articles of organization", folder: "articles", words: ["articles of organization", "articles of incorporation", "articles", "certificate of formation"] },
+  { id: "operating", name: "Operating agreement", label: "Operating agreement", folder: "operating", words: ["operating agreement"] },
+  { id: "ein", name: "EIN letter", label: "EIN letter", folder: "ein", words: ["ein letter", "ein", "cp 575", "tax id letter"] },
+  { id: "good_standing", name: "Certificate of good standing", folder: "good-standing", words: ["certificate of good standing", "good standing", "certificate of status"] },
+  { id: "annual_report", name: "Annual report", label: "Annual report", words: ["annual report"] },
+  { id: "bank_statement", name: "Bank statement", label: "Bank statement", words: ["bank statement", "proof of funds", "pof", "account statement"] },
+  { id: "identity", name: "ID", words: ["drivers license", "driver license", "passport", "photo id", "identification"] },
+  { id: "spreadsheet", name: "Spreadsheet", words: ["spreadsheet", "pro forma", "proforma", "deal analysis", "underwriting"] },
+  { id: "letter", name: "Letter or notice", words: ["letter", "notice", "correspondence", "email"] },
+  { id: "photo", name: "Photo", words: ["photo", "photos", "picture", "pictures"] },
+  { id: "other", name: "Other", words: [] },
+]
+
+export function documentTypeName(id) {
+  return DOCUMENT_TYPES.find((type) => type.id === id)?.name || ""
+}
+
+// The kind a person set on a file: a document label (Purchase Contract…) or a company folder (EIN letter…). "" when none.
+export function labeledDocumentType(file) {
+  const labels = (file?.labels || []).map((label) => String(label).trim().toLowerCase())
+  const byLabel = DOCUMENT_TYPES.find((type) => type.label && labels.includes(type.label.toLowerCase()))
+    || QUICK_ACCESS.map((item) => item.aliases.some((alias) => labels.includes(alias)) && DOCUMENT_TYPES.find((type) => type.label === item.name)).find(Boolean)
+  if (byLabel) return byLabel.id
+  if (!file?.companyId || file?.propertyId) return ""
+  const folder = folderOf(file)
+  return DOCUMENT_TYPES.find((type) => type.folder && type.folder === folder)?.id || ""
 }
 
 // What a file is, from its name: pdf, word, excel, image or video. Anything else is not accepted in Documents.

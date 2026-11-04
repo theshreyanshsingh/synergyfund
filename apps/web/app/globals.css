@@ -340,6 +340,15 @@ a { color: inherit; text-decoration: none; }
 .settings-card .primary, .settings-card .tool { margin-left: 0; flex: none; }
 .settings-card .field input { width: 100%; }
 .settings-note { color: var(--good); margin: 0; }
+/* Settings → Agent → Documents: how many the Agent has read. */
+.agent-reading { display: grid; gap: 12px; padding-top: 16px; }
+.agent-reading h2 { margin: 0 0 4px; font-size: 14px; }
+.agent-reading > div:first-child p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.agent-reading-figures { display: grid; gap: 8px; }
+.agent-reading-figures p { margin: 0; font-size: 14px; }
+.agent-reading-bar { height: 8px; overflow: hidden; border-radius: 999px; background: var(--active); }
+.agent-reading-bar i { display: block; height: 100%; border-radius: inherit; background: var(--good); transition: width 0.4s ease; }
+.agent-reading-detail { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 13px !important; }
 .members-notice { margin: 0 0 12px; }
 .settings-panel { display: grid; gap: 16px; width: min(820px, 100%); }
 .model-select { position: relative; }
@@ -1031,6 +1040,22 @@ button.paycal-more { border: 0; background: transparent; text-align: left; curso
 .agent-md-li { padding-left: 2px; }
 .agent-md-li > p { margin: 0; }
 .agent-md-li > .agent-md-ul, .agent-md-li > .agent-md-ol { margin: 6px 0 0; }
+/* A document the Agent gives: its name, what it is and where it is filed, with Open and Download. */
+.agent-doc { display: flex; align-items: center; gap: 12px; margin: 0 0 10px; padding: 12px 12px 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--white); }
+.agent-doc-icon { display: grid; flex: none; place-items: center; width: 38px; height: 38px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 10%, var(--white)); color: var(--accent); }
+.agent-doc-copy { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.agent-doc-name { overflow: hidden; color: var(--text); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.agent-doc-name:hover { color: var(--accent); }
+.agent-doc-copy small { color: var(--muted); font-size: 12.5px; }
+.agent-doc-copy p { margin: 2px 0 0; color: var(--text); font-size: 13.5px; line-height: 1.4; }
+.agent-doc-actions { display: flex; flex: none; align-items: center; gap: 4px; }
+.agent-doc-actions .tool { display: inline-flex; align-items: center; justify-content: center; min-width: 36px; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 9px; color: var(--text); font-weight: 600; }
+.agent-doc-list { padding-left: 0; list-style: none; gap: 0; }
+.agent-md-li.is-document { padding-left: 0; list-style: none; }
+@media (max-width: 760px) {
+  .agent-doc { flex-wrap: wrap; }
+  .agent-doc-actions { width: 100%; justify-content: flex-end; }
+}
 .agent-md-a { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }
 .agent-md-a:hover { text-decoration-color: currentColor; }
 .agent-md-code { padding: 2px 5px; border-radius: 5px; background: var(--active); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.875em; }
@@ -3457,6 +3482,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .agent-change-figures s { color: var(--muted); }
 .agent-change-figures i { color: var(--muted); font-style: normal; }
 .agent-change-figures b { font-size: 15px; }
+.agent-rename-names { min-width: 0; overflow-wrap: anywhere; }
 .agent-change .agent-arv-warn { margin: 10px 14px; }
 .agent-change-note { margin: 0; padding: 10px 14px; color: var(--muted); font-size: 12.5px; }
 .agent-change-note.is-saved { color: var(--good); font-weight: 600; }

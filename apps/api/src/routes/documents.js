@@ -11,6 +11,8 @@ import { propertyFilter } from "../services/access.js"
 import { readWorkbook } from "../services/drawImport.js"
 import { deleteStoredFile, headerNameUtf8, materializeStoredFile, readStoredFile, receiveDocument, receiveFile, saveUploadedFile, sendStoredFile } from "../services/files.js"
 import { recordActivity } from "../services/notify.js"
+import { nudgeDocumentReader } from "../services/agent/documents.js"
+import { renamedFile } from "../services/agent/renames.js"
 
 // A Word file's links and images come through the preview as written, including "javascript:" links that would run
 // in the viewer's session. Keep only web, mail, in-page and embedded-image addresses.
@@ -252,6 +254,8 @@ documentsRouter.post(
       labels,
     })
     await clearSlotsElsewhere(file, req.user, { olderOnly: true })
+    // The Agent reads it in a moment, so it can find it and answer from it.
+    nudgeDocumentReader()
     await recordActivity({ user: req.user, title: "File uploaded", detail: [file.name, choice.property?.address, owner.company?.name, folderName(place, folder), labels.join(", ")].filter(Boolean).join(" · "), propertyId: file.propertyId })
     const [presented] = await presentMany([file], req.user)
     res.status(201).json({ file: presented })
@@ -327,14 +331,13 @@ documentsRouter.patch(
     // Moved to another property or company without a folder: keep the folder if it exists there, otherwise place it again.
     file.folder = folderOf({ propertyId: file.propertyId, companyId: file.companyId, folder: file.folder, labels: file.labels, kind: file.kind, name: file.name, mime: file.mime }) || undefined
     if ("name" in req.body) {
-      const name = String(req.body.name || "").trim().slice(0, 200)
+      // Keeps the file's type ("Purchase Contract - 123 Main" stays a .pdf), the same as a rename through the Agent.
+      const name = renamedFile(req.body.name, file.name)
       if (!name) {
         sendError(res, 400, "Give the file a name.")
         return
       }
-      // Keep the file's type: "Purchase Contract.pdf" renamed "Purchase Contract - 123 Main" stays a .pdf.
-      const extension = (String(file.name || "").match(/\.[a-z0-9]{1,8}$/i) || [""])[0]
-      file.name = extension && !name.toLowerCase().endsWith(extension.toLowerCase()) ? `${name}${extension}` : name
+      file.name = name
     }
     await file.save()
     // Only a change of label or property takes a slot: renaming an older copy leaves the slot's file where it is.
@@ -544,7 +547,8 @@ documentsRouter.get(
       sendError(res, 404, "That file is not available.")
       return
     }
-    await sendStoredFile(res, file, { download: true })
+    // ?name=: an export under another name (the Agent's "export it as …"); it keeps the file's type.
+    await sendStoredFile(res, file, { download: true, name: req.query.name ? renamedFile(req.query.name, file.name) : "" })
   }),
 )
 
@@ -686,6 +690,7 @@ documentsRouter.post(
       return
     }
     const saved = await saveUploadedFile(req.file, req.user, { kind: "import" })
+    nudgeDocumentReader()
     await recordActivity({ user: req.user, title: "Property workbook uploaded", detail: `${saved.name} · waiting for review` })
     const stored = await materializeStoredFile(saved)
     let tables = []

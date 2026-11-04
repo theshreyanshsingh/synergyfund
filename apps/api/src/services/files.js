@@ -150,7 +150,8 @@ function storedType(file) {
   return TYPE_BY_NAME.find(([pattern]) => pattern.test(file.name || ""))?.[1] || mime
 }
 
-export async function sendStoredFile(res, file, { download = false, range = "" } = {}) {
+// `name`: download it under another name (an export named as asked); the stored file keeps its own.
+export async function sendStoredFile(res, file, { download = false, range = "", name = "" } = {}) {
   let source
   try {
     source = await openStored(file)
@@ -163,7 +164,8 @@ export async function sendStoredFile(res, file, { download = false, range = "" }
   const inline = !download && SAFE_INLINE.has(mime)
   const size = source.size
   res.setHeader("Content-Type", inline ? mime : "application/octet-stream")
-  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${safeHeaderName(file.name)}"; filename*=UTF-8''${headerNameUtf8(file.name || "file")}`)
+  const shownName = name || file.name
+  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${safeHeaderName(shownName)}"; filename*=UTF-8''${headerNameUtf8(shownName || "file")}`)
   res.setHeader("X-Content-Type-Options", "nosniff")
   // A stored file never changes (a new version is a new file), so the browser may keep its own copy for a day.
   res.setHeader("Cache-Control", "private, max-age=86400")

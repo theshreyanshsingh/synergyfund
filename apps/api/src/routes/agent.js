@@ -1,11 +1,13 @@
 import { Router } from "express"
 import { AGENT_DEFAULTS, chatTitleFromPrompt } from "@synergifund/shared"
 import mongoose from "mongoose"
-import { AgentPrompt, AgentProposal, AgentSetting, AgentThread, DocumentFile, Property } from "../models/index.js"
+import { AgentPrompt, AgentProposal, AgentRename, AgentSetting, AgentThread, DocumentFile, Property } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
 import { ownsProperty } from "../services/access.js"
 import { modelKey } from "../services/agent/llm.js"
+import { HIDDEN_KINDS, documentReading, nudgeDocumentReader } from "../services/agent/documents.js"
+import { applyRename, freshRenames, presentRename } from "../services/agent/renames.js"
 import { applyProposal, changedSince, freshProposals, presentProposal } from "../services/agent/proposals.js"
 import { runAgent } from "../services/agent/run.js"
 import { resumeRun } from "../services/agent/stream.js"
@@ -134,7 +136,10 @@ agentRouter.use(requirePermission("agent.ask"))
 agentRouter.get(
   "/settings",
   asyncHandler(async (req, res) => {
-    res.json({ settings: presentSettings(await agentSettings(), req.user) })
+    // ?documents=1 (Settings): admins also see how far the Agent has got reading the documents. The Agent page asks
+    // without it, so opening the Agent never counts the library.
+    const documents = req.user.role === "admin" && req.query.documents === "1" ? await documentReading() : null
+    res.json({ settings: { ...presentSettings(await agentSettings(), req.user), ...(documents ? { documents } : {}) } })
   }),
 )
 
@@ -166,6 +171,13 @@ agentRouter.patch(
       sendError(res, 403, "Only an admin can change the agent models.")
       return
     }
+    // readAllDocuments: also read the documents that were there before the reader started (true), or only new ones.
+    const reading = req.body.readAllDocuments
+    if (reading !== undefined && typeof reading !== "boolean") {
+      sendError(res, 400, "readAllDocuments must be true or false.")
+      return
+    }
+    const modelsGiven = ["taskModel", "decisionModel"].some((key) => req.body[key] !== undefined)
     const next = await agentSettings()
     const before = { ...next }
     for (const key of ["taskModel", "decisionModel"]) {
@@ -178,13 +190,17 @@ agentRouter.patch(
       }
       next[key] = id
     }
-    await AgentSetting.findOneAndUpdate({ key: "org" }, { ...next, key: "org", updatedBy: req.user.email }, { upsert: true, new: true, setDefaultsOnInsert: true })
+    await AgentSetting.findOneAndUpdate({ key: "org" }, { ...next, ...(reading !== undefined ? { docsReadAll: reading } : {}), key: "org", updatedBy: req.user.email }, { upsert: true, new: true, setDefaultsOnInsert: true })
+    if (reading !== undefined) {
+      await recordActivity({ user: req.user, title: "Agent document reading changed", detail: reading ? "The Agent reads the documents that were already there, as well as new ones" : "The Agent reads new documents only" })
+      if (reading) nudgeDocumentReader()
+    }
     const changes = [
       before.taskModel !== next.taskModel ? `Task model ${before.taskModel} → ${next.taskModel}` : "",
       before.decisionModel !== next.decisionModel ? `Decision model ${before.decisionModel} → ${next.decisionModel}` : "",
     ].filter(Boolean).join(" · ")
-    await recordActivity({ user: req.user, title: "Agent models changed", detail: changes || "Saved with no changes" })
-    res.json({ settings: presentSettings(next, req.user) })
+    if (modelsGiven || reading === undefined) await recordActivity({ user: req.user, title: "Agent models changed", detail: changes || "Saved with no changes" })
+    res.json({ settings: { ...presentSettings(next, req.user), documents: await documentReading() } })
   }),
 )
 
@@ -214,6 +230,7 @@ agentRouter.get(
     }
     const messages = thread.messages.map(presentMessage)
     await freshProposals(messages)
+    await freshRenames(messages)
     res.json({ thread: { ...presentThread(thread), messages } })
   }),
 )
@@ -229,6 +246,7 @@ agentRouter.delete(
     }
     await removeAttachments(threadFileIds([thread])).catch((error) => console.error("Agent attachment removal failed", error))
     await AgentProposal.deleteMany({ threadId: thread._id, status: "pending" })
+    await AgentRename.deleteMany({ threadId: thread._id, status: "pending" })
     if (!thread.temporary) await recordActivity({ user: req.user, title: "Agent chat deleted", detail: thread.title || "" })
     res.json({ ok: true })
   }),
@@ -461,6 +479,78 @@ agentRouter.post(
       return
     }
     res.json({ proposal: presentProposal(taken) })
+  }),
+)
+
+// A rename the Agent prepared: Confirm renames the file (as renaming it in Documents would), Cancel drops it.
+const RENAME_CLOSED = {
+  saved: "This file was already renamed.",
+  cancelled: "This rename was cancelled. Ask the agent again.",
+  outdated: "This rename is out of date. Ask the agent again.",
+  expired: "This rename has expired. Ask the agent again.",
+}
+
+async function openRename(req, res) {
+  const rename = await AgentRename.findOne({ _id: req.params.id, userId: req.user._id }).catch(() => null)
+  if (!rename) {
+    sendError(res, 404, "That rename was not found.")
+    return null
+  }
+  const { status } = presentRename(rename)
+  if (status !== "pending") {
+    sendError(res, 409, RENAME_CLOSED[status] || RENAME_CLOSED.outdated)
+    return null
+  }
+  return rename
+}
+
+agentRouter.post(
+  "/renames/:id/confirm",
+  requirePermission("documents.write"),
+  asyncHandler(async (req, res) => {
+    const rename = await openRename(req, res)
+    if (!rename) return
+    const file = await DocumentFile.findById(rename.documentId)
+    const contractor = req.user.role === "contractor"
+    // As when it was prepared: a contractor renames only their own uploads, on a property they can still see.
+    const property = contractor && file?.propertyId ? await Property.findById(file.propertyId) : null
+    if (!file || HIDDEN_KINDS.includes(file.kind) || (contractor && (String(file.uploadedBy || "") !== String(req.user._id) || !property || !ownsProperty(req.user, property)))) {
+      sendError(res, 404, "That file is not available.")
+      return
+    }
+    // Renamed since the card was made: the person agreed to old → new, and old is no longer its name.
+    if (file.name !== rename.from) {
+      await AgentRename.updateOne({ _id: rename._id, status: "pending" }, { status: "outdated", decidedAt: new Date() })
+      sendError(res, 409, `Not renamed: the file is called ${file.name} now, not ${rename.from}. Ask the agent again.`)
+      return
+    }
+    // Taken first, so a second tap can't rename it twice.
+    const taken = await AgentRename.findOneAndUpdate({ _id: rename._id, status: "pending" }, { status: "saved", decidedAt: new Date() }, { new: true })
+    if (!taken) {
+      sendError(res, 409, RENAME_CLOSED.saved)
+      return
+    }
+    try {
+      await applyRename(taken, file, req.user)
+    } catch (error) {
+      await AgentRename.updateOne({ _id: taken._id }, { status: "pending", $unset: { decidedAt: 1 } })
+      throw error
+    }
+    res.json({ rename: presentRename(taken), file: { id: String(file._id), name: file.name } })
+  }),
+)
+
+agentRouter.post(
+  "/renames/:id/cancel",
+  asyncHandler(async (req, res) => {
+    const rename = await openRename(req, res)
+    if (!rename) return
+    const taken = await AgentRename.findOneAndUpdate({ _id: rename._id, status: "pending" }, { status: "cancelled", decidedAt: new Date() }, { new: true })
+    if (!taken) {
+      sendError(res, 409, RENAME_CLOSED.cancelled)
+      return
+    }
+    res.json({ rename: presentRename(taken) })
   }),
 )
 
