@@ -1,5 +1,5 @@
 import { drawFigures, lineTracking } from "@synergifund/shared"
-import xlsx from "xlsx"
+import xlsx from "../lib/xlsx.js"
 
 export const DRAW_FIELD_ALIASES = [
   ["fundedAmount", ["funded amount", "lender cash", "received amount", "cash received", "pulled", "amount pulled"]],

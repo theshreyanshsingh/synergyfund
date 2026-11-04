@@ -1,5 +1,5 @@
 import mammoth from "mammoth"
-import xlsx from "xlsx"
+import xlsx from "../../lib/xlsx.js"
 import { getDocumentProxy } from "unpdf"
 import { AGENT_DEFAULTS, DOCUMENT_TYPES, QUICK_ACCESS, documentType, documentTypeName, folderName, folderOf, labeledDocumentType } from "@synergifund/shared"
 import { AgentSetting, Company, DocumentFile, Property } from "../../models/index.js"

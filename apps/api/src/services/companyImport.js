@@ -1,4 +1,4 @@
-import xlsx from "xlsx"
+import xlsx from "../lib/xlsx.js"
 import { COMPANY_TYPES } from "@synergifund/shared"
 
 // The columns of the companies workbook, in the order of SynergiFund's Companies template.

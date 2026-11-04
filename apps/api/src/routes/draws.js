@@ -1,6 +1,6 @@
 import { Router } from "express"
 import { LINE_STATUSES, drawPulled, isPendingDraw, lineTracking } from "@synergifund/shared"
-import xlsx from "xlsx"
+import xlsx from "../lib/xlsx.js"
 import { DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, ImportJob, PhotoReport, Property } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { propertyFilter } from "../services/access.js"

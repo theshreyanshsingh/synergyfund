@@ -1,7 +1,7 @@
 import zlib from "node:zlib"
 import { Router } from "express"
 import mammoth from "mammoth"
-import xlsx from "xlsx"
+import xlsx from "../lib/xlsx.js"
 import { allowedDocument, cleanDocumentLabels, documentType, folderName, folderOf, foldersFor, QUICK_ACCESS, quickAccessFiles, US_STATES } from "@synergifund/shared"
 import { Company, DocumentFile, ImportJob, Loan, Property, Task, User } from "../models/index.js"
 import { lenderForName } from "../services/lenders.js"

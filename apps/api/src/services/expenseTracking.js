@@ -1,4 +1,4 @@
-import xlsx from "xlsx"
+import xlsx from "../lib/xlsx.js"
 import { fromCents, toCents } from "@synergifund/shared"
 import { Expense, ExpenseRequest, Property, User } from "../models/index.js"
 import { propertyFilter } from "./access.js"

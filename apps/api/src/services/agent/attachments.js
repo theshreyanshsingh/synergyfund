@@ -1,5 +1,5 @@
 import mammoth from "mammoth"
-import xlsx from "xlsx"
+import xlsx from "../../lib/xlsx.js"
 import { AGENT_DEFAULTS } from "@synergifund/shared"
 import { AgentThread, DocumentFile } from "../../models/index.js"
 import { deleteStoredFile, readStoredFile, saveUploadedFile } from "../files.js"
