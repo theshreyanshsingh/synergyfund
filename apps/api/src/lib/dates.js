@@ -14,6 +14,12 @@ export function teamTimezone() {
   return TEAM_TIMEZONE
 }
 
+// The team's clock by name, for "8 AM Eastern Time".
+export function teamZoneName(date = new Date()) {
+  const part = new Intl.DateTimeFormat("en-US", { timeZone: TEAM_TIMEZONE, timeZoneName: "longGeneric" }).formatToParts(date).find((item) => item.type === "timeZoneName")
+  return part?.value || TEAM_TIMEZONE
+}
+
 // A day written YYYY-MM-DD that is on the calendar (2026-02-31 is not).
 export function isDay(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""))

@@ -14,6 +14,7 @@ import { CallLayer } from "../calls/CallLayer"
 import { SoundAlerts } from "./SoundAlerts"
 import { DownloadTray } from "./DownloadTray"
 import { Dock } from "./Dock"
+import { MoreSheet, useTheme } from "./MoreSheet"
 import { AgentSheet } from "../agent/AgentSheet"
 import { notePage } from "../../lib/back"
 
@@ -37,19 +38,25 @@ export function AppShell({ children }) {
     setAgentOpen(true)
   }, [])
   const closeAgent = useCallback(() => setAgentOpen(false), [])
+  // A contractor's More (from the dock on phones and tablets).
+  const [moreOpen, setMoreOpen] = useState(false)
+  const signedIn = Boolean(session?.ready && session.user)
+
+  // While the app (not sign-in) is showing, phones paint the edges above and below it the color of its top bar and
+  // dock: in the phone app that is the strip behind the clock and the home bar, so the dock reaches the bottom edge.
+  useEffect(() => {
+    if (!signedIn) return undefined
+    document.documentElement.classList.add("has-shell")
+    return () => document.documentElement.classList.remove("has-shell")
+  }, [signedIn])
 
   // Notes each page opened, so a detail page's Back can say where it goes ("← Calendar").
   useEffect(() => {
     setMenuOpen(false)
     setAgentOpen(false)
+    setMoreOpen(false)
     notePage(pathname)
   }, [pathname])
-
-  // On a phone the contractor's links scroll sideways; keep the current page's link in view.
-  useEffect(() => {
-    if (session?.user?.role !== "contractor") return
-    document.querySelector(".contractor-link.is-on")?.scrollIntoView({ block: "nearest", inline: "nearest" })
-  }, [pathname, session?.user?.role])
 
   useEffect(() => {
     if (session?.user?.role !== "contractor") return
@@ -92,7 +99,7 @@ export function AppShell({ children }) {
 
   if (session.user.role === "contractor") {
     return (
-      <div className="app is-contractor">
+      <div className="app is-contractor has-dock">
         <SkipLink />
         <header className="contractor-bar">
           <Link href="/properties" className="contractor-brand">
@@ -118,6 +125,9 @@ export function AppShell({ children }) {
           <InstallCard className="bar-install" />
           {children}
         </main>
+        {/* Phones and tablets: their pages along the bottom, and More for the rest (the links above are hidden there). */}
+        <Dock user={session.user} unread={badges.channels + badges.direct} more={{ open: moreOpen, onOpen: () => setMoreOpen(true) }} />
+        {moreOpen && <MoreSheet user={session.user} badges={badges} onClose={() => setMoreOpen(false)} onSignOut={() => session.signOut()} />}
         {can(session.user, PERMISSIONS.chatUse) && <CallLayer user={session.user} />}
         <SoundAlerts user={session.user} chat={can(session.user, PERMISSIONS.chatUse)} />
         <DownloadTray />
@@ -152,16 +162,7 @@ export function AppShell({ children }) {
 }
 
 function ThemeToggle() {
-  const [dark, setDark] = useState(false)
-  useEffect(() => {
-    setDark(document.documentElement.dataset.theme === "dark")
-  }, [])
-  function toggle() {
-    const next = !dark
-    document.documentElement.dataset.theme = next ? "dark" : "light"
-    localStorage.setItem("synergifund-theme", next ? "dark" : "light")
-    setDark(next)
-  }
+  const [dark, toggle] = useTheme()
   return (
     <button type="button" className="icon-btn contractor-theme" aria-label={dark ? "Light mode" : "Dark mode"} onClick={toggle}>
       <Icon name={dark ? "sun" : "moon"} size={16} />

@@ -8,6 +8,7 @@ import { PERMISSIONS, can } from "@synergifund/shared"
 import { useSession } from "../shell/Providers"
 import { Icon } from "../ui/Icon"
 import { api } from "../../lib/api"
+import { useCopy } from "../../lib/useCopy"
 import { savedMessage } from "./useAgentChat"
 
 const AGENT_NAME = "SynergiFund"
@@ -30,6 +31,8 @@ const STATUS_LABELS = {
   find_documents: "Finding documents",
   read_document: "Reading the document",
   rename_document: "Preparing the rename",
+  propose_loan_change: "Preparing the loan update",
+  check_records: "Checking the records",
   zip_documents: "Zipping documents",
   propose_property_change: "Preparing the change",
   web_search: "Searching the web",
@@ -194,36 +197,6 @@ export function parseEmailDraft(text) {
   while (index < lines.length && !lines[index].trim()) index += 1
   draft.body = lines.slice(index).join("\n").trim()
   return draft
-}
-
-function useCopy() {
-  const [copied, setCopied] = useState(false)
-  const timer = useRef(null)
-  useEffect(() => () => clearTimeout(timer.current), [])
-  async function copy(text) {
-    let ok = true
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch {
-      const area = document.createElement("textarea")
-      area.value = text
-      area.style.position = "fixed"
-      area.style.opacity = "0"
-      document.body.appendChild(area)
-      area.select()
-      try {
-        ok = document.execCommand("copy")
-      } catch {
-        ok = false
-      }
-      area.remove()
-    }
-    setCopied(ok ? "yes" : "no")
-    clearTimeout(timer.current)
-    timer.current = setTimeout(() => setCopied(false), 1600)
-    return ok
-  }
-  return [copied, copy]
 }
 
 // Grows with its text, so the whole draft is readable without a second scrollbar.
@@ -770,7 +743,7 @@ function proposalsOf(rows) {
   const found = new Map()
   for (const row of rows) {
     const step = row.toolResult
-    if (step?.UsedTool === "propose_property_change" && step.result?.proposal?.id) found.set(step.result.proposal.id, step.result.proposal)
+    if (["propose_property_change", "propose_loan_change"].includes(step?.UsedTool) && step.result?.proposal?.id) found.set(step.result.proposal.id, step.result.proposal)
   }
   return [...found.values()]
 }
@@ -805,20 +778,24 @@ function ChangeCard({ proposal }) {
       setPending("")
     }
   }
+  // A loan update says which loan and where its figures come from; a rate reads as a percent.
+  const loan = proposal.kind === "loan"
+  const figure = (change, value) => (change.percent ? (value == null ? "—" : `${value}%`) : exactly(value))
   return (
-    <section className="agent-arv agent-change" aria-label="Change to confirm" data-proposal={proposal.id}>
+    <section className="agent-arv agent-change" aria-label={loan ? "Loan update to confirm" : "Change to confirm"} data-proposal={proposal.id}>
       <header className="agent-arv-head">
-        <span><Icon name="check" size={15} /> {status === "saved" ? "Change saved" : status === "pending" ? "Change to confirm" : "Change not saved"}</span>
-        <small><Link href={`/properties/${proposal.propertyId}`}>{proposal.address}</Link></small>
+        <span><Icon name="check" size={15} /> {loan ? (status === "saved" ? "Loan updated" : status === "pending" ? "Loan update to confirm" : "Loan not updated") : status === "saved" ? "Change saved" : status === "pending" ? "Change to confirm" : "Change not saved"}</span>
+        <small>{loan && <>{proposal.lender} · </>}<Link href={`/properties/${proposal.propertyId}${loan ? "?tab=financing" : ""}`}>{proposal.address}</Link></small>
       </header>
       <ul className="agent-change-list">
         {proposal.changes.map((change) => (
           <li key={change.field}>
             <span>{change.label}</span>
-            <span className="agent-change-figures"><s>{exactly(change.from)}</s><i aria-hidden="true">→</i><b>{exactly(change.to)}</b></span>
+            <span className="agent-change-figures"><s>{figure(change, change.from)}</s><i aria-hidden="true">→</i><b>{figure(change, change.to)}</b></span>
           </li>
         ))}
       </ul>
+      {proposal.source && <p className="agent-change-source">From <Link href={`/documents/${proposal.source.id}`}>{proposal.source.name}</Link></p>}
       {error && <p className="agent-arv-warn">{error}</p>}
       {status !== "pending" && !error && <p className={status === "saved" ? "agent-change-note is-saved" : "agent-change-note"}>{CHANGE_STATES[status]}</p>}
       {status === "pending" && !canSave && <p className="agent-change-note">You don't have access to change properties, so this can't be confirmed.</p>}
@@ -971,13 +948,19 @@ function UserPrompt({ row, onEdit }) {
 
 // Under an answer, on hover (always on the last one, and on touch screens): Copy, Retry, thumbs, and Star to save
 // the question as a prompt.
-function ReplyActions({ row, onRetry, onRate, onStar, starred }) {
+// Under an answer: Copy, Download as PDF (a memo of the question and answer), Retry, thumbs, and Star.
+function ReplyActions({ row, memo, onRetry, onRate, onStar, starred }) {
   const [copied, copy] = useCopy()
   return (
     <div className="agent-actions">
       <button type="button" className="agent-action" onClick={() => copy(row.content)} aria-label={copied === "yes" ? "Copied" : "Copy"} title={copied === "yes" ? "Copied" : "Copy"}>
         <Icon name={copied === "yes" ? "tick" : "copy"} size={15} />
       </button>
+      {memo && (
+        <a className="agent-action" href={memo.href} data-name={memo.name} download rel="noopener" aria-label="Download as PDF" title="Download as PDF">
+          <Icon name="download" size={15} />
+        </a>
+      )}
       {onRetry && (
         <button type="button" className="agent-action" onClick={onRetry} aria-label="Retry" title="Retry">
           <Icon name="retry" size={15} />
@@ -1028,7 +1011,8 @@ function Thinking() {
 // The conversation. `empty` is the new-chat screen. The rest act on a turn: onRetry(question), onEdit(question, text),
 // onRate(answer, "up" | "down"), onStar(question text); `starred(text)` says whether a question is already a prompt.
 // They only show on messages the server has saved (and not while an answer is coming).
-export function AgentMessages({ rows, streaming, empty = null, onRetry, onEdit, onRate, onStar, starred = () => false }) {
+// `threadId` and `title`: the open chat, for Download as PDF.
+export function AgentMessages({ rows, streaming, empty = null, threadId = "", title = "", onRetry, onEdit, onRate, onStar, starred = () => false }) {
   const endRef = useRef(null)
 
   useEffect(() => {
@@ -1069,6 +1053,7 @@ export function AgentMessages({ rows, streaming, empty = null, onRetry, onEdit, 
               {!live && finalRow && (
                 <ReplyActions
                   row={finalRow}
+                  memo={threadId && savedMessage(finalRow.id) && !finalRow.error ? { href: `/api/agent/threads/${threadId}/messages/${finalRow.id}/memo`, name: `${(title || "Agent answer").replace(/[\\/:*?"<>|]+/g, " ").trim()} - Agent memo.pdf` } : null}
                   onRetry={acts && onRetry ? () => onRetry(question) : null}
                   onRate={acts && onRate && savedMessage(finalRow.id) && !finalRow.error ? (value) => onRate(finalRow, value) : null}
                   onStar={acts && onStar && question.content ? () => onStar(question.content) : null}

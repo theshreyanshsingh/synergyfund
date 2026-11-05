@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react"
 import Link from "next/link"
-import { POLICY_BILLING, POLICY_STATUSES, POLICY_TYPES, TAX_YEAR_MAX, TAX_YEAR_MIN, UTILITY_CHOICES, insurancePolicies, policyActive, policyName, policyPaymentAmount, policyTitle, propertyUtilities, taxRows, taxYears, teamYear } from "@synergifund/shared"
+import { POLICY_BILLING, POLICY_STATUSES, POLICY_TYPES, TAX_YEAR_MAX, TAX_YEAR_MIN, UTILITY_CHOICES, insurancePolicies, policyActive, policyName, policyPaymentAmount, policyTitle, propertyUtilities, taxYears, teamYear } from "@synergifund/shared"
 import { FormSheet } from "../ui/FormSheet"
 import { StatusPill } from "../ui/StatusPill"
 import { api } from "../../lib/api"
@@ -99,7 +99,8 @@ export function PropertyInfoSection({ property, company = null, writable, canPay
   const [error, setError] = useState("")
   const policies = insurancePolicies(property)
   const utilities = propertyUtilities(property.utilities)
-  const taxes = taxRows(property)
+  // Only the years entered (usually one): a year's bill that doesn't exist yet isn't shown as an empty row.
+  const taxes = taxYears(property)
 
   async function save(body) {
     await api(`/properties/${property.id}`, { method: "PATCH", body })
@@ -167,19 +168,23 @@ export function PropertyInfoSection({ property, company = null, writable, canPay
         <dl className="info-facts">
           <div className="info-wide"><dt>Tax parcel/account #</dt><dd>{shown(property.taxParcel, "Optional")}</dd></div>
         </dl>
-        <table className="info-taxes">
-          <thead><tr><th scope="col">Year</th><th scope="col">Property taxes</th><th scope="col">Tax assessment</th></tr></thead>
-          <tbody>
-            {taxes.map((row) => (
-              <tr key={row.year} data-year={row.year}>
-                <th scope="row">{row.year}{row.paidOn && <small>Paid {dayLabel(row.paidOn)}</small>}</th>
-                <td>{shown(row.propertyTaxes == null ? "" : dollars(row.propertyTaxes))}</td>
-                <td>{shown(row.taxAssessment == null ? "" : dollars(row.taxAssessment))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p className="info-hint">{canPay ? "One row per year, newest first. Mark paid puts a year's property taxes on the cost sheet." : "One row per year, newest first."}</p>
+        {taxes.length ? (
+          <table className="info-taxes">
+            <thead><tr><th scope="col">Year</th><th scope="col">Property taxes</th><th scope="col">Tax assessment</th></tr></thead>
+            <tbody>
+              {taxes.map((row) => (
+                <tr key={row.year} data-year={row.year}>
+                  <th scope="row">{row.year}{row.paidOn && <small>Paid {dayLabel(row.paidOn)}</small>}</th>
+                  <td>{shown(row.propertyTaxes == null ? "" : dollars(row.propertyTaxes))}</td>
+                  <td>{shown(row.taxAssessment == null ? "" : dollars(row.taxAssessment))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="info-none">No tax year entered yet.{writable ? " Edit adds the year and its property taxes." : ""}</p>
+        )}
+        <p className="info-hint">{canPay ? "One row per year you enter, newest first. Mark paid puts a year's property taxes on the cost sheet." : "One row per year entered, newest first."}</p>
       </section>
 
       <section className="panel property-card info-card info-insurance">
@@ -402,20 +407,25 @@ function typedYear(value) {
 // Newest year first; a row whose year isn't typed yet stays at the bottom.
 const byYear = (a, b) => (typedYear(b.year) ?? -1) - (typedYear(a.year) ?? -1)
 
-// The parcel/account # (the property's) and one row per year: Year, Property Taxes and Tax Assessment. This year and
-// the two before it are always there; Add Year adds the year before the oldest. Rows sort by year when a year is typed.
+// The parcel/account # (the property's) and one row per year: Year, Property Taxes and Tax Assessment. The years
+// entered, or one row to fill in (its year typed, since this year's bill may not exist yet); Add Year adds the year
+// before the oldest. Rows sort by year when a year is typed, and a removed row stays removed.
 function TaxForm({ property, onClose, onSave }) {
   const keys = useRef(0)
   const row = (year, propertyTaxes = null, taxAssessment = null, added = false) => ({
     key: (keys.current += 1), year: String(year), propertyTaxes: propertyTaxes == null ? "" : String(propertyTaxes), taxAssessment: taxAssessment == null ? "" : String(taxAssessment), added,
   })
   const [parcel, setParcel] = useState(property.taxParcel || "")
-  const [rows, setRows] = useState(() => taxRows(property).map((item) => row(item.year, item.propertyTaxes, item.taxAssessment)))
+  const [rows, setRows] = useState(() => {
+    const saved = taxYears(property).map((item) => row(item.year, item.propertyTaxes, item.taxAssessment))
+    return saved.length ? saved : [row("", null, null, true)]
+  })
   const { error, setError, pending, run } = useSave(onSave)
   const change = (key, field) => (event) => setRows((list) => list.map((item) => (item.key === key ? { ...item, [field]: event.target.value } : item)))
   function addYear() {
     const years = rows.map((item) => typedYear(item.year)).filter((year) => year != null)
-    const year = years.length ? Math.min(...years) - 1 : teamYear()
+    // With no year yet, last year's (this year's taxes are usually not billed yet).
+    const year = years.length ? Math.min(...years) - 1 : teamYear() - 1
     setRows((list) => [...list, row(year >= TAX_YEAR_MIN ? year : "", null, null, true)])
   }
   function submit(event) {
@@ -449,7 +459,7 @@ function TaxForm({ property, onClose, onSave }) {
             <div className="tax-year-head" aria-hidden="true"><span>Year</span><span>Property Taxes ($)</span><span>Tax Assessment ($)</span><span /></div>
             {rows.map((item) => (
               <div className="tax-year-row" key={item.key} data-tax-row="">
-                <label className="field tax-year"><span>Year</span><input name="year" inputMode="numeric" maxLength={4} value={item.year} onChange={change(item.key, "year")} onBlur={() => setRows((list) => [...list].sort(byYear))} placeholder="2026" autoFocus={item.added} /></label>
+                <label className="field tax-year"><span>Year</span><input name="year" inputMode="numeric" maxLength={4} value={item.year} onChange={change(item.key, "year")} onBlur={() => setRows((list) => [...list].sort(byYear))} placeholder={String(teamYear() - 1)} autoFocus={item.added} /></label>
                 <label className="field"><span className="keep-case">Property Taxes ($)</span><input name="propertyTaxes" inputMode="decimal" value={item.propertyTaxes} onChange={change(item.key, "propertyTaxes")} placeholder="$0" /></label>
                 <label className="field"><span className="keep-case">Tax Assessment ($)</span><input name="taxAssessment" inputMode="decimal" value={item.taxAssessment} onChange={change(item.key, "taxAssessment")} placeholder="$0" /></label>
                 <button type="button" className="tool danger tax-year-remove" onClick={() => setRows((list) => list.filter((entry) => entry.key !== item.key))} aria-label={`Remove ${item.year.trim() || "this row"}`}>Remove</button>

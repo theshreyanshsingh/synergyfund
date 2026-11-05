@@ -1,3 +1,5 @@
+import { AGENT_DEFAULTS } from "@synergifund/shared"
+import { AgentSetting } from "../../models/index.js"
 import { appOrigin } from "../appUrl.js"
 
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
@@ -6,6 +8,15 @@ const TIMEOUT_MS = 120000
 
 export function modelKey() {
   return String(process.env.OPENROUTER_API_KEY || process.env.MODEL_API_KEY || "").trim()
+}
+
+// The models the team chose in Settings → Agent.
+export async function agentSettings() {
+  const stored = await AgentSetting.findOne({ key: "org" })
+  return {
+    taskModel: stored?.taskModel || AGENT_DEFAULTS.taskModel,
+    decisionModel: stored?.decisionModel || AGENT_DEFAULTS.decisionModel,
+  }
 }
 
 export function createUsageTracker() {

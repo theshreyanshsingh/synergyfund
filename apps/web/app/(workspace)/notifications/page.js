@@ -23,6 +23,7 @@ const KIND_ICONS = [
   [/^(loan|lender)\./, "bank"],
   [/^property\./, "building"],
   [/^(member|teammate)\./, "users"],
+  [/^agent\./, "spark"],
 ]
 
 function kindIcon(event) {

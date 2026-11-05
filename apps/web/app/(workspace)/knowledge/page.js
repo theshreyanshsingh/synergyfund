@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { Suspense, useEffect, useRef, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { AgentComposer } from "../../../components/agent/AgentComposer"
 import { AgentMessages } from "../../../components/agent/AgentMessages"
 import { AgentWelcome } from "../../../components/agent/AgentWelcome"
@@ -14,10 +15,24 @@ const PANEL_KEY = "synergifund-agent-panel"
 const NARROW = "(max-width: 900px)"
 const RECENTS = 10
 
-// The Agent: a panel of chats and prompts on the left (it folds away; on narrow screens it opens over the chat), and
-// the chat in one centered column. A new chat is a big greeting with the box under it.
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+const REPEATS = [["", "Never"], ["day", "Every day"], ["weekday", "Weekdays"], ["week", "Every week"], ["month", "Every month"]]
+
 export default function AgentPage() {
-  const chat = useAgentChat()
+  return (
+    <Suspense fallback={<PageSpinner />}>
+      <Agent />
+    </Suspense>
+  )
+}
+
+// The Agent: a panel of chats and prompts on the left (it folds away; on narrow screens it opens over the chat), and
+// the chat in one centered column. A new chat is a big greeting with the box under it. ?chat= (a notification's link)
+// opens that chat.
+function Agent() {
+  const router = useRouter()
+  const linked = useSearchParams().get("chat") || ""
+  const chat = useAgentChat({ openId: linked })
   const [view, setView] = useState("chat")
   const [query, setQuery] = useState("")
   const [panel, setPanel] = useState(true)
@@ -30,6 +45,14 @@ export default function AgentPage() {
       if (localStorage.getItem(PANEL_KEY) === "closed") setPanel(false)
     } catch {}
   }, [])
+
+  // The linked chat is open (or opening): the address goes back to plain /knowledge, so a reload keeps what's open.
+  useEffect(() => {
+    if (!linked) return
+    setView("chat")
+    setDrawer(false)
+    router.replace("/knowledge", { scroll: false })
+  }, [linked, router])
 
   function togglePanel() {
     if (window.matchMedia(NARROW).matches) {
@@ -126,6 +149,8 @@ export default function AgentPage() {
                   <AgentMessages
                     rows={chat.rows}
                     streaming={chat.streaming}
+                    threadId={chat.threadId}
+                    title={chat.chatTitle}
                     empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} />}
                     onRetry={chat.retry}
                     onEdit={chat.edit}
@@ -142,7 +167,7 @@ export default function AgentPage() {
           </div>
         )}
         {view === "chats" && <ChatsView chat={chat} query={query} onQuery={setQuery} onOpen={open} />}
-        {view === "prompts" && <PromptsView chat={chat} onUse={use} />}
+        {view === "prompts" && <PromptsView chat={chat} onUse={use} onOpen={open} />}
       </section>
     </div>
   )
@@ -280,20 +305,58 @@ function ChatsView({ chat, query, onQuery, onOpen }) {
   )
 }
 
+function hourLabel(hour) {
+  return `${hour % 12 || 12} ${hour < 12 ? "AM" : "PM"}`
+}
+
+function ordinal(day) {
+  const tens = day % 100
+  const suffix = tens >= 11 && tens <= 13 ? "th" : ["th", "st", "nd", "rd"][day % 10] || "th"
+  return `${day}${suffix}`
+}
+
+// "Every Monday at 8 AM Eastern Time".
+function repeatLabel(repeat, zone) {
+  const at = `at ${hourLabel(repeat.hour)}${zone ? ` ${zone}` : ""}`
+  if (repeat.every === "week") return `Every ${WEEKDAYS[repeat.day]} ${at}`
+  if (repeat.every === "month") return `Every month on the ${ordinal(repeat.day)} ${at}`
+  if (repeat.every === "weekday") return `Weekdays ${at}`
+  return `Every day ${at}`
+}
+
+// The brief first, then the prompts that repeat, then the rest (newest first within each).
+function promptOrder(prompts) {
+  const rank = (prompt) => (prompt.brief ? 0 : prompt.repeat ? 1 : 2)
+  return [...prompts].sort((left, right) => rank(left) - rank(right))
+}
+
 // Saved prompts: New, and for each Use (into the box), Edit, Delete. The star under an answer saves its question here.
-function PromptsView({ chat, onUse }) {
+// A prompt can repeat: the Agent asks it on its own and leaves the answer in a new chat (the weekly brief is one).
+function PromptsView({ chat, onUse, onOpen }) {
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState("")
   const [error, setError] = useState("")
-  const save = async (id, text) => {
+  const [turningOn, setTurningOn] = useState(false)
+  const save = async (id, text, repeat) => {
     setError("")
     try {
-      if (id) await chat.updatePrompt(id, text)
-      else await chat.savePrompt(text)
+      if (id) await chat.updatePrompt(id, { text, repeat })
+      else await chat.savePrompt(text, repeat?.every ? repeat : undefined)
       setAdding(false)
       setEditing("")
     } catch (err) {
       setError(err.message)
+    }
+  }
+  const turnOnBrief = async () => {
+    setError("")
+    setTurningOn(true)
+    try {
+      await chat.turnOnBrief()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setTurningOn(false)
     }
   }
   const remove = async (prompt) => {
@@ -309,22 +372,43 @@ function PromptsView({ chat, onUse }) {
     <div className="agent-page-list">
       <div className="agent-column">
         <div className="agent-prompts-head">
-          <p>Questions you ask often, ready to use in any chat.</p>
+          <p>Questions you ask often, ready to use in any chat. The Agent can also ask one on its own, and leave the answer in a new chat.</p>
           <button type="button" className="primary" onClick={() => { setAdding(true); setEditing("") }} disabled={adding}><Icon name="plus" size={14} /> New</button>
         </div>
         {error && <p className="banner">{error}</p>}
-        {adding && <PromptEditor onCancel={() => setAdding(false)} onSave={(text) => save("", text)} />}
+        {chat.briefOffered && (
+          <div className="agent-brief-offer">
+            <span className="agent-brief-icon"><Icon name="spark" size={18} /></span>
+            <div>
+              <strong>Weekly brief</strong>
+              <p>Every Monday at 8 AM the Agent looks over what's due in the next two weeks, draws waiting for funding, loans maturing soon, your tasks and records that look wrong, and leaves the brief in a new chat. You get a notification.</p>
+            </div>
+            <button type="button" className="primary" onClick={turnOnBrief} disabled={turningOn}>{turningOn ? "Turning on…" : "Turn on"}</button>
+          </div>
+        )}
+        {adding && <PromptEditor zone={chat.promptZone} onCancel={() => setAdding(false)} onSave={(text, repeat) => save("", text, repeat)} />}
         {!chat.promptsLoaded ? <p className="agent-panel-none">Loading…</p> : !chat.prompts.length && !adding ? (
           <p className="agent-panel-none">No saved prompts yet. Press New, or the star under an answer to save the question you asked.</p>
         ) : (
           <ul className="agent-prompt-list">
-            {chat.prompts.map((prompt) => (
+            {promptOrder(chat.prompts).map((prompt) => (
               <li key={prompt.id} className="agent-prompt-item">
                 {editing === prompt.id ? (
-                  <PromptEditor text={prompt.text} onCancel={() => setEditing("")} onSave={(text) => save(prompt.id, text)} />
+                  <PromptEditor text={prompt.text} repeat={prompt.repeat} zone={chat.promptZone} onCancel={() => setEditing("")} onSave={(text, repeat) => save(prompt.id, text, repeat)} />
                 ) : (
                   <>
+                    {prompt.brief && <strong className="agent-prompt-name">{prompt.name}</strong>}
                     <p>{prompt.text}</p>
+                    {prompt.repeat && (
+                      <div className="agent-prompt-repeat">
+                        <Icon name="calendar" size={14} />
+                        <span>{repeatLabel(prompt.repeat, chat.promptZone)}</span>
+                        {prompt.lastRun?.chatId && (
+                          <button type="button" className="agent-prompt-last" onClick={() => onOpen(prompt.lastRun.chatId)}>Last answer {chatWhen(prompt.lastRun.at)}</button>
+                        )}
+                      </div>
+                    )}
+                    {prompt.repeat && prompt.lastRun?.error && <p className="agent-prompt-problem">{prompt.lastRun.error}</p>}
                     <div className="agent-prompt-actions">
                       <button type="button" className="import-button" onClick={() => onUse(prompt.text)}>Use</button>
                       <button type="button" className="tool" onClick={() => { setEditing(prompt.id); setAdding(false) }}>Edit</button>
@@ -341,11 +425,57 @@ function PromptsView({ chat, onUse }) {
   )
 }
 
-function PromptEditor({ text = "", onCancel, onSave }) {
+// The prompt's words, and Repeat: never, every day, weekdays, a day of the week or a date of the month, at an hour on
+// the team's clock (`zone`).
+function PromptEditor({ text = "", repeat = null, zone = "", onCancel, onSave }) {
   const [value, setValue] = useState(text)
+  const [every, setEvery] = useState(repeat?.every || "")
+  const [weekday, setWeekday] = useState(repeat?.every === "week" ? repeat.day : 1)
+  const [date, setDate] = useState(repeat?.every === "month" ? repeat.day : 1)
+  const [hour, setHour] = useState(repeat?.hour ?? 8)
+  const chosen = () => {
+    if (!every) return { every: "" }
+    if (every === "week") return { every, day: weekday, hour }
+    if (every === "month") return { every, day: date, hour }
+    return { every, hour }
+  }
   return (
-    <form className="agent-prompt-editor" onSubmit={(event) => { event.preventDefault(); if (value.trim()) onSave(value.trim()) }}>
+    <form className="agent-prompt-editor" onSubmit={(event) => { event.preventDefault(); if (value.trim()) onSave(value.trim(), chosen()) }}>
       <textarea value={value} onChange={(event) => setValue(event.target.value)} rows={3} maxLength={10000} placeholder="Write the prompt, e.g. Which loans mature in the next 90 days?" aria-label="Prompt" autoFocus />
+      <div className="agent-prompt-when">
+        <label>
+          <span>Repeat</span>
+          <select value={every} onChange={(event) => setEvery(event.target.value)}>
+            {REPEATS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select>
+        </label>
+        {every === "week" && (
+          <label>
+            <span>On</span>
+            <select value={weekday} onChange={(event) => setWeekday(Number(event.target.value))}>
+              {WEEKDAYS.map((name, index) => <option key={name} value={index}>{name}</option>)}
+            </select>
+          </label>
+        )}
+        {every === "month" && (
+          <label>
+            <span>On the</span>
+            <select value={date} onChange={(event) => setDate(Number(event.target.value))}>
+              {Array.from({ length: 28 }, (_, index) => <option key={index} value={index + 1}>{ordinal(index + 1)}</option>)}
+            </select>
+          </label>
+        )}
+        {every && (
+          <label>
+            <span>At</span>
+            <select value={hour} onChange={(event) => setHour(Number(event.target.value))}>
+              {Array.from({ length: 24 }, (_, index) => <option key={index} value={index}>{hourLabel(index)}</option>)}
+            </select>
+            {zone && <small>{zone}</small>}
+          </label>
+        )}
+      </div>
+      {every && <p className="agent-prompt-hint">The Agent asks it on its own and leaves the answer in a new chat. You get a notification when it's ready.</p>}
       <div className="agent-prompt-actions">
         <button type="button" className="tool" onClick={onCancel}>Cancel</button>
         <button type="submit" className="primary" disabled={!value.trim()}>Save</button>

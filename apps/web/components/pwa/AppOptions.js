@@ -18,7 +18,8 @@ export function AppOptions() {
   const [pending, setPending] = useState(false)
   const [guide, setGuide] = useState(false)
   const [notice, setNotice] = useState({ title: "", body: "", href: "/notifications" })
-  const installed = pwa.installed
+  // In the SynergiFund phone app it is installed (its web view never reports a home screen launch).
+  const installed = pwa.installed || inNativeApp()
   const iosHint = pwa.platform === "ios" && !pwa.standalone
 
   async function install() {

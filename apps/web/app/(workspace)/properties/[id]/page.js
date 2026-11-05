@@ -3,7 +3,7 @@
 import { use, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { LINE_STATUSES, PROPERTY_FOLDERS, PROPERTY_LABELS, STAGES, STRATEGIES, can, cityLine, isPaidOff, rehabLeft, splitCity } from "@synergifund/shared"
+import { LINE_STATUSES, PROPERTY_FOLDERS, PROPERTY_LABELS, STAGES, STRATEGIES, can, cityLine, fullAddress, isPaidOff, rehabLeft, splitCity } from "@synergifund/shared"
 import { FormSheet } from "../../../../components/ui/FormSheet"
 import { DrawEditor } from "../../../../components/draws/DrawEditor"
 import { FinancingSection } from "../../../../components/properties/FinancingSection"
@@ -117,7 +117,7 @@ export default function PropertyDetailPage({ params }) {
 
   if (!internal) {
     return (
-      <DetailFrame backHref="/properties" backLabel="Properties" title={property.address} meta={cityLine(property)} status={<StatusPill>{property.stage}</StatusPill>}>
+      <DetailFrame backHref="/properties" backLabel="Properties" title={property.address} meta={cityLine(property)} status={<StatusPill>{property.stage}</StatusPill>} copyText={fullAddress(property)} copyLabel="Copy address">
         {property.accessInfo && (
           <section className="panel property-card">
             <h2>Access</h2>
@@ -206,6 +206,9 @@ export default function PropertyDetailPage({ params }) {
       backHref="/properties"
       backLabel="Properties"
       title={property.address}
+      // The whole address, to paste into a text, an email or a map.
+      copyText={fullAddress(property)}
+      copyLabel="Copy address"
       // The stage is in the line under the name (not again as a pill by the buttons).
       meta={[cityLine(property), property.stage, property.strategy].filter(Boolean).join(" · ")}
       actions={[
@@ -477,7 +480,7 @@ export default function PropertyDetailPage({ params }) {
           <div className="property-card-head">
             <div>
               <h2>Line items</h2>
-              <p className="property-missing">The scope of work. Open a line to see its budget, what has been released and the costs filed against it.</p>
+              <p className="property-missing">The scope of work: each line's budget, what has been drawn and what is left. Open a line to see the costs filed against it.</p>
             </div>
             <div className="row-actions">
               <a className="tool" href={`/api/draws/export?propertyId=${id}`}>Export Excel</a>
@@ -791,8 +794,8 @@ function ScopeOfWork({ scopeLines, draws, costs, requests, showBudget, showMoney
     <div className="scope-work">
       <div className="scope-work-summary">
         <span><small>Line items</small><b>{rows.filter((item) => !item.other).length}</b></span>
-        {showMoney && <span><small>Released</small><b>{money(released)}</b></span>}
-        {showMoney && requested > 0 && <span className="is-pending"><small>Requested</small><b>{money(requested)}</b></span>}
+        {showMoney && <span><small>Drawn</small><b>{money(released)}</b></span>}
+        {showMoney && requested > 0 && <span className="is-pending"><small>Pending</small><b>{money(requested)}</b></span>}
       </div>
       {!rows.length && <p className="property-missing">No line items on this house yet.</p>}
       {rows.map((item) => (
@@ -908,6 +911,12 @@ function ScopeLine({ item, showBudget, showMoney, canPost, canRequest, canProgre
   const spent = item.costs.reduce((sum, cost) => sum + (Number(cost.amount) || 0), 0)
   const target = item.draws.find(isOpenDraw) || item.draws[item.draws.length - 1] || null
   const left = showBudget && item.budget != null ? Number(item.budget) - item.released - item.requested : null
+  // As on Draws: a line drawn to its budget, with nothing pending, is done ("Fully drawn"); its bar shows drawn and
+  // pending against the budget.
+  const budget = showBudget && item.budget != null ? Number(item.budget) || 0 : null
+  const complete = !item.other && budget != null && item.released > 0 && item.requested <= 0.5 && left != null && left <= 0.5
+  const scale = Math.max(budget || 0, item.released + item.requested)
+  const expected = item.forecastDate && item.status !== "Complete" && !complete ? `Expected ${shortDay(item.forecastDate)}` : ""
 
   async function submit(event) {
     event.preventDefault()
@@ -937,28 +946,41 @@ function ScopeLine({ item, showBudget, showMoney, canPost, canRequest, canProgre
   }
 
   return (
-    <article className={`scope-line${open ? " is-open" : ""}${item.other ? " is-other" : ""}`}>
-      <button type="button" className={showMoney ? "scope-line-head" : "scope-line-head no-money"} aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-        <span className="scope-line-name">
-          <span className="scope-line-title"><b>{item.title}</b>{!item.other && <LineStatus status={item.status} />}</span>
-          <small>{[item.forecastDate && item.status !== "Complete" ? `Expected ${shortDay(item.forecastDate)}` : "", item.description].filter(Boolean).join(" · ") || "Tap to see costs"}</small>
-        </span>
-        {showMoney && (
-          <span className="scope-line-money">
-            <b>{money(item.released)}</b>
-            <small>{item.requested > 0 ? `${money(item.requested)} requested` : "released"}</small>
+    <article className={`scope-line${open ? " is-open" : ""}${item.other ? " is-other" : ""}${showMoney ? " has-money" : ""}${complete ? " is-complete" : ""}`}>
+      {showMoney ? (
+        // The office: the line as the Draws page shows it, budget, drawn and what is left, with its bar. A tap shows
+        // its costs.
+        <button type="button" className="scope-line-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+          <span className="scope-line-name">
+            <span className="scope-line-title"><b>{item.title}</b>{complete ? <span className="line-done">Fully drawn</span> : !item.other && <LineStatus status={item.status} />}</span>
+            <small>{[budget != null ? `Budget ${money(budget)}` : item.other ? "" : "No budget", `Drawn ${money(item.released)}`, item.requested > 0 ? `Pending ${money(item.requested)}` : "", expected].filter(Boolean).join(" · ")}</small>
           </span>
-        )}
-        <i aria-hidden="true">⌄</i>
-      </button>
+          <span className={left != null && left < -0.5 ? "scope-line-left is-over" : "scope-line-left"}><small>Remaining</small>{left == null ? "—" : money(left)}</span>
+        </button>
+      ) : (
+        <button type="button" className="scope-line-head no-money" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+          <span className="scope-line-name">
+            <span className="scope-line-title"><b>{item.title}</b>{!item.other && <LineStatus status={item.status} />}</span>
+            <small>{[expected, item.description].filter(Boolean).join(" · ") || "Tap to see costs"}</small>
+          </span>
+          <i aria-hidden="true">⌄</i>
+        </button>
+      )}
+      {showMoney && budget != null && (
+        <span className="draw-progress-bar scope-line-bar" aria-hidden="true">
+          <i style={{ width: `${scale ? (item.released / scale) * 100 : 0}%` }} />
+          <i className="is-pending" style={{ width: `${scale ? (item.requested / scale) * 100 : 0}%` }} />
+        </span>
+      )}
       {open && (
         <div className="scope-line-body">
+          {showMoney && item.description && <p className="scope-line-description">{item.description}</p>}
           {!item.other && item.id && (item.statusBy || canProgress) && <LineProgress item={item} canProgress={canProgress} propertyId={propertyId} onSaved={onSaved} />}
           <dl className="scope-line-facts">
             {showBudget && item.budget != null && <div><dt>Budget</dt><dd>{money(item.budget)}</dd></div>}
-            {showMoney && <div><dt>Released</dt><dd>{money(item.released)}</dd></div>}
-            {showMoney && <div><dt>Requested</dt><dd>{money(item.requested)}</dd></div>}
-            {left != null && <div><dt>Left</dt><dd className={left < -0.5 ? "is-over" : undefined}>{money(left)}</dd></div>}
+            {showMoney && <div><dt>Drawn</dt><dd>{money(item.released)}</dd></div>}
+            {showMoney && <div><dt>Pending</dt><dd>{money(item.requested)}</dd></div>}
+            {left != null && <div><dt>Remaining</dt><dd className={left < -0.5 ? "is-over" : undefined}>{money(left)}</dd></div>}
             <div><dt>Costs filed</dt><dd>{money(spent)}</dd></div>
           </dl>
           {item.costs.length > 0 && (

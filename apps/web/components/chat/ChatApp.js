@@ -670,6 +670,10 @@ function ChatNav({ mode, error, onDismissError, channels, people, peopleList, me
     )
   }
 
+  const waiting = (channel) => channel.unread > 0 || channel.mentions > 0
+  const directWaiting = channels.some((channel) => channel.kind === "direct" && waiting(channel))
+  const roomsWaiting = channels.some((channel) => channel.kind !== "direct" && waiting(channel))
+
   return (
     <aside className="chat-nav">
       <div className="chat-nav-top">
@@ -679,6 +683,16 @@ function ChatNav({ mode, error, onDismissError, channels, people, peopleList, me
           {status === "live" ? "Live" : status === "connecting" ? "Connecting" : "Offline"}
         </span>
       </div>
+      {/* Phones and tablets: Direct and Channels one tap apart (the dock's Messages opens Direct), each with a dot when
+          something there is unread. */}
+      <nav className="chat-switch" aria-label="Conversations">
+        <Link href="/messages" replace className={direct ? "is-on" : ""} aria-current={direct ? "page" : undefined}>
+          Direct{!direct && directWaiting && <><i className="chat-nav-dot" aria-hidden="true" /><span className="sr-only">, unread</span></>}
+        </Link>
+        <Link href="/chat" replace className={direct ? "" : "is-on"} aria-current={direct ? undefined : "page"}>
+          Channels{direct && roomsWaiting && <><i className="chat-nav-dot" aria-hidden="true" /><span className="sr-only">, unread</span></>}
+        </Link>
+      </nav>
       <form className="chat-nav-search" onSubmit={(event) => { event.preventDefault(); onSearch(filter) }}>
         <Icon name="search" size={14} />
         <input value={filter} placeholder="Find or search messages" aria-label="Find conversations or search messages" onChange={(event) => onFilter(event.target.value)} />
@@ -719,7 +733,7 @@ function ChatNav({ mode, error, onDismissError, channels, people, peopleList, me
       {permission === "default" && (
         <button type="button" className="chat-notify-ask" onClick={() => Notification.requestPermission().then(setPermission)}>
           <Icon name="bell" size={14} />
-          Turn on desktop alerts
+          Turn on message alerts
         </button>
       )}
     </aside>

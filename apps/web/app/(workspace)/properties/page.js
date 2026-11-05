@@ -147,6 +147,8 @@ function PropertiesScreen() {
         onRow={(row) => router.push(`/properties/${row.id}`)}
         // Phones: one line per property; a tap shows or folds its details, and Open property opens it.
         collapsible={!contractor}
+        // A contractor's few jobs: one line each, a tap opens it.
+        phoneLine={contractor}
         openLabel="Open property"
         empty={list.error || "No properties yet."}
       />

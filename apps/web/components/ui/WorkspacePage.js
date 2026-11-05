@@ -26,6 +26,7 @@ export function WorkspacePage({
   selectable = true,
   compact = false,
   collapsible = false,
+  phoneLine = false,
   openLabel,
   reorder,
   children,
@@ -223,7 +224,7 @@ export function WorkspacePage({
             </div>
           )}
           {reorder && (shown.length !== rows.length || sort) && rows.length > 1 && <p className="reorder-note">Clear the search{sort ? ", the sort" : ""} and filters to drag properties into a new order.</p>}
-          <DataTable columns={visibleColumns} rows={ordered} selected={selected} onToggle={toggle} onRow={onRow} empty={rows.length > 0 ? "Nothing matches your search or filters." : empty} loading={loading} selectable={selectable} compact={compact} collapsible={collapsible} openLabel={openLabel} onMove={reorder && shown.length === rows.length && !sort ? reorder.onMove : null} sort={sort} onSort={sortable.length ? sortBy : null} />
+          <DataTable columns={visibleColumns} rows={ordered} selected={selected} onToggle={toggle} onRow={onRow} empty={rows.length > 0 ? "Nothing matches your search or filters." : empty} loading={loading} selectable={selectable} compact={compact} collapsible={collapsible} phoneLine={phoneLine} openLabel={openLabel} onMove={reorder && shown.length === rows.length && !sort ? reorder.onMove : null} sort={sort} onSort={sortable.length ? sortBy : null} />
         </section>
       )}
     </div>

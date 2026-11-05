@@ -24,6 +24,7 @@ import { requireAuth } from "./middleware/auth.js"
 import { trackActivity } from "./middleware/activity.js"
 import { seedIfEmpty } from "./services/seed.js"
 import { startDocumentReader } from "./services/agent/documents.js"
+import { startRepeats } from "./services/agent/repeats.js"
 import { rememberAppOrigin } from "./services/appUrl.js"
 import { recoverNotes } from "./services/callNotes.js"
 import { startTeammate } from "./services/siteAgent.js"
@@ -105,6 +106,8 @@ await startTeammate().catch((error) => console.error("AI teammate failed to star
 startBackupSchedule()
 // The Agent reads new documents in the background (and older ones once an admin turns that on in Settings).
 startDocumentReader()
+// Prompts set to repeat (the weekly brief) are asked when their time comes.
+startRepeats()
 const server = http.createServer(app)
 attachChatSockets(server)
 server.listen(port, () => {

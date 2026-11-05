@@ -1,19 +1,22 @@
 import { Router } from "express"
-import { AGENT_DEFAULTS, chatTitleFromPrompt } from "@synergifund/shared"
+import { chatTitleFromPrompt } from "@synergifund/shared"
 import mongoose from "mongoose"
-import { AgentPrompt, AgentProposal, AgentRename, AgentSetting, AgentThread, DocumentFile, Property } from "../models/index.js"
+import { AgentPrompt, AgentProposal, AgentRename, AgentSetting, AgentThread, DocumentFile, Loan, Property } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
+import { teamZoneName } from "../lib/dates.js"
 import { ownsProperty } from "../services/access.js"
-import { modelKey } from "../services/agent/llm.js"
+import { agentSettings, modelKey } from "../services/agent/llm.js"
 import { HIDDEN_KINDS, documentReading, nudgeDocumentReader } from "../services/agent/documents.js"
+import { BRIEF_REPEAT, BRIEF_TEXT, MAX_REPEATING, REPEAT_EVERY, cleanRepeat, repeatName, startingDay } from "../services/agent/repeats.js"
 import { applyRename, freshRenames, presentRename } from "../services/agent/renames.js"
-import { applyProposal, changedSince, freshProposals, presentProposal } from "../services/agent/proposals.js"
+import { applyLoanProposal, applyProposal, changedSince, freshProposals, presentProposal } from "../services/agent/proposals.js"
 import { runAgent } from "../services/agent/run.js"
 import { resumeRun } from "../services/agent/stream.js"
 import { recordActivity } from "../services/notify.js"
 import { escapeRegex } from "../services/chat.js"
-import { upload } from "../services/files.js"
+import { headerNameUtf8, upload } from "../services/files.js"
+import { memoFileName, writeMemo } from "../services/agent/memo.js"
 import { MAX_ATTACHMENTS, attachmentProblem, removeAttachments, saveAttachments, sweepAttachments, threadFileIds } from "../services/agent/attachments.js"
 
 export const agentRouter = Router()
@@ -26,14 +29,6 @@ const MAX_TITLE = 80
 const MAX_PROMPTS = 200
 const FEEDBACK = ["up", "down", ""]
 let catalog = { at: 0, models: null }
-
-export async function agentSettings() {
-  const stored = await AgentSetting.findOne({ key: "org" })
-  return {
-    taskModel: stored?.taskModel || AGENT_DEFAULTS.taskModel,
-    decisionModel: stored?.decisionModel || AGENT_DEFAULTS.decisionModel,
-  }
-}
 
 async function openRouterModels() {
   if (catalog.models && Date.now() - catalog.at < CATALOG_TTL_MS) return catalog.models
@@ -122,7 +117,17 @@ function presentThread(thread) {
 }
 
 function presentPrompt(prompt) {
-  return { id: String(prompt._id), text: prompt.text, updatedAt: prompt.updatedAt }
+  const repeating = REPEAT_EVERY.includes(prompt.repeat?.every)
+  return {
+    id: String(prompt._id),
+    text: prompt.text,
+    updatedAt: prompt.updatedAt,
+    brief: Boolean(prompt.brief),
+    name: repeatName(prompt),
+    repeat: repeating ? { every: prompt.repeat.every, day: prompt.repeat.day ?? null, hour: prompt.repeat.hour } : null,
+    // The last time the Agent asked it on its own, and the chat it left.
+    lastRun: prompt.lastRunAt ? { at: prompt.lastRunAt, chatId: prompt.lastThreadId ? String(prompt.lastThreadId) : "", error: prompt.lastError || "" } : null,
+  }
 }
 
 async function ownThread(req, res, select = "") {
@@ -256,12 +261,13 @@ agentRouter.delete(
 agentRouter.patch(
   "/threads/:id",
   asyncHandler(async (req, res) => {
-    const thread = await ownThread(req, res, "title pinned updatedAt temporary")
+    const thread = await ownThread(req, res, "title named pinned updatedAt temporary")
     if (!thread) return
     if ("title" in req.body) {
       const title = String(req.body.title || "").replace(/\s+/g, " ").trim().slice(0, MAX_TITLE)
       if (!title) return sendError(res, 400, "Give the chat a name.")
       thread.title = title
+      thread.named = true
     }
     if ("pinned" in req.body) thread.pinned = req.body.pinned === true
     // Renaming or pinning does not move the chat up the list.
@@ -286,12 +292,34 @@ agentRouter.patch(
   }),
 )
 
-// Saved prompts: each person's own questions to ask again.
+// An answer as a PDF memo (Download as PDF under it): the chat's name, who asked and when, the question, the answer,
+// and what the Agent looked at (the steps it took, as the chat lists them).
+agentRouter.get(
+  "/threads/:id/messages/:messageId/memo",
+  asyncHandler(async (req, res) => {
+    const thread = await ownThread(req, res)
+    if (!thread) return
+    const at = thread.messages.findIndex((message) => String(message._id) === req.params.messageId)
+    const answer = at === -1 ? null : thread.messages[at]
+    if (!answer || answer.role === "user" || answer.error || !String(answer.content || "").trim()) return sendError(res, 404, "That answer was not found.")
+    const asked = thread.messages.slice(0, at).reverse().find((message) => message.role === "user")
+    const question = asked ? asked.content || `About ${(asked.attachments || []).map((file) => file.name).join(", ")}` : ""
+    const looked = (answer.toolCalls || []).filter((call) => call.tool !== "todo_write" && call.result?.success !== false).map((call) => call.result?.title || "")
+    const name = memoFileName(thread.title)
+    res.setHeader("Content-Type", "application/pdf")
+    res.setHeader("Content-Disposition", `attachment; filename="${name.replace(/[^\x20-\x7e]/g, "_")}"; filename*=UTF-8''${headerNameUtf8(name)}`)
+    res.setHeader("Cache-Control", "private, no-store")
+    writeMemo(res, { title: thread.title || "Agent answer", name: req.user.name, at: answer.at, question, answer: answer.content, looked })
+  }),
+)
+
+// Saved prompts: each person's own questions to ask again, some asked by the Agent on its own (repeats.js). `zone`:
+// the team's clock the hours are on. `briefOffered`: the weekly brief can be turned on (not for contractors).
 agentRouter.get(
   "/prompts",
   asyncHandler(async (req, res) => {
     const prompts = await AgentPrompt.find({ userId: req.user._id }).sort({ updatedAt: -1 }).limit(MAX_PROMPTS)
-    res.json({ items: prompts.map(presentPrompt) })
+    res.json({ items: prompts.map(presentPrompt), zone: teamZoneName(), briefOffered: req.user.role !== "contractor" && !prompts.some((prompt) => prompt.brief) })
   }),
 )
 
@@ -299,18 +327,44 @@ function promptText(value) {
   return String(value || "").replace(/\r\n/g, "\n").trim()
 }
 
+function repeatKey(repeat) {
+  return REPEAT_EVERY.includes(repeat?.every) ? `${repeat.every}:${repeat.day ?? ""}:${repeat.hour}` : ""
+}
+
+// How often a prompt is asked on its own. A message when it can't be set.
+async function setRepeat(prompt, value) {
+  const { repeat, error } = cleanRepeat(value)
+  if (error) return error
+  if (repeatKey(repeat) === repeatKey(prompt.repeat)) return ""
+  if (repeat.every && !repeatKey(prompt.repeat)) {
+    const repeating = await AgentPrompt.countDocuments({ userId: prompt.userId, _id: { $ne: prompt._id }, "repeat.every": { $in: REPEAT_EVERY } })
+    if (repeating >= MAX_REPEATING) return `Up to ${MAX_REPEATING} prompts can repeat. Turn one off first.`
+  }
+  prompt.repeat = repeat
+  if (repeat.every) prompt.lastRunDay = startingDay(repeat) || prompt.lastRunDay
+  return ""
+}
+
 agentRouter.post(
   "/prompts",
   asyncHandler(async (req, res) => {
-    const text = promptText(req.body.text)
+    // { brief: true } turns on the weekly brief: its question, Mondays at 8 AM, both changeable after.
+    const brief = req.body.brief === true
+    if (brief && req.user.role === "contractor") return sendError(res, 403, "The weekly brief is for the team.")
+    const text = brief ? BRIEF_TEXT : promptText(req.body.text)
     if (!text) return sendError(res, 400, "Write the prompt to save.")
     if (text.length > MAX_PROMPT) return sendError(res, 400, "Keep a prompt under 10,000 characters.")
-    // Saving the same words again keeps the one already there.
-    const existing = await AgentPrompt.findOne({ userId: req.user._id, text })
-    if (existing) return res.json({ prompt: presentPrompt(existing) })
-    if ((await AgentPrompt.countDocuments({ userId: req.user._id })) >= MAX_PROMPTS) return sendError(res, 400, `Keep up to ${MAX_PROMPTS} prompts. Delete one you no longer use.`)
-    const prompt = await AgentPrompt.create({ userId: req.user._id, text })
-    res.status(201).json({ prompt: presentPrompt(prompt) })
+    // Saving the same words again keeps the one already there, with the repeat sent if there is one ("Never" from New
+    // doesn't turn off a prompt that already repeats; Edit does that).
+    const repeating = Boolean(req.body.repeat?.every)
+    const existing = await AgentPrompt.findOne(brief ? { userId: req.user._id, brief: true } : { userId: req.user._id, text })
+    if (existing && !repeating) return res.json({ prompt: presentPrompt(existing) })
+    if (!existing && (await AgentPrompt.countDocuments({ userId: req.user._id })) >= MAX_PROMPTS) return sendError(res, 400, `Keep up to ${MAX_PROMPTS} prompts. Delete one you no longer use.`)
+    const prompt = existing || new AgentPrompt({ userId: req.user._id, text, brief })
+    const problem = brief || repeating ? await setRepeat(prompt, brief && !existing ? BRIEF_REPEAT : req.body.repeat) : ""
+    if (problem) return sendError(res, 400, problem)
+    await prompt.save()
+    res.status(existing ? 200 : 201).json({ prompt: presentPrompt(prompt) })
   }),
 )
 
@@ -319,10 +373,16 @@ agentRouter.patch(
   asyncHandler(async (req, res) => {
     const prompt = mongoose.isValidObjectId(req.params.id) ? await AgentPrompt.findOne({ _id: req.params.id, userId: req.user._id }) : null
     if (!prompt) return sendError(res, 404, "That prompt was not found.")
-    const text = promptText(req.body.text)
-    if (!text) return sendError(res, 400, "Write the prompt to save.")
-    if (text.length > MAX_PROMPT) return sendError(res, 400, "Keep a prompt under 10,000 characters.")
-    prompt.text = text
+    if ("text" in req.body) {
+      const text = promptText(req.body.text)
+      if (!text) return sendError(res, 400, "Write the prompt to save.")
+      if (text.length > MAX_PROMPT) return sendError(res, 400, "Keep a prompt under 10,000 characters.")
+      prompt.text = text
+    }
+    if ("repeat" in req.body) {
+      const problem = await setRepeat(prompt, req.body.repeat)
+      if (problem) return sendError(res, 400, problem)
+    }
     await prompt.save()
     res.json({ prompt: presentPrompt(prompt) })
   }),
@@ -441,12 +501,14 @@ agentRouter.post(
   asyncHandler(async (req, res) => {
     const proposal = await openProposal(req, res)
     if (!proposal) return
-    const property = await Property.findById(proposal.propertyId)
-    if (!property || !ownsProperty(req.user, property)) {
-      sendError(res, 404, "That property is not available.")
+    // A loan update applies to its loan (on a property this person can see), a property change to the property.
+    const loan = proposal.kind === "loan" ? await Loan.findById(proposal.loanId) : null
+    const property = await Property.findById(loan ? loan.propertyId : proposal.propertyId)
+    if (!property || !ownsProperty(req.user, property) || (proposal.kind === "loan" && !loan)) {
+      sendError(res, 404, proposal.kind === "loan" ? "That loan is not available." : "That property is not available.")
       return
     }
-    const moved = changedSince(proposal, property)
+    const moved = changedSince(proposal, loan || property)
     if (moved) {
       await AgentProposal.updateOne({ _id: proposal._id, status: "pending" }, { status: "outdated", decidedAt: new Date() })
       sendError(res, 409, moved)
@@ -459,7 +521,8 @@ agentRouter.post(
       return
     }
     try {
-      await applyProposal(taken, property, req.user)
+      if (loan) await applyLoanProposal(taken, loan, req.user)
+      else await applyProposal(taken, property, req.user)
     } catch (error) {
       await AgentProposal.updateOne({ _id: taken._id }, { status: "pending", $unset: { decidedAt: 1 } })
       throw error

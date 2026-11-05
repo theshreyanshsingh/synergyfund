@@ -11,7 +11,7 @@ import { propertyFilter } from "../services/access.js"
 import { readWorkbook } from "../services/drawImport.js"
 import { deleteStoredFile, headerNameUtf8, materializeStoredFile, readStoredFile, receiveDocument, receiveFile, saveUploadedFile, sendStoredFile } from "../services/files.js"
 import { recordActivity } from "../services/notify.js"
-import { nudgeDocumentReader } from "../services/agent/documents.js"
+import { documentSuggestion, filledSlots, nudgeDocumentReader } from "../services/agent/documents.js"
 import { renamedFile } from "../services/agent/renames.js"
 
 // A Word file's links and images come through the preview as written, including "javascript:" links that would run
@@ -76,8 +76,13 @@ async function presentMany(files, user = null) {
   const owners = new Map(properties.map((property) => [String(property._id), property.companyId ? String(property.companyId) : ""]))
   const people = new Map(users.map((user) => [String(user._id), user.name]))
   const companyNames = new Map(companies.map((company) => [String(company._id), company.name]))
+  // The Agent's filing suggestions, for files this person can change (a contractor: their own uploads).
+  const mayChange = (file) => user && (user.role !== "contractor" || String(file.uploadedBy || "") === String(user._id))
+  const held = files.some((file) => file.insightState === "read" && mayChange(file)) ? await filledSlots(propertyIds) : new Set()
   return files.map((file) => {
     const shown = present(file, names, people, companyNames)
+    const suggestion = mayChange(file) ? documentSuggestion(file, held) : null
+    if (suggestion) shown.suggestion = suggestion
     shown.propertyCompanyId = shown.propertyId ? owners.get(shown.propertyId) || "" : ""
     if (user?.role === "contractor") {
       shown.companyId = ""
@@ -259,6 +264,26 @@ documentsRouter.post(
     await recordActivity({ user: req.user, title: "File uploaded", detail: [file.name, choice.property?.address, owner.company?.name, folderName(place, folder), labels.join(", ")].filter(Boolean).join(" · "), propertyId: file.propertyId })
     const [presented] = await presentMany([file], req.user)
     res.status(201).json({ file: presented })
+  }),
+)
+
+// "Not now" on the Agent's filing suggestion: it isn't offered for this file again.
+documentsRouter.post(
+  "/:id/dismiss-suggestion",
+  requirePermission("documents.write"),
+  asyncHandler(async (req, res) => {
+    const file = await visibleFile(req, req.params.id)
+    if (!file || HIDDEN_KINDS.includes(file.kind)) {
+      sendError(res, 404, "That file is not available.")
+      return
+    }
+    // As with changing a file: a contractor only their own uploads (the suggestion is the same for everyone).
+    if (req.user.role === "contractor" && String(file.uploadedBy || "") !== String(req.user._id)) {
+      sendError(res, 403, "Only the person who uploaded this file can change it.")
+      return
+    }
+    await DocumentFile.updateOne({ _id: file._id }, { $set: { suggestionDismissed: true } }, { timestamps: false })
+    res.json({ ok: true })
   }),
 )
 

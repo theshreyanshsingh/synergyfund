@@ -153,6 +153,8 @@ export function AgentSheet({ onClose }) {
               <AgentMessages
                 rows={chat.rows}
                 streaming={chat.streaming}
+                threadId={chat.threadId}
+                title={chat.chatTitle}
                 empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} />}
                 onRetry={chat.retry}
                 onEdit={chat.edit}

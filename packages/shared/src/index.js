@@ -888,9 +888,8 @@ export function yearlyInsurance(property = {}) {
   return cents(yearly.reduce((total, policy) => total + Number(policy.monthlyPayment) * 12, 0))
 }
 
-// Property taxes on Property Info, one row per year: the property taxes and the tax assessment. The parcel/account #
-// is the property's, not a year's. This year and the two before it always show, blank until entered.
-export const TAX_YEARS_SHOWN = 3
+// Property taxes on Property Info, one row per year entered: the property taxes and the tax assessment. The
+// parcel/account # is the property's, not a year's.
 export const TAX_YEAR_MIN = 1900
 export const TAX_YEAR_MAX = 2100
 
@@ -919,15 +918,6 @@ export function taxYears(property = {}) {
 export function earlierTaxYear(property = {}, now = new Date()) {
   const due = /^(\d{4})-\d{2}-\d{2}$/.exec(String(property.taxDueDate || "").slice(0, 10))
   return due ? Number(due[1]) : teamYear(now)
-}
-
-// The rows Property Info shows: the saved years, and this year and the two before it even when they are blank.
-export function taxRows(property = {}, year = teamYear()) {
-  const rows = taxYears(property)
-  for (let back = 0; back < TAX_YEARS_SHOWN; back += 1) {
-    if (!rows.some((row) => row.year === year - back)) rows.push({ year: year - back, propertyTaxes: null, taxAssessment: null, paidOn: "" })
-  }
-  return rows.sort((a, b) => b.year - a.year)
 }
 
 // The latest property taxes entered (the newest year that has them), e.g. for the refinance: { year, amount } or null.

@@ -190,6 +190,28 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
     startDownload(list, [companyName, placeName, oneFolder ? folderLabel(list[0]) : ""].filter(Boolean).join(" - ") || "Documents", { zip: true })
   }
 
+  // The Agent's filing suggestion: its label (Quick Access) and folder in one save, or "Not now".
+  async function fileAsSuggested(file) {
+    const { label, folder } = file.suggestion || {}
+    setError("")
+    try {
+      await api(`/documents/${file.id}`, { method: "PATCH", body: { ...(label ? { labels: [...new Set([...(file.labels || []), label])] } : {}), ...(folder ? { folder } : {}) } })
+      onChanged?.()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function dismissSuggestion(file) {
+    setError("")
+    try {
+      await api(`/documents/${file.id}/dismiss-suggestion`, { method: "POST" })
+      onChanged?.()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   async function moveTo(file, folder) {
     setError("")
     try {
@@ -356,6 +378,7 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
               viewHref={viewHref}
               menuFor={menuFor}
               onUpload={(item) => uploadSlot(item)}
+              onFile={fileAsSuggested}
             />
           )}
           <section className="folders-section">
@@ -422,6 +445,8 @@ export function FolderBrowser({ companyId = "", companyName = "", properties: ow
                 checked={selectedSet.has(file.id)}
                 onToggle={() => toggle(file.id)}
                 menu={menuFor(file)}
+                onFile={writable ? () => fileAsSuggested(file) : null}
+                onDismiss={writable ? () => dismissSuggestion(file) : null}
               />
             ))}
           </ul>
@@ -471,7 +496,7 @@ function SectionHead({ title, note = "", open, onToggle }) {
 
 // The five key documents of a property, one file each, marked with a star. A filled one opens its file; an empty one
 // says so, with Upload.
-function QuickAccess({ files, open, onToggle, selecting, selectedSet, onPick, writable, viewHref, menuFor, onUpload }) {
+function QuickAccess({ files, open, onToggle, selecting, selectedSet, onPick, writable, viewHref, menuFor, onUpload, onFile }) {
   const slots = QUICK_ACCESS.map((item) => ({ item, file: quickAccessFiles(files, item).sort(newestFirst)[0] || null }))
   const filled = slots.filter((slot) => slot.file).length
   return (
@@ -481,6 +506,8 @@ function QuickAccess({ files, open, onToggle, selecting, selectedSet, onPick, wr
         <ul className="quick-list">
           {slots.map(({ item, file }) => {
             if (!file) {
+              // A file the Agent read as this document, not labeled yet: one tap puts it here.
+              const found = writable && !selecting ? files.filter((other) => other.suggestion?.label === item.name).sort(newestFirst)[0] : null
               return (
                 <li key={item.id} className="quick-slot is-empty">
                   <span className="quick-row">
@@ -488,9 +515,10 @@ function QuickAccess({ files, open, onToggle, selecting, selectedSet, onPick, wr
                     <span className="quick-star is-empty" aria-hidden="true"><Icon name="star" size={24} /></span>
                     <span className="quick-copy">
                       <strong>{item.name}</strong>
-                      <small>Nothing uploaded yet</small>
+                      <small>{found ? <>Looks like <b>{found.name}</b></> : "Nothing uploaded yet"}</small>
                     </span>
                   </span>
+                  {found && <button type="button" className="tool quick-use" onClick={() => onFile(found)}><Icon name="spark" size={14} /> Use it</button>}
                   {writable && !selecting && (
                     <button type="button" className="primary quick-upload" onClick={() => onUpload(item)}>
                       <Icon name="upload" size={14} /> Upload
@@ -572,7 +600,8 @@ export function DocStatus({ missing, label, tone = "" }) {
 
 // A file in a folder: click it to open it, the rest is in its ⋯ menu. In search results the grey line starts with
 // where it is.
-function FileRow({ file, where, href, selecting, checked, onToggle, menu }) {
+function FileRow({ file, where, href, selecting, checked, onToggle, menu, onFile = null, onDismiss = null }) {
+  const suggestion = !selecting && onFile ? file.suggestion : null
   const kind = fileType(file)
   const thumb = isImage(file) ? file.url || `/api/documents/${file.id}/raw` : ""
   const content = (
@@ -597,6 +626,14 @@ function FileRow({ file, where, href, selecting, checked, onToggle, menu }) {
         <Link href={href} className="doc-open">{content}</Link>
       )}
       {!selecting && <RowMenu items={menu} label={`More actions for ${file.name}`} className="keep-case" />}
+      {suggestion && (
+        <div className="doc-suggestion">
+          <Icon name="spark" size={13} />
+          <span>Looks like {/^[AEIOU]/i.test(suggestion.label || suggestion.kind) ? "an" : "a"} {suggestion.label || suggestion.kind}{suggestion.folder ? ` · belongs in ${suggestion.folderName}` : ""}</span>
+          <button type="button" className="tool" onClick={onFile}>{suggestion.label ? (suggestion.folder ? "Label and move" : "Label it") : `Move to ${suggestion.folderName}`}</button>
+          <button type="button" className="tool doc-suggestion-no" onClick={onDismiss}>Not now</button>
+        </div>
+      )}
     </li>
   )
 }

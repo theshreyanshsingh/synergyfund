@@ -9,7 +9,9 @@ const PHONE = "(max-width: 760px)"
 // `collapsible`: on phones each row shows only its name (and any `peek` columns). A tap opens up its details with an
 // Open button; only that button opens it, and a tap anywhere else on the row folds it again. On a computer a click
 // opens it straight away.
-export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loading, selectable = true, compact = false, onMove, collapsible = false, openLabel = "Open", sort = null, onSort = null }) {
+// `phoneLine`: on phones and tablets each row is one line (its name, any `peek` columns and a chevron) and a tap opens it, for a
+// short list with little else to show (a contractor's properties).
+export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loading, selectable = true, compact = false, onMove, collapsible = false, phoneLine = false, openLabel = "Open", sort = null, onSort = null }) {
   const [expanded, setExpanded] = useState("")
   // Only a row that opens something can fold; otherwise its details would be out of reach.
   const folding = collapsible && Boolean(onRow)
@@ -22,7 +24,7 @@ export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loa
   }
   const fold = (row) => (folding ? (expanded === row.id ? "expanded" : "collapsed") : "")
   const table = (
-    <table className={["grid", compact ? "is-compact" : "", folding ? "is-collapsible" : ""].filter(Boolean).join(" ")}>
+    <table className={["grid", compact ? "is-compact" : "", folding ? "is-collapsible" : "", phoneLine && !folding && onRow ? "is-line" : ""].filter(Boolean).join(" ")}>
         <thead>
           <tr>
             {onMove && <th className="drag-col"><span className="sr-only">Reorder</span></th>}
@@ -50,8 +52,8 @@ export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loa
           )}
           {rows.map((row) => (
             onMove
-              ? <SortableRow key={row.id} row={row} columns={columns} on={selected.includes(row.id)} onToggle={onToggle} onRow={onRow ? tap : undefined} onOpen={onRow} selectable={selectable} fold={fold(row)} openLabel={openLabel} />
-              : <Row key={row.id} row={row} columns={columns} on={selected.includes(row.id)} onToggle={onToggle} onRow={onRow ? tap : undefined} onOpen={onRow} selectable={selectable} fold={fold(row)} openLabel={openLabel} />
+              ? <SortableRow key={row.id} row={row} columns={columns} on={selected.includes(row.id)} onToggle={onToggle} onRow={onRow ? tap : undefined} onOpen={onRow} selectable={selectable} fold={fold(row)} line={phoneLine && !folding && Boolean(onRow)} openLabel={openLabel} />
+              : <Row key={row.id} row={row} columns={columns} on={selected.includes(row.id)} onToggle={onToggle} onRow={onRow ? tap : undefined} onOpen={onRow} selectable={selectable} fold={fold(row)} line={phoneLine && !folding && Boolean(onRow)} openLabel={openLabel} />
           ))}
         </tbody>
       </table>
@@ -68,7 +70,7 @@ function SortableRow(props) {
   return <Row {...props} sortable={sortable} />
 }
 
-function Row({ row, columns, on, onToggle, onRow, onOpen, selectable, sortable, fold = "", openLabel }) {
+function Row({ row, columns, on, onToggle, onRow, onOpen, selectable, sortable, fold = "", line = false, openLabel }) {
   return (
               <tr ref={sortable?.ref} style={sortable?.style} className={[on ? "is-selected" : "", sortable?.dragging ? "is-dragging" : "", fold ? `is-${fold}` : ""].filter(Boolean).join(" ") || undefined} onClick={() => onRow?.(row)} data-row-id={row.id}>
                 {sortable && <td className="drag-col" onClick={(event) => event.stopPropagation()}>{sortable.handle}</td>}
@@ -110,6 +112,7 @@ function Row({ row, columns, on, onToggle, onRow, onOpen, selectable, sortable, 
                     ) : <span className="fold-chevron" aria-hidden="true"><Icon name="chevron" size={16} /></span>}
                   </td>
                 )}
+                {line && <td className="line-col" aria-hidden="true"><Icon name="chevron" size={16} /></td>}
               </tr>
   )
 }

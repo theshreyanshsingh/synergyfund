@@ -65,7 +65,8 @@ export function hasStoredThread() {
   }
 }
 
-export function useAgentChat() {
+// `openId`: a chat to open (the Agent page's ?chat=, from a notification) instead of the one this tab had open.
+export function useAgentChat({ openId = "" } = {}) {
   const settingsApi = useApi("/agent/settings")
   const threadsApi = useApi("/agent/threads")
   const promptsApi = useApi("/agent/prompts")
@@ -120,13 +121,19 @@ export function useAgentChat() {
     }
   }, [])
 
+  const openedRef = useRef(null)
   useEffect(() => {
-    let stored = ""
-    try {
-      stored = sessionStorage.getItem(THREAD_KEY) || ""
-    } catch {}
-    if (stored) openThread(stored)
-  }, [openThread])
+    const first = openedRef.current === null
+    if (openId && openId !== openedRef.current) openThread(openId)
+    else if (first) {
+      let stored = ""
+      try {
+        stored = sessionStorage.getItem(THREAD_KEY) || ""
+      } catch {}
+      if (stored) openThread(stored)
+    }
+    openedRef.current = openId
+  }, [openThread, openId])
 
   function newChat() {
     if (streamingRef.current) return
@@ -268,15 +275,21 @@ export function useAgentChat() {
     threadsApi.reload()
   }
 
-  // Saved prompts (Star under an answer saves its question).
-  async function savePrompt(text) {
-    const result = await api("/agent/prompts", { method: "POST", body: { text } })
+  // Saved prompts (Star under an answer saves its question). `repeat`: how often the Agent asks it on its own.
+  async function savePrompt(text, repeat) {
+    const result = await api("/agent/prompts", { method: "POST", body: repeat === undefined ? { text } : { text, repeat } })
     promptsApi.reload()
     return result.prompt
   }
 
-  async function updatePrompt(id, text) {
-    await api(`/agent/prompts/${id}`, { method: "PATCH", body: { text } })
+  // `changes`: { text, repeat }, either or both.
+  async function updatePrompt(id, changes) {
+    await api(`/agent/prompts/${id}`, { method: "PATCH", body: changes })
+    promptsApi.reload()
+  }
+
+  async function turnOnBrief() {
+    await api("/agent/prompts", { method: "POST", body: { brief: true } })
     promptsApi.reload()
   }
 
@@ -294,6 +307,8 @@ export function useAgentChat() {
     reloadThreads: threadsApi.reload,
     prompts: promptsApi.data?.items || [],
     promptsLoaded: Boolean(promptsApi.data),
+    promptZone: promptsApi.data?.zone || "",
+    briefOffered: Boolean(promptsApi.data?.briefOffered),
     connected: settingsApi.data?.settings?.modelConnected,
     threadId,
     rows,
@@ -314,6 +329,7 @@ export function useAgentChat() {
     pinThread,
     savePrompt,
     updatePrompt,
+    turnOnBrief,
     deletePrompt,
   }
 }

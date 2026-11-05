@@ -1,9 +1,10 @@
 import mammoth from "mammoth"
 import xlsx from "../../lib/xlsx.js"
 import { getDocumentProxy } from "unpdf"
-import { AGENT_DEFAULTS, DOCUMENT_TYPES, QUICK_ACCESS, documentType, documentTypeName, folderName, folderOf, labeledDocumentType } from "@synergifund/shared"
+import { AGENT_DEFAULTS, DOCUMENT_TYPES, QUICK_ACCESS, documentType, documentTypeName, folderName, folderOf, labeledDocumentType, quickAccessFiles } from "@synergifund/shared"
 import { AgentSetting, Company, DocumentFile, Property } from "../../models/index.js"
 import { readStoredFile } from "../files.js"
+import { devServer } from "../../lib/runtime.js"
 import { chat, createUsageTracker, modelKey } from "./llm.js"
 
 // The Agent reads every document in the library once, so it can tell what each one is (a Purchase Contract, an ALTA
@@ -268,6 +269,9 @@ export async function describeDocument(file, { place = "", settings, tracker = c
 
 let running = false
 let timer = null
+// When this server's reader started: the first reader ever reads what's added from then on, including what's added
+// before its first check.
+let startedAt = null
 
 function readerMs(name, fallback) {
   const value = Number(process.env[name])
@@ -280,16 +284,24 @@ function schedule(ms) {
   timer.unref?.()
 }
 
+// Off with DOCUMENT_READER=off (tests), and under `npm run dev` (lib/runtime.js) unless DOCUMENT_READER=on: the server
+// reads them.
+function readerOff() {
+  if (process.env.DOCUMENT_READER === "off") return true
+  return devServer() && process.env.DOCUMENT_READER !== "on"
+}
+
 // Reads documents in the background, one at a time: new ones as they are added, older ones once an admin turns that on.
-// Nothing runs without a model key. DOCUMENT_READER=off turns it off (tests).
+// Nothing runs without a model key.
 export function startDocumentReader() {
-  if (process.env.DOCUMENT_READER === "off") return
+  if (readerOff()) return
+  startedAt ||= new Date()
   schedule(readerMs("DOCUMENT_READER_START_MS", 20000))
 }
 
 // After an upload: read it soon rather than at the next check.
 export function nudgeDocumentReader() {
-  if (process.env.DOCUMENT_READER === "off" || running) return
+  if (readerOff() || running) return
   schedule(readerMs("DOCUMENT_READER_NUDGE_MS", 3000))
 }
 
@@ -313,7 +325,7 @@ async function readingFrom({ save = true } = {}) {
   const setting = await AgentSetting.findOne({ key: "org" }).select("docsReadFrom docsReadAll").lean()
   if (setting?.docsReadFrom) return { from: setting.docsReadFrom, all: Boolean(setting.docsReadAll) }
   if (!save) return { from: new Date(), all: Boolean(setting?.docsReadAll) }
-  const from = new Date()
+  const from = startedAt || new Date()
   try {
     await AgentSetting.updateOne({ key: "org", docsReadFrom: { $in: [null] } }, { $set: { docsReadFrom: from } }, { upsert: true })
   } catch (error) {
@@ -382,6 +394,46 @@ export async function documentReading() {
     window.all ? 0 : DocumentFile.countDocuments({ ...base, ...notTried, createdAt: { $lt: window.from } }),
   ])
   return { connected: Boolean(modelKey()), readAll: window.all, readFrom: window.from, total, read, failed, older, waiting: Math.max(0, total - read - failed - older) }
+}
+
+/* ---------- filing it ---------- */
+
+// Where each kind of document belongs on a property.
+const KIND_FOLDERS = {
+  purchase_contract: "contracts", reassignment_contract: "contracts",
+  settlement_statement: "title", closing_statement: "title", title: "title", deed: "title", survey: "title",
+  insurance: "insurance",
+  loan: "lender", draw: "lender",
+  scope_of_work: "renovation", contractor_agreement: "renovation", invoice: "renovation", lien_waiver: "renovation", permit: "renovation",
+}
+
+// Which Quick Access documents the properties already hold: "propertyId:slot" for each one with a file.
+export async function filledSlots(propertyIds) {
+  if (!propertyIds.length) return new Set()
+  const labeled = await DocumentFile.find({ propertyId: { $in: propertyIds }, kind: { $nin: HIDDEN_KINDS }, "labels.0": { $exists: true } }).select("propertyId labels").lean()
+  const held = new Set()
+  for (const file of labeled) for (const item of QUICK_ACCESS) if (quickAccessFiles([file], item).length) held.add(`${file.propertyId}:${item.id}`)
+  return held
+}
+
+// What the Agent would do with a file it has read, for one tap in Documents: the Quick Access label of what it is (when
+// that slot is empty, so it never takes the slot from another file), and the folder its kind belongs in (when it sits
+// in Miscellaneous). Null when it is filed right, the person dismissed it, or it hasn't been read.
+export function documentSuggestion(file, held = new Set()) {
+  if (!file?.propertyId || file.suggestionDismissed || file.insightState !== "read") return null
+  const type = TYPE_IDS.has(file.docType) ? file.docType : ""
+  const kind = DOCUMENT_TYPES.find((item) => item.id === type)
+  if (!kind || type === "other" || type === "photo") return null
+  const suggestion = {}
+  const slot = QUICK_ACCESS.find((item) => item.name === kind.label)
+  if (slot && !labeledDocumentType(file) && !held.has(`${file.propertyId}:${slot.id}`)) {
+    suggestion.label = slot.name
+    if (slot.folder !== folderOf(file)) suggestion.folder = slot.folder
+  } else if (KIND_FOLDERS[type] && folderOf(file) === "other") {
+    suggestion.folder = KIND_FOLDERS[type]
+  }
+  if (!suggestion.label && !suggestion.folder) return null
+  return { kind: kind.name, ...suggestion, ...(suggestion.folder ? { folderName: folderName("property", suggestion.folder) } : {}) }
 }
 
 /* ---------- finding the one asked for ---------- */

@@ -496,6 +496,8 @@ export const DocumentFile = register(
       insightAt: Date,
       insightError: String,
       insightTries: { type: Number, default: 0 },
+      // The person said no to the Agent's filing suggestion for it (documentSuggestion).
+      suggestionDismissed: Boolean,
     },
     { timestamps: true },
   )
@@ -784,6 +786,8 @@ export const AgentThread = register(
     {
       userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
       title: String,
+      // The title was given on purpose (renamed, or a repeating prompt's): the Agent no longer names the chat itself.
+      named: { type: Boolean, default: false },
       messages: [
         {
           role: String,
@@ -820,9 +824,21 @@ export const AgentPrompt = register(
     {
       userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
       text: { type: String, required: true },
+      // When the Agent asks it on its own (services/agent/repeats.js): every "day", "weekday", "week" (on `day`, 0 is
+      // Sunday) or "month" (on `day`, 1 to 28), at `hour` team time; "" never. The answer opens as a new chat.
+      repeat: { every: { type: String, default: "" }, day: Number, hour: Number },
+      // The weekly brief the Agent offers (one per person).
+      brief: { type: Boolean, default: false },
+      // The team day it last ran, claimed before it runs so it runs once a day however many servers there are, and when
+      // that claim was made (until its answer is saved): a claim half an hour old was cut off, so it is asked again.
+      lastRunDay: String,
+      runningAt: Date,
+      lastRunAt: Date,
+      lastThreadId: { type: Schema.Types.ObjectId, ref: "AgentThread" },
+      lastError: String,
     },
     { timestamps: true },
-  ).index({ userId: 1, updatedAt: -1 }),
+  ).index({ userId: 1, updatedAt: -1 }).index({ "repeat.every": 1 }),
 )
 
 // A change the Agent prepared for a person to confirm (see services/agent/proposals.js). status: pending, saved,
@@ -835,6 +851,12 @@ export const AgentProposal = register(
       threadId: { type: Schema.Types.ObjectId, ref: "AgentThread" },
       propertyId: { type: Schema.Types.ObjectId, ref: "Property", required: true },
       address: String,
+      // "property" (its figures) or "loan" (a loan's figures: loanId, its lender, and the document they came from).
+      kind: { type: String, default: "property" },
+      loanId: { type: Schema.Types.ObjectId, ref: "Loan" },
+      lender: String,
+      sourceId: { type: Schema.Types.ObjectId, ref: "Document" },
+      sourceName: String,
       changes: [{ field: String, label: String, from: Number, to: Number, _id: false }],
       status: { type: String, default: "pending" },
       decidedAt: Date,

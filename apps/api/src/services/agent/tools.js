@@ -8,7 +8,7 @@ import { loanPaymentDates, paymentDates } from "../schedule.js"
 import { loanFields } from "../loans.js"
 import { geocode, nearbyZips } from "../geocode.js"
 import { analyzeArv, milesBetween } from "./arv.js"
-import { CHANGE_FIELDS, CHANGE_TOOL, createProposal, readChanges } from "./proposals.js"
+import { CHANGE_FIELDS, CHANGE_TOOL, LOAN_CHANGE_FIELDS, LOAN_CHANGE_TOOL, createLoanProposal, createProposal, readChanges, readLoanChanges, writtenNumbers } from "./proposals.js"
 import { teamToday } from "../../lib/dates.js"
 import { stressRows } from "../stress.js"
 import { HIDDEN_KINDS, READ_KINDS, documentContents, effectiveType, noteOf, pickDocuments, placeName, typesFor } from "./documents.js"
@@ -1509,6 +1509,106 @@ export const TOOLS = [
     summarize: (result) => ({ title: result.unchanged ? "Already named that" : "Rename ready to confirm", ...(result.rename ? { rename: result.rename } : {}) }),
   },
   {
+    name: LOAN_CHANGE_TOOL,
+    label: "Preparing the loan update",
+    permission: PERMISSIONS.propertiesWrite,
+    staffOnly: true,
+    description: "Prepare an update to one loan's figures for the person to confirm: its balance, monthly payment, original amount or interest rate. Use it when the person gives the new figure, or when a loan statement, payoff letter or note you read with read_document shows the loan's figures and the record differs: then pass that document's id as source. Every new figure must be written in the person's message or in that document, exactly; one that is not is refused. It saves nothing: the person sees the old and new figures on a card and confirms.",
+    parameters: {
+      type: "object",
+      properties: {
+        loan: { type: "string", description: "The loan's id from list_loans or get_property." },
+        changes: {
+          type: "array",
+          description: "The figures to update on this loan.",
+          items: {
+            type: "object",
+            properties: {
+              field: { type: "string", enum: LOAN_CHANGE_FIELDS.map(([key]) => key) },
+              value: { type: "number", description: "The new figure as written (dollars, or the rate as a percent like 13)." },
+            },
+            required: ["field", "value"],
+          },
+        },
+        source: { type: "string", description: "The id of the document the figures come from (one you read with read_document). Leave empty when the person gave the figures." },
+      },
+      required: ["loan", "changes"],
+    },
+    run: async (args, context) => {
+      const id = String(args.loan || "").trim()
+      if (!/^[a-f0-9]{24}$/i.test(id)) return { success: false, error: "Pass the loan's id from list_loans or get_property." }
+      const loan = await Loan.findById(id)
+      const properties = await scopedProperties(context)
+      const property = loan && properties.find((item) => String(item._id) === String(loan.propertyId))
+      if (!loan || !property) return { success: false, error: "That loan was not found. Look it up with list_loans first." }
+      let source = null
+      let allowed = writtenNumbers(context.question)
+      let where = "the person's message"
+      if (args.source) {
+        source = /^[a-f0-9]{24}$/i.test(String(args.source)) ? await DocumentFile.findById(String(args.source)) : null
+        if (!source || HIDDEN_KINDS.includes(source.kind)) return { success: false, error: "That document is not in the library. Read it with read_document first and pass its id." }
+        // Every reading read_document did of it this run (each may hold different pages), or a fresh one: the figures
+        // must be in them.
+        const keys = Object.keys(context.cache).filter((name) => name.startsWith(`document:${source._id}:`))
+        const readings = keys.length ? await Promise.all(keys.map((name) => context.cache[name])) : [await documentContents(source, { settings: context.settings, tracker: context.tracker })]
+        allowed = writtenNumbers(readings.map((contents) => contents?.text || "").join("\n"))
+        where = source.name
+      }
+      const read = readLoanChanges(args.changes, loan, allowed, where)
+      if (read.error) return { success: false, error: read.error }
+      if (!read.changes.length) return { unchanged: read.unchanged, instructions: "The loan already has these figures. Say so; nothing needs confirming." }
+      const proposal = await createLoanProposal({ context, loan, property, changes: read.changes, source })
+      return {
+        proposal,
+        unchanged: read.unchanged,
+        instructions: `Say what the update changes${source ? ` and that the figures come from ${source.name}` : ""}, and that it takes effect when the person taps Confirm on the card below your answer. Never say it was saved.`,
+      }
+    },
+    summarize: (result) => ({ title: result.proposal ? "Loan update ready to confirm" : "Nothing to update", ...(result.proposal ? { proposal: result.proposal } : {}) }),
+  },
+  {
+    name: "check_records",
+    label: "Checking the records",
+    permission: PERMISSIONS.propertiesRead,
+    staffOnly: true,
+    description: "Look through every property and loan the person can see for records that are probably wrong or missing something: loan figures that don't add up (a balance that is a sliver of the original, a payment far under the interest), loans past maturity still open, open loans with no balance or maturity, insurance still marked active after it expired, owned houses with no purchase price. Each comes with why and how to fix it. Use it when the person asks what looks wrong, what to clean up, or whether the records can be trusted, and before a business review.",
+    parameters: { type: "object", properties: {} },
+    run: async (args, context) => {
+      const properties = await scopedProperties(context)
+      const today = todayKey()
+      const owned = properties.filter((property) => !NOT_OWNED_STAGES.includes(property.stage))
+      const ended = new Set(properties.filter(loansEndedWithSale).map((property) => String(property._id)))
+      const loans = (await Loan.find({ propertyId: { $in: properties.map((property) => property._id) } })).filter((loan) => !isPaidOff(loan) && !ended.has(String(loan.propertyId)))
+      const address = new Map(properties.map((property) => [String(property._id), property.address]))
+      const issues = []
+      for (const loan of loans) {
+        const fields = loanFields(loan)
+        const where = { kind: "loan", property: address.get(String(loan.propertyId)) || "", loan: `${lenderName(loan.lender)}${loan.loanNumber ? ` #${loan.loanNumber}` : ""}`, loanId: String(loan._id) }
+        for (const why of loanChecks(loan, fields)) issues.push({ ...where, what: "Figures don't add up", why, fix: "Check the latest statement from the servicer and correct the loan on its property (the agent can prepare the update from the statement)." })
+        if (loan.maturity && /^\d{4}-\d{2}-\d{2}$/.test(loan.maturity) && loan.maturity < today) issues.push({ ...where, what: "Past maturity, still open", why: `It matured on ${loan.maturity} and is still marked ${fields.status}.`, fix: "Mark it paid off if it was, or record the extension." })
+        if (!loan.maturity) issues.push({ ...where, what: "No maturity date", why: "An open loan with no maturity date can't be warned about before it comes due.", fix: "Add the maturity date from the note." })
+        if (loan.balance == null) issues.push({ ...where, what: "No balance", why: "An open loan with no balance on file leaves it out of the debt and equity totals.", fix: "Add the balance from the latest statement." })
+      }
+      for (const property of owned) {
+        for (const policy of insurancePolicies(property)) {
+          if (!policyActive(policy) || !policy.expirationDate || String(policy.expirationDate).slice(0, 10) >= today) continue
+          issues.push({ kind: "insurance", property: property.address, what: "Insurance expired but still active", why: `${policyName(policy)} expired on ${String(policy.expirationDate).slice(0, 10)} and is not marked Expired or Cancelled.`, fix: "Renew it and enter the new dates, or set its status to Expired on Property Info." })
+        }
+        if (property.purchasePrice == null) issues.push({ kind: "property", property: property.address, what: "No purchase price", why: "Its purchase price is not entered, so equity, returns and price filters leave it out.", fix: "Enter it on the property (Modify)." })
+      }
+      const order = { loan: 0, insurance: 1, property: 2 }
+      issues.sort((left, right) => order[left.kind] - order[right.kind] || left.property.localeCompare(right.property))
+      return {
+        checked: { properties: properties.length, openLoans: loans.length },
+        total: issues.length,
+        byKind: countBy(issues, (issue) => issue.what),
+        issues,
+        ...(issues.length ? {} : { note: "Nothing looks wrong in these records." }),
+      }
+    },
+    summarize: (result) => ({ title: result.total ? `${plural(result.total, "record")} to check` : "Records look right" }),
+  },
+  {
     name: "zip_documents",
     label: "Zipping documents",
     permission: PERMISSIONS.documentsRead,
@@ -1856,14 +1956,24 @@ export function toolSpecs(tools) {
   return tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }))
 }
 
-function parseArguments(raw) {
-  if (raw && typeof raw === "object") return raw
-  try {
-    const parsed = JSON.parse(raw || "{}")
-    return parsed && typeof parsed === "object" ? parsed : {}
-  } catch {
-    return null
+// A model sometimes slips a quote or space into a name ("request”"): the name is read without it.
+export function parseArguments(raw) {
+  let parsed = raw
+  if (!raw || typeof raw !== "object") {
+    try {
+      parsed = JSON.parse(raw || "{}")
+    } catch {
+      return null
+    }
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {}
+  const args = {}
+  for (const [key, value] of Object.entries(parsed)) {
+    const clean = key.replace(/[\s"'`“”‘’]+/g, "")
+    if (clean && clean !== key && !(clean in parsed)) args[clean] = value
+    else args[key] = value
+  }
+  return args
 }
 
 export async function executeTool(call, tools, context) {

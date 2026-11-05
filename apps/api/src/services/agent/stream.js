@@ -24,6 +24,11 @@ export function createRun({ runId = randomUUID(), ownerId = "" } = {}) {
   return run
 }
 
+// For a run nobody is watching (a repeating prompt): the stream goes nowhere, and the answer is saved to the chat.
+export function silentResponse() {
+  return { headersSent: true, writableEnded: true, on() {}, write() {}, end() {} }
+}
+
 export function getRun(runId) {
   return runs.get(runId) || null
 }
