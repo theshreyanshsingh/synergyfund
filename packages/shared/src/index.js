@@ -898,6 +898,11 @@ export function teamYear(now = new Date()) {
   return Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric" }).format(now))
 }
 
+// Today where the team works (New York), YYYY-MM-DD: what is due or late is the same on every device, wherever it is.
+export function teamDay(now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(now)
+}
+
 const taxMoney = (value) => (value == null || value === "" || !Number.isFinite(Number(value)) ? null : cents(value))
 
 // A property's tax years, newest first. A property saved before the rows had one yearly tax amount and a due date:

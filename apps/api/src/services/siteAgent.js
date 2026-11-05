@@ -177,13 +177,14 @@ async function imagesFrom(fileIds) {
   return images
 }
 
+// What the teammate knows of a line item. No budget: it writes in a chat contractors read, so it is never given money
+// it could repeat (the draw request to the office reads budgets on its own).
 function lineView(line) {
   return {
     id: String(line._id),
     title: line.title,
     status: LINE_STATUSES.includes(line.status) ? line.status : "Not started",
     expected: line.forecastDate || "",
-    budget: line.budget ?? null,
     lastChange: line.statusBy ? `${line.status} by ${line.statusBy}${line.statusNote ? ` (${line.statusNote})` : ""}` : "",
   }
 }

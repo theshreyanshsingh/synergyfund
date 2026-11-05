@@ -24,7 +24,7 @@ export default function ActivityPage() {
         { key: "createdAt", label: "When", className: "activity-when", render: (row) => exactly(row.createdAt) },
       ]}
       rows={list.data?.items || []}
-      empty="No activity yet."
+      empty={list.error || "No activity yet."}
     />
   )
 }

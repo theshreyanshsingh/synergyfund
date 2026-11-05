@@ -1,9 +1,10 @@
 import { Router } from "express"
 import { z } from "zod"
-import { BEHIND_STATUSES, cityLine, lineTracking, loanStatus, loanSummary, PAID_OFF, PAID_OFF_SAVED, policyName, policyPaymentAmount, policyTitle, propertyDrawFigures, propertyUtilities, REFINANCE, STAGES, taxYears, US_STATES } from "@synergifund/shared"
+import { BEHIND_STATUSES, cityLine, lineTracking, loanStatus, loanSummary, PAID_OFF, PAID_OFF_SAVED, policyName, policyPaymentAmount, policyTitle, propertyDrawFigures, propertyUtilities, REFINANCE, resolveBudget, STAGES, taxYears, US_STATES } from "@synergifund/shared"
 import { Activity, Bill, CalendarEvent, Company, ConstructionProject, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, PhotoSet, Property, ReviewItem, Task, User } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
+import { groupByProperty } from "../lib/group.js"
 import { propertyFilter, ownsProperty } from "../services/access.js"
 import { deleteStoredFile, saveUploadedFile, upload } from "../services/files.js"
 import { ensureLenders } from "../services/lenders.js"
@@ -50,6 +51,15 @@ const PROPERTY_FIELDS = [
   ["taxParcel", "Tax parcel/account #"],
 ]
 
+// A price, value or rent: $0 or more, or blank.
+const NOT_NEGATIVE = "Enter amounts of $0 or more."
+const money = () => z.number().nonnegative({ message: NOT_NEGATIVE }).nullable().optional()
+
+// The message for a failed check: an amount below $0 says so, anything else the route's own message.
+function parseMessage(parsed, fallback) {
+  return parsed.error.issues.some((issue) => issue.message === NOT_NEGATIVE) ? NOT_NEGATIVE : fallback
+}
+
 const writable = z.object({
   address: z.string().min(3),
   city: z.string().optional().default(""),
@@ -62,22 +72,22 @@ const writable = z.object({
   deadline: z.string().optional().default(""),
   ownerEntity: z.string().optional().default(""),
   accessInfo: z.string().optional().default(""),
-  purchasePrice: z.number().nullable().optional(),
-  houseBoughtPrice: z.number().nullable().optional(),
+  purchasePrice: money(),
+  houseBoughtPrice: money(),
   purchaseDate: z.string().optional().default(""),
   dealSource: z.string().optional().default(""),
-  arv: z.number().nullable().optional(),
+  arv: money(),
   arvDate: z.string().optional(),
   arvMethod: z.string().max(200).optional(),
   sqft: z.number().nonnegative().nullable().optional(),
   beds: z.number().nonnegative().nullable().optional(),
   baths: z.number().nonnegative().nullable().optional(),
-  marketRent: z.number().nullable().optional(),
-  actualRent: z.number().nullable().optional(),
+  marketRent: money(),
+  actualRent: money(),
   rentStatus: z.string().optional().default(""),
   rentMarket: z.string().optional().default(""),
   customerTerms: z.string().optional(),
-  rehabBudget: z.number().nullable().optional(),
+  rehabBudget: money(),
   // Property Info (the tax years are read on their own, see readTaxYears)
   taxParcel: z.string().max(120).optional(),
   utilities: z.array(z.object({ name: z.string().max(40), provider: z.string().max(120).optional(), account: z.string().max(120).optional() }).passthrough()).max(20).optional(),
@@ -150,15 +160,25 @@ propertiesRouter.get(
       res.json({ items: items.map((item) => presentProperty(item, req.user)) })
       return
     }
-    const [loans, companies] = await Promise.all([
-      Loan.find({ propertyId: { $in: items.map((item) => item._id) } }).select("propertyId status balance payment"),
+    const ids = items.map((item) => item._id)
+    const [loans, companies, draws, budgets] = await Promise.all([
+      Loan.find({ propertyId: { $in: ids } }).select("propertyId status balance payment"),
       companyNames(items.map((item) => item.companyId)),
+      Draw.find({ propertyId: { $in: ids } }).select("propertyId amount lines"),
+      DrawBudget.find({ propertyId: { $in: ids } }).select("propertyId budget"),
     ])
+    const loansOf = groupByProperty(loans)
+    const drawsOf = groupByProperty(draws)
+    const budgetOf = new Map()
+    for (const budget of budgets) if (!budgetOf.has(String(budget.propertyId))) budgetOf.set(String(budget.propertyId), budget)
     res.json({
       items: items.map((item) => {
-        const summary = loanSummary(loans.filter((loan) => String(loan.propertyId) === String(item._id)))
+        const summary = loanSummary(loansOf.get(String(item._id)) || [])
         const companyId = item.companyId ? String(item.companyId) : ""
-        return { ...presentProperty(item, req.user), company: companies.get(companyId) || "", loanStatus: summary.status, loanBalance: summary.balance }
+        // The rehab budget as the property page and Draws show it (the draw budget, the line items or the draws when
+        // none is entered on the property), so the list and the page agree.
+        const budget = resolveBudget({ rehabBudget: item.rehabBudget, recordBudget: budgetOf.get(String(item._id))?.budget, scopeLines: item.scopeLines || [], draws: drawsOf.get(String(item._id)) || [] })
+        return { ...presentProperty(item, req.user), company: companies.get(companyId) || "", loanStatus: summary.status, loanBalance: summary.balance, budgetShown: budget.budget, budgetEstimated: budget.estimated }
       }),
     })
   }),
@@ -513,7 +533,7 @@ propertiesRouter.post(
   asyncHandler(async (req, res) => {
     const parsed = writable.safeParse({ ...req.body, purchasePrice: numberOrNull(req.body.purchasePrice), arv: numberOrNull(req.body.arv), rehabBudget: numberOrNull(req.body.rehabBudget), houseBoughtPrice: numberOrNull(req.body.houseBoughtPrice), actualRent: numberOrNull(req.body.actualRent), marketRent: numberOrNull(req.body.marketRent) })
     if (!parsed.success) {
-      sendError(res, 400, "A property needs an address.")
+      sendError(res, 400, parseMessage(parsed, "A property needs an address."))
       return
     }
     const placeError = readPlace(parsed.data)
@@ -538,7 +558,8 @@ propertiesRouter.post(
       stage: STAGES.includes(parsed.data.stage) ? parsed.data.stage : "Under contract",
       updatedBy: req.user.name,
     })
-    const contractorIds = parseList(req.body.assignedUserIds).map(String).filter(Boolean)
+    // (Ids only: the property is saved by now, so a bad one must not fail the request and invite a duplicate retry.)
+    const contractorIds = parseList(req.body.assignedUserIds).map(String).filter((id) => /^[a-f0-9]{24}$/i.test(id))
     if (contractorIds.length) {
       const people = await User.find({ _id: { $in: contractorIds }, role: "contractor" })
       property.assignedUserIds = people.map((person) => person._id)
@@ -581,7 +602,11 @@ propertiesRouter.patch(
     }
     const parsed = writable.partial().safeParse(req.body)
     if (!parsed.success) {
-      sendError(res, 400, "Those property details could not be saved.")
+      sendError(res, 400, parseMessage(parsed, "Those property details could not be saved."))
+      return
+    }
+    if ("stage" in parsed.data && !STAGES.includes(parsed.data.stage)) {
+      sendError(res, 400, "Choose a status from the list.")
       return
     }
     const placeError = readPlace(parsed.data)
@@ -707,6 +732,18 @@ propertiesRouter.post(
     const paidOn = String(req.body?.date || teamToday())
     if (!dayOrBlank(paidOn) || !paidOn) {
       sendError(res, 400, "Enter the day it was paid as a date.")
+      return
+    }
+    // One payment per tap: the same payment (kind, year or policy, amount, day) again within a minute is a double tap.
+    // Claimed in one step on the property, so two taps at once can't both pass.
+    const paidKey = [kind, kind === "tax" ? taxRow.year : String(policy._id), Math.round(Number(amount) * 100), paidOn].join(":")
+    const claimed = await Property.updateOne(
+      { _id: property._id, $or: [{ "paidMark.key": { $ne: paidKey } }, { "paidMark.at": { $lt: new Date(Date.now() - 60 * 1000) } }] },
+      { $set: { paidMark: { key: paidKey, at: new Date() } } },
+      { timestamps: false },
+    )
+    if (!claimed.modifiedCount) {
+      sendError(res, 409, "That payment was just marked paid.")
       return
     }
     const renew = kind === "insurance" && req.body?.renew === true && policy.billing === "Annual" && Boolean(policy.expirationDate)

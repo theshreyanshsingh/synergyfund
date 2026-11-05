@@ -28,6 +28,7 @@ export default function ExpensesPage() {
   const [busyId, setBusyId] = useState("")
   const deciding = useRef(false)
   const [proofs, setProofs] = useState([])
+  const [sending, setSending] = useState(false)
   const camera = session?.user?.role === "contractor"
   const canSubmit = session?.user && can(session.user, "expenses.submit")
   const canApprove = session?.user && can(session.user, "expenses.approve")
@@ -77,6 +78,8 @@ export default function ExpensesPage() {
 
   async function submit(event) {
     event.preventDefault()
+    // One request per tap (photos are slow to send from a phone).
+    if (sending) return
     const form = new FormData(event.currentTarget)
     setError("")
     if (camera) {
@@ -86,6 +89,7 @@ export default function ExpensesPage() {
       }
       for (const shot of proofs) form.append("proof", shot.file, shot.file.name)
     }
+    setSending(true)
     try {
       await api("/expenses", { method: "POST", body: form })
       for (const shot of proofs) URL.revokeObjectURL(shot.url)
@@ -94,6 +98,8 @@ export default function ExpensesPage() {
       list.reload()
     } catch (err) {
       setError(err.message)
+    } finally {
+      setSending(false)
     }
   }
 
@@ -103,13 +109,17 @@ export default function ExpensesPage() {
     deciding.current = true
     setBusyId(id)
     try {
-      await api(`/expenses/${id}/decision`, { method: "POST", body: { action, confirmOverBudget } })
+      // The version on screen, so the server can tell if it changed since (an edit after it was opened).
+      const seenAt = requests.find((item) => item.id === id)?.updatedAt
+      await api(`/expenses/${id}/decision`, { method: "POST", body: { action, confirmOverBudget, ...(seenAt ? { seenAt } : {}) } })
       list.reload()
     } catch (err) {
       if (err.status === 409 && window.confirm(`${err.message}\n\nApprove above the rehab budget?`)) {
         await decide(id, action, true)
         return
       }
+      // Changed since it was opened: show it as it is now.
+      if (err.status === 412) list.reload()
       window.alert(err.message)
     } finally {
       if (!confirmOverBudget) {
@@ -165,7 +175,8 @@ export default function ExpensesPage() {
             {camera && canSubmit && <p className="receipt-manual">No receipt? <button type="button" className="keep-case" onClick={() => setOpen(true)}>Add an expense by hand</button></p>}
           </div>
         ) : null}
-        stats={tab === "tracking" && staff ? [] : camera ? [
+        // (Not loaded: the reason, not zeros.)
+        stats={list.error || (tab === "tracking" && staff) ? [] : camera ? [
           { label: "Your requests", value: String(visibleRequests.length), hint: "Waiting for a decision" },
           { label: "Posted", value: String(posted.length), hint: "Approved costs you filed" },
         ] : [
@@ -196,6 +207,7 @@ export default function ExpensesPage() {
           ) },
         ]}
         rows={rows}
+        empty={list.error || undefined}
         onRow={setSelected}
         important={(row) => ["Submitted", "Needs information", "Needs second approval"].includes(row.status)}
       >
@@ -230,7 +242,7 @@ export default function ExpensesPage() {
         />
       )}
       {open && (
-        <FormSheet eyebrow="Expenses" title="Add an expense" hint="Proof is required. An admin posts it onto the property after approval." onClose={() => setOpen(false)} onSubmit={submit} submitLabel="Submit request" error={error}>
+        <FormSheet eyebrow="Expenses" title="Add an expense" hint="Proof is required. An admin posts it onto the property after approval." onClose={() => setOpen(false)} onSubmit={submit} submitLabel="Submit request" pending={sending} pendingLabel="Sending…" error={error}>
           <div className="form-grid">
             <label className="field wide"><span>Description</span><input name="title" required /></label>
             <label className="field"><span>Amount</span><input name="amount" type="number" min="0" step="0.01" required /></label>

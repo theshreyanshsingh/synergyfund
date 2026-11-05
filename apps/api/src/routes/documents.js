@@ -93,7 +93,8 @@ async function presentMany(files, user = null) {
   })
 }
 
-// Contractors only reach files on their own properties, or files they uploaded.
+// Contractors only reach files on their own properties, or files they uploaded. A receipt only their own: what others
+// spent (the office's invoices, another contractor's receipts) is not theirs to see, as on Expenses.
 async function visibleFile(req, id) {
   const file = await DocumentFile.findById(id).catch(() => null)
   // Chat and task comment files open from their message or task, for the people who can see it.
@@ -101,7 +102,7 @@ async function visibleFile(req, id) {
   if (file.kind === "agent") return String(file.uploadedBy || "") === String(req.user._id) ? file : null
   if (req.user.role !== "contractor") return file
   if (file.uploadedBy && String(file.uploadedBy) === String(req.user._id)) return file
-  if (!file.propertyId) return null
+  if (file.kind === "receipt" || !file.propertyId) return null
   const allowed = await Property.exists({ _id: file.propertyId, ...propertyFilter(req.user) })
   return allowed ? file : null
 }
@@ -178,6 +179,8 @@ documentsRouter.get(
     if (req.user.role === "contractor") {
       const properties = await Property.find(propertyFilter(req.user)).select("_id")
       filter.propertyId = { $in: properties.map((property) => property._id) }
+      // Receipts only their own (see visibleFile).
+      filter.$and = [{ $or: [{ kind: { $ne: "receipt" } }, { uploadedBy: req.user._id }] }]
     }
     if (req.query.propertyId) {
       const wanted = String(req.query.propertyId)
@@ -558,7 +561,7 @@ documentsRouter.post(
   asyncHandler(async (req, res) => {
     const target = String(req.body?.path || "")
     if (!target.startsWith("/") || target.startsWith("//") || target.length > 4000) return sendError(res, 400, "That is not a download in this app.")
-    const token = signDownloadLink(req.user._id, target)
+    const token = signDownloadLink(req.user, target)
     res.json({ path: `${target}${target.includes("?") ? "&" : "?"}dl=${encodeURIComponent(token)}` })
   }),
 )

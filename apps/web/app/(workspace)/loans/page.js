@@ -13,6 +13,12 @@ import { api } from "../../../lib/api"
 import { money } from "../../../lib/format"
 import { useApi } from "../../../lib/useApi"
 
+// The total of a figure across loans, or "—" when none of them has it entered.
+function entered(loans, key) {
+  const values = loans.map((item) => item[key]).filter((value) => value != null && value !== "")
+  return values.length ? money(values.reduce((sum, value) => sum + Number(value || 0), 0)) : "—"
+}
+
 export default function LoansPage() {
   const router = useRouter()
   const session = useSession()
@@ -76,9 +82,10 @@ export default function LoansPage() {
           title="Loans & lenders"
           underTitle={switcher}
           action={writable ? { label: "Add loan", onClick: () => { setError(""); setOpen("loan") } } : null}
-          stats={[
-            { label: "Current loan amounts", value: money(openLoans.reduce((sum, item) => sum + Number(item.balance || 0), 0)), hint: "Open loans, from the loan records" },
-            { label: "Monthly payments", value: money(openLoans.reduce((sum, item) => sum + Number(item.payment || 0), 0)), hint: "Same figure as Insights" },
+          // (Not loaded: the reason, not $0. A total with nothing entered is "—", not $0.)
+          stats={list.error ? [] : [
+            { label: "Current loan amounts", value: entered(openLoans, "balance"), hint: "Open loans, from the loan records" },
+            { label: "Monthly payments", value: entered(openLoans, "payment"), hint: "Same figure as Insights" },
             { label: "Loan records", value: String(items.length), hint: "One loan, one property" },
             { label: "Lenders", value: String(lenders.length), hint: "Shared lender records" },
           ]}
@@ -112,7 +119,7 @@ export default function LoansPage() {
           // Phones: one line per loan (lender and balance); a tap shows or folds the rest, and Open opens it.
           collapsible
           openLabel={(row) => (row.lenderId ? "Open lender" : "Open property")}
-          empty="No loans yet. Add a lender, then attach a property."
+          empty={list.error || "No loans yet. Add a lender, then attach a property."}
         />
       ) : (
         <WorkspacePage
@@ -129,7 +136,7 @@ export default function LoansPage() {
           ]}
           rows={lenders}
           onRow={(row) => router.push(`/loans/lenders/${row.id}`)}
-          empty="No lenders yet."
+          empty={list.error || "No lenders yet."}
         />
       )}
       {open === "loan" && (

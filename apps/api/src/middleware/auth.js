@@ -34,8 +34,9 @@ export function canonicalTarget(target) {
   return search ? `${path}?${search}` : path
 }
 
-export function signDownloadLink(userId, target) {
-  return jwt.sign({ sub: String(userId), purpose: "download", target: canonicalTarget(target) }, process.env.JWT_SECRET, { expiresIn: `${DOWNLOAD_LINK_MINUTES}m` })
+// With the session's version, as a sign-in: a link from before a password reset stops working.
+export function signDownloadLink(user, target) {
+  return jwt.sign({ sub: String(user._id), purpose: "download", target: canonicalTarget(target), sv: Number(user.sessionVersion) || 0 }, process.env.JWT_SECRET, { expiresIn: `${DOWNLOAD_LINK_MINUTES}m` })
 }
 
 async function downloadLinkUser(req) {
@@ -44,7 +45,8 @@ async function downloadLinkUser(req) {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET)
     if (payload.purpose !== "download" || payload.target !== canonicalTarget(req.originalUrl)) return null
-    return await User.findById(payload.sub)
+    const user = await User.findById(payload.sub)
+    return user && (Number(payload.sv) || 0) === (Number(user.sessionVersion) || 0) ? user : null
   } catch {
     return null
   }

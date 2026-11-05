@@ -89,7 +89,8 @@ test("an upload to S3 is stored encrypted and served decrypted, in any range", a
   const plain = Buffer.concat([Buffer.from("%PDF-1.7 EIN 12-3456789 "), randomBytes(2 * CHUNK + 333)])
   const file = await files.saveUploadedFile(upload("EIN letter.pdf", plain, "application/pdf"), user, { kind: "file" })
   assert.equal(file.storage, "s3")
-  assert.match(file.storagePath, /^synergifund\/\d{4}-\d{2}-\d{2}\/\d+-EIN letter\.pdf$/)
+  // Time, a random part (two uploads with one name never share a file), then the name.
+  assert.match(file.storagePath, /^synergifund\/\d{4}-\d{2}-\d{2}\/\d+-[0-9a-f]{8}-EIN letter\.pdf$/)
   const stored = s3.object(file.storagePath)
   assert.ok(stored.subarray(0, 7).equals(Buffer.from("SFENC1\n")))
   assert.ok(!contains(stored, "12-3456789"), "no plain text in the bucket")

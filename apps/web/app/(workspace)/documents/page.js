@@ -30,6 +30,8 @@ function DocumentsScreen() {
   const [error, setError] = useState("")
   const [importId, setImportId] = useState("")
   const [previewCount, setPreviewCount] = useState(0)
+  // While a workbook is read or imported: a second tap would read or import it twice (and file its tasks twice).
+  const [importing, setImporting] = useState(false)
   const writable = session?.user && can(session.user, "documents.write")
   const canDelete = session?.user && can(session.user, "documents.delete")
   const canImport = session?.user && can(session.user, "imports.run")
@@ -46,9 +48,11 @@ function DocumentsScreen() {
 
   async function upload(event) {
     event.preventDefault()
+    if (importing) return
     const form = new FormData(event.currentTarget)
     form.set("mode", "import")
     setError("")
+    setImporting(true)
     try {
       const result = await api("/documents/import", { method: "POST", body: form })
       setImportId(result.import.id)
@@ -56,17 +60,23 @@ function DocumentsScreen() {
       list.reload()
     } catch (err) {
       setError(err.message)
+    } finally {
+      setImporting(false)
     }
   }
 
   async function confirmImport() {
+    if (importing) return
     setError("")
+    setImporting(true)
     try {
       await api(`/documents/import/${importId}/confirm`, { method: "POST", body: {} })
       closeUpload()
       list.reload()
     } catch (err) {
       setError(err.message)
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -124,8 +134,8 @@ function DocumentsScreen() {
             <footer>
               <button type="button" className="tool" onClick={closeUpload}>Cancel</button>
               {importId
-                ? <button className="primary" type="button" onClick={confirmImport}>Confirm import</button>
-                : <button className="primary" type="submit">Read workbook</button>}
+                ? <button className="primary" type="button" disabled={importing} onClick={confirmImport}>{importing ? "Importing…" : "Confirm import"}</button>
+                : <button className="primary" type="submit" disabled={importing}>{importing ? "Reading…" : "Read workbook"}</button>}
             </footer>
           </form>
         </div>

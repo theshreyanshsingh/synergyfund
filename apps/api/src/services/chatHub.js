@@ -16,8 +16,9 @@ function announce(userId, isAdmin, isOnline) {
   room.emit("presence:change", { userId, online: isOnline })
 }
 
+// With the session's version: a token from before a password reset or change no longer connects.
 export function socketToken(user) {
-  return jwt.sign({ sub: String(user._id), purpose: SOCKET_PURPOSE }, process.env.JWT_SECRET, { expiresIn: "10m" })
+  return jwt.sign({ sub: String(user._id), purpose: SOCKET_PURPOSE, sv: Number(user.sessionVersion) || 0 }, process.env.JWT_SECRET, { expiresIn: "10m" })
 }
 
 export function allowedOrigins() {
@@ -48,6 +49,7 @@ export function attachChatSockets(server) {
       if (payload.purpose !== SOCKET_PURPOSE) throw new Error("Wrong token")
       const user = await User.findById(payload.sub)
       if (!user || !usesChat(user)) throw new Error("No user")
+      if ((Number(payload.sv) || 0) !== (Number(user.sessionVersion) || 0)) throw new Error("Signed out")
       socket.data.user = user
       next()
     } catch {

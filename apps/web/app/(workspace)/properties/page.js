@@ -26,6 +26,7 @@ function PropertiesScreen() {
   const list = useApi("/properties")
   const [open, setOpen] = useState(params.get("new") === "1")
   const [error, setError] = useState("")
+  const [saving, setSaving] = useState(false)
   const [form, setForm] = useState(BLANK_FORM)
   const [labels, setLabels] = useState([])
   const [labelDraft, setLabelDraft] = useState("")
@@ -78,10 +79,13 @@ function PropertiesScreen() {
 
   async function save(event) {
     event.preventDefault()
+    // One property per tap (photos make the save slow on a phone, and a second tap would add the house twice).
+    if (saving) return
     setError("")
     const body = new FormData(event.currentTarget)
     body.set("labels", JSON.stringify(labelDraft.trim() ? [...labels, labelDraft.trim()] : labels))
     body.set("assignedUserIds", JSON.stringify(assigned))
+    setSaving(true)
     try {
       await api("/properties", { method: "POST", body })
       setOpen(false)
@@ -93,6 +97,8 @@ function PropertiesScreen() {
       list.reload()
     } catch (err) {
       setError(err.message)
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -131,7 +137,8 @@ function PropertiesScreen() {
           { key: "address", label: "Name", render: (row) => <PropertyName row={row} refinance={!contractor} /> },
           ...(contractor ? [] : [
             { key: "company", label: "Company", render: (row) => row.companyId ? <Link href={`/companies/${row.companyId}`} className="table-link" onClick={(event) => event.stopPropagation()}>{row.company || "Company"}</Link> : <span className="muted-cell">—</span> },
-            { key: "rehabBudget", label: "Rehab budget", render: (row) => row.rehabBudget == null ? "—" : money(row.rehabBudget) },
+            // As the property page and Draws work it out (entered, the draw budget, or the line items).
+            { key: "rehabBudget", label: "Rehab budget", render: (row) => { const budget = row.budgetShown ?? row.rehabBudget; return budget == null ? "—" : `${money(budget)}${row.budgetEstimated ? " est." : ""}` } },
           ]),
           { key: "stage", label: "Status", peek: true, render: (row) => <StatusPill>{row.stage}</StatusPill> },
           ...(contractor ? [] : [
@@ -153,7 +160,7 @@ function PropertiesScreen() {
         empty={list.error || "No properties yet."}
       />
       {open && (
-        <FormSheet eyebrow="Properties" title="New property" hint="Start with the address. Leave a number blank if you do not have it yet." onClose={() => setOpen(false)} onSubmit={save} submitLabel="Save property" error={error}>
+        <FormSheet eyebrow="Properties" title="New property" hint="Start with the address. Leave a number blank if you do not have it yet." onClose={() => setOpen(false)} onSubmit={save} submitLabel="Save property" pending={saving} error={error}>
           <div className="form-grid">
             <label className="field wide"><span>Address</span><input name="address" value={form.address} onChange={set("address")} required /></label>
             <label className="field"><span>City</span><input name="city" value={form.city} onChange={set("city")} autoComplete="address-level2" /></label>

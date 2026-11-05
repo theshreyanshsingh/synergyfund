@@ -36,6 +36,8 @@ function presentRequest(item) {
     receiptId: item.receiptId ? String(item.receiptId) : "",
     lines: (item.lines || []).map((line) => ({ description: line.description || "", category: line.category || "", amount: line.amount ?? 0, kind: line.kind || "item" })),
     createdAt: item.createdAt,
+    // Sent back with a decision, so a request changed after it was opened is looked at again.
+    updatedAt: item.updatedAt,
   }
 }
 
@@ -456,6 +458,11 @@ expensesRouter.patch(
       sendError(res, 400, "That request is already closed.")
       return
     }
+    // After the first approval of a large request, its figures stay as approved until the admin decides.
+    if (request.status === "Needs second approval") {
+      sendError(res, 400, "This request has its first approval and is waiting for the second, so it can't be changed now.")
+      return
+    }
     const isOwner = String(request.requestedBy || "") === String(req.user._id)
     if (req.user.role !== "contractor" || !isOwner) {
       sendError(res, 403, "Only the contractor who submitted this request can change it.")
@@ -581,13 +588,26 @@ expensesRouter.post(
   "/:id/decision",
   requirePermission("expenses.approve"),
   asyncHandler(async (req, res) => {
-    const request = await ExpenseRequest.findById(req.params.id)
+    const request = /^[a-f0-9]{24}$/i.test(String(req.params.id)) ? await ExpenseRequest.findById(req.params.id) : null
     if (!request) {
       sendError(res, 404, "That expense request was not found.")
       return
     }
+    // A contractor given approval decides only on the houses they are on.
+    if (req.user.role === "contractor") {
+      const property = request.propertyId ? await Property.findById(request.propertyId) : null
+      if (!property || !ownsProperty(req.user, property)) {
+        sendError(res, 404, "That expense request was not found.")
+        return
+      }
+    }
     if (["Approved", "Rejected"].includes(request.status)) {
       sendError(res, 400, "That request is already closed.")
+      return
+    }
+    // Decided on what the approver saw: changed since (its amount edited), it is looked at again first.
+    if (req.body.seenAt && request.updatedAt && new Date(req.body.seenAt).getTime() !== request.updatedAt.getTime()) {
+      sendError(res, 412, "This request changed since you opened it. Look at it again, then decide.")
       return
     }
     const action = req.body.action
@@ -595,21 +615,28 @@ expensesRouter.post(
       sendError(res, 400, "Choose approve, reject, or needs information.")
       return
     }
+    // Each decision moves the request out of its open status in one step: a rejection can never land on top of an
+    // approval that has already posted the cost.
+    const claim = async (changes) => {
+      const claimed = await ExpenseRequest.findOneAndUpdate({ _id: request._id, status: request.status }, { $set: changes }, { new: true })
+      if (claimed) Object.assign(request, changes)
+      return Boolean(claimed)
+    }
     if (action === "reject") {
-      request.status = "Rejected"
-      request.reviewNote = req.body.note || "Rejected"
-      request.reviewedBy = req.user._id
-      await request.save()
+      if (!(await claim({ status: "Rejected", reviewNote: req.body.note || "Rejected", reviewedBy: req.user._id }))) {
+        sendError(res, 400, "That request was just decided.")
+        return
+      }
       await recordActivity({ user: req.user, title: "Expense rejected", detail: request.title, propertyId: request.propertyId })
       await notify({ userIds: [request.requestedBy], roles: ["admin"], exceptUserIds: [req.user._id], title: "Expense rejected", body: `${request.title} was rejected. ${request.reviewNote}`, href: "/expenses", event: "expense.rejected" })
       res.json({ request: presentRequest(request) })
       return
     }
     if (action === "needs_information") {
-      request.status = "Needs information"
-      request.reviewNote = req.body.note || "More information is required."
-      request.reviewedBy = req.user._id
-      await request.save()
+      if (!(await claim({ status: "Needs information", reviewNote: req.body.note || "More information is required.", reviewedBy: req.user._id }))) {
+        sendError(res, 400, "That request was just decided.")
+        return
+      }
       await notify({ userIds: [request.requestedBy], title: "Expense needs information", body: request.reviewNote, href: "/expenses", event: "expense.needs_information" })
       res.json({ request: presentRequest(request) })
       return
@@ -631,10 +658,10 @@ expensesRouter.post(
       }
     }
     if (request.amount >= APPROVAL_THRESHOLD && req.user.role !== "admin" && request.status !== "Needs second approval") {
-      request.status = "Needs second approval"
-      request.reviewNote = req.body.note || ""
-      request.reviewedBy = req.user._id
-      await request.save()
+      if (!(await claim({ status: "Needs second approval", reviewNote: req.body.note || "", reviewedBy: req.user._id }))) {
+        sendError(res, 400, "That request was just decided.")
+        return
+      }
       await notify({ roles: ["admin"], exceptUserIds: [req.user._id], title: "Second approval needed", body: `${request.title} is above $${APPROVAL_THRESHOLD.toLocaleString("en-US")}.`, href: "/expenses", event: "expense.second_approval" })
       res.json({ request: presentRequest(request) })
       return

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -87,7 +88,8 @@ export async function saveUploadedFile(file, user, extra = {}) {
   const safeName = (file.originalname || "upload").replace(/[^\w.\- ]+/g, "") || "upload"
   const { DocumentFile } = await import("../models/index.js")
   let storage = "local"
-  let storagePath = `${Date.now()}-${safeName}`
+  // A random part too: two photos both called image.jpg in the same millisecond must not share (and overwrite) a file.
+  let storagePath = `${Date.now()}-${randomBytes(4).toString("hex")}-${safeName}`
   if (config.enabled) {
     storage = "s3"
     storagePath = `${config.prefix}/${new Date().toISOString().slice(0, 10)}/${storagePath}`

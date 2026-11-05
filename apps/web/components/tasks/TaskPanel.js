@@ -23,6 +23,30 @@ export function TaskPanel({ task, today, can, people, properties, propertiesLoad
   const [history, setHistory] = useState(null)
   const [copied, setCopied] = useState(false)
   const notesRef = useRef(null)
+  // Typed and not saved yet (the field still has focus). Closing the panel (Escape, ×) or moving to another task
+  // never blurs the field first, so it is saved then, on the task it was typed on.
+  const unsaved = useRef(null)
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+  const typed = (changes) => {
+    unsaved.current = { task, ...(unsaved.current?.task.id === task.id ? unsaved.current : {}), ...changes }
+  }
+  const saved = (key) => {
+    if (unsaved.current) delete unsaved.current[key]
+  }
+  useEffect(() => {
+    const shown = task.id
+    return () => {
+      const edits = unsaved.current
+      unsaved.current = null
+      if (!edits || edits.task.id !== shown) return
+      const changes = {}
+      const nextTitle = String(edits.title ?? "").replace(/\s+/g, " ").trim()
+      if (nextTitle && nextTitle !== edits.task.title) changes.title = nextTitle
+      if (edits.notes != null && edits.notes !== (edits.task.notes || "")) changes.notes = edits.notes
+      if (Object.keys(changes).length) onChangeRef.current(edits.task, changes)
+    }
+  }, [task.id])
 
   useEffect(() => setTitle(task.title), [task.id, task.title])
   useEffect(() => setNotes(task.notes || ""), [task.id])
@@ -52,6 +76,7 @@ export function TaskPanel({ task, today, can, people, properties, propertiesLoad
 
   const done = task.status === "Completed"
   const saveTitle = () => {
+    saved("title")
     const next = title.replace(/\s+/g, " ").trim()
     if (!next) setTitle(task.title)
     else if (next !== task.title) onChange(task, { title: next })
@@ -85,11 +110,11 @@ export function TaskPanel({ task, today, can, people, properties, propertiesLoad
           disabled={!can.edit}
           aria-label="Task name"
           maxLength={300}
-          onChange={(event) => setTitle(event.target.value)}
+          onChange={(event) => { setTitle(event.target.value); typed({ title: event.target.value }) }}
           onBlur={saveTitle}
           onKeyDown={(event) => {
             if (event.key === "Enter") event.currentTarget.blur()
-            if (event.key === "Escape") { setTitle(task.title); event.currentTarget.blur() }
+            if (event.key === "Escape") { saved("title"); setTitle(task.title); event.currentTarget.blur() }
           }}
         />
         <RowMenu
@@ -150,8 +175,8 @@ export function TaskPanel({ task, today, can, people, properties, propertiesLoad
             disabled={!can.edit}
             placeholder={can.edit ? "Add details, steps or anything the assignee should know" : "No description"}
             maxLength={20000}
-            onChange={(event) => setNotes(event.target.value)}
-            onBlur={() => { if (notes !== (task.notes || "")) onChange(task, { notes }) }}
+            onChange={(event) => { setNotes(event.target.value); typed({ notes: event.target.value }) }}
+            onBlur={() => { saved("notes"); if (notes !== (task.notes || "")) onChange(task, { notes }) }}
           />
         </section>
 

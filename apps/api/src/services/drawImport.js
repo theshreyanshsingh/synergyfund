@@ -130,7 +130,8 @@ function fromWorkbook(draw) {
   return draw.source === WORKBOOK_SOURCE || /^workbook status/i.test(String(draw.notes || ""))
 }
 
-export async function importPortfolioRecords({ records, properties, draws, Draw, DrawBudget, Property, userName, totals }) {
+// Expense and ExpenseRequest (optional): which line items have costs filed against them, so a re-import keeps those.
+export async function importPortfolioRecords({ records, properties, draws, Draw, DrawBudget, Property, Expense, ExpenseRequest, userName, totals }) {
   const liveProperties = [...properties]
   let liveDraws = [...draws]
   let added = 0
@@ -165,7 +166,7 @@ export async function importPortfolioRecords({ records, properties, draws, Draw,
         if (!before.has(key)) before.set(key, [])
         before.get(key).push(line)
       }
-      property.scopeLines = record.lines.map((line) => {
+      const next = record.lines.map((line) => {
         const kept = before.get(normalize(line.title))?.shift()
         return {
           ...(kept?._id ? { _id: kept._id } : {}),
@@ -176,6 +177,17 @@ export async function importPortfolioRecords({ records, properties, draws, Draw,
           ...lineTracking(kept),
         }
       })
+      // A line the workbook no longer has stays when costs or requests are filed against it (as Clear keeps it), so
+      // they never point at a line that is gone.
+      const left = [...before.values()].flat().filter((line) => line?._id)
+      if (left.length && Expense && ExpenseRequest) {
+        const linked = new Set((await Promise.all([
+          Expense.distinct("scopeLineId", { propertyId: property._id, scopeLineId: { $in: left.map((line) => String(line._id)) } }),
+          ExpenseRequest.distinct("scopeLineId", { propertyId: property._id, scopeLineId: { $in: left.map((line) => String(line._id)) } }),
+        ])).flat().map(String))
+        next.push(...left.filter((line) => linked.has(String(line._id))))
+      }
+      property.scopeLines = next
       property.markModified?.("scopeLines")
     }
     await property.save()

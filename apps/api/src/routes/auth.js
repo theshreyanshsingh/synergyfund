@@ -5,6 +5,7 @@ import { CHIMES, RINGTONES, cleanSounds } from "@synergifund/shared"
 import { NativeDevice, User } from "../models/index.js"
 import jwt from "jsonwebtoken"
 import { recordActivity } from "../services/notify.js"
+import { disconnectChat } from "../services/chatHub.js"
 import { asyncHandler, sendError } from "../lib/http.js"
 import { publicUser } from "../lib/serialize.js"
 import { requireAuth, setSessionCookie, signSession } from "../middleware/auth.js"
@@ -132,6 +133,8 @@ authRouter.post(
     // Phones register again when the app is next opened with the new password.
     await NativeDevice.deleteMany({ userId: req.user._id })
     setSessionCookie(res, signSession(req.user))
+    // Chat connections end everywhere; this page connects again with its new session, the others can't.
+    disconnectChat([req.user._id])
     await recordActivity({ user: req.user, title: "Password changed", detail: "Changed their own password" })
     res.json({ user: publicUser(req.user) })
   }),

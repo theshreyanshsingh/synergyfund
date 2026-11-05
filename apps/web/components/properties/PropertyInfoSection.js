@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react"
 import Link from "next/link"
-import { POLICY_BILLING, POLICY_STATUSES, POLICY_TYPES, TAX_YEAR_MAX, TAX_YEAR_MIN, UTILITY_CHOICES, insurancePolicies, policyActive, policyName, policyPaymentAmount, policyTitle, propertyUtilities, taxYears, teamYear } from "@synergifund/shared"
+import { POLICY_BILLING, POLICY_STATUSES, POLICY_TYPES, TAX_YEAR_MAX, TAX_YEAR_MIN, UTILITY_CHOICES, insurancePolicies, policyActive, policyName, policyPaymentAmount, policyTitle, propertyUtilities, taxYears, teamDay, teamYear } from "@synergifund/shared"
 import { FormSheet } from "../ui/FormSheet"
 import { StatusPill } from "../ui/StatusPill"
 import { api } from "../../lib/api"
@@ -26,9 +26,9 @@ function shown(value, empty = "Not entered") {
   return value == null || value === "" ? <span className="info-empty">{empty}</span> : value
 }
 
+// The team's today (New York), as the rest of the app counts what is due and late.
 function todayKey() {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
+  return teamDay()
 }
 
 // Where a due date stands today: overdue (not marked paid), due this week, or later.
@@ -37,8 +37,8 @@ function dueState(due) {
   if (!DAY.test(day)) return ""
   const today = todayKey()
   if (day < today) return "overdue"
-  const week = new Date()
-  week.setDate(week.getDate() + 7)
+  const [year, month, date] = today.split("-").map(Number)
+  const week = new Date(year, month - 1, date + 7)
   return day <= `${week.getFullYear()}-${String(week.getMonth() + 1).padStart(2, "0")}-${String(week.getDate()).padStart(2, "0")}` ? "soon" : "later"
 }
 

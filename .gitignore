@@ -1,5 +1,7 @@
 node_modules
 .next
+# A test run's own Next.js build (NEXT_DIST_DIR in apps/web/next.config.js)
+.next-*
 apps/api/uploads
 # Backups kept on this server when Amazon S3 is not set up (Settings › Backups)
 apps/api/backups

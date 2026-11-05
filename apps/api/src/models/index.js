@@ -183,6 +183,9 @@ export const Property = register(
       position: Number,
       importSource: sourceSchema,
       updatedBy: String,
+      // The last tax or insurance payment marked paid (which one, and when): the same one again within a minute is a
+      // double tap, not a second payment (routes/properties.js /:id/paid).
+      paidMark: { key: String, at: Date },
     },
     { timestamps: true },
   ).plugin(sealedFields, { model: "Property", fields: SEALED_FIELDS.Property }),

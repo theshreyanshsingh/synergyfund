@@ -168,7 +168,7 @@ export default function MembersPage() {
         // Phones: name and role on one line with Modify and Delete; a tap shows access and title.
         collapsible
         openLabel="Edit member"
-        empty="Invite the first person and choose what they can do."
+        empty={list.error || "Invite the first person and choose what they can do."}
       />
       {draft && (
         <div className="sheet-backdrop" onMouseDown={() => setDraft(null)}>

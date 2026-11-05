@@ -39,6 +39,29 @@ async function addressOf(propertyId) {
   return property?.address || ""
 }
 
+const OBJECT_ID = /^[a-f0-9]{24}$/i
+
+// The property, when this person may work on its draws: a contractor (given draw access) only the houses they are on.
+// Null for a malformed id too, so it is a 404, never a server error.
+async function workableProperty(req, propertyId) {
+  if (!OBJECT_ID.test(String(propertyId || ""))) return null
+  return Property.findOne({ ...propertyFilter(req.user), _id: propertyId }).select("_id address")
+}
+
+// A draw (or a draw budget) by its id, on a property this person may work on.
+async function workable(req, Model, id) {
+  if (!OBJECT_ID.test(String(id || ""))) return null
+  const record = await Model.findById(id)
+  return record && (await workableProperty(req, record.propertyId)) ? record : null
+}
+
+// A draw's money: blank, or zero or more (a negative amount would lower what is drawn and left). Null when it can't be.
+function drawMoney(value) {
+  if (value === "" || value == null) return undefined
+  const number = Number(String(value).replace(/[$,]/g, ""))
+  return Number.isFinite(number) && number >= 0 ? number : null
+}
+
 export function presentDraw(item) {
   const lines = (item.lines || []).map((line) => ({
     id: String(line._id),
@@ -202,6 +225,8 @@ drawsRouter.post(
   "/import",
   requirePermission("imports.run"),
   requirePermission("draws.write"),
+  // (A workbook covers the whole portfolio.)
+  blockContractors,
   receiveFile("file"),
   asyncHandler(async (req, res) => {
     if (!req.file) {
@@ -260,6 +285,7 @@ drawsRouter.post(
   "/import/:id/confirm",
   requirePermission("imports.run"),
   requirePermission("draws.write"),
+  blockContractors,
   asyncHandler(async (req, res) => {
     const job = await ImportJob.findById(req.params.id)
     if (!job || job.type !== "draws" || job.status !== "Draft") {
@@ -277,6 +303,8 @@ drawsRouter.post(
         Draw,
         DrawBudget,
         Property,
+        Expense,
+        ExpenseRequest,
         userName: req.user.name,
         totals: portfolio.totals,
       })
@@ -504,6 +532,16 @@ drawsRouter.post(
   "/budgets",
   requirePermission("draws.write"),
   asyncHandler(async (req, res) => {
+    if (!(await workableProperty(req, req.body.propertyId))) {
+      sendError(res, 404, "That property is not available.")
+      return
+    }
+    for (const field of ["budget", "fundingLimit", "fundingPercent"]) {
+      if (drawMoney(req.body[field]) === null) {
+        sendError(res, 400, `${field} needs to be zero or more.`)
+        return
+      }
+    }
     const budget = await DrawBudget.create({
       propertyId: req.body.propertyId,
       title: req.body.title || "Rehab funding",
@@ -530,7 +568,7 @@ drawsRouter.patch(
   "/budgets/:id",
   requirePermission("draws.write"),
   asyncHandler(async (req, res) => {
-    const budget = await DrawBudget.findById(req.params.id)
+    const budget = await workable(req, DrawBudget, req.params.id)
     if (!budget) {
       sendError(res, 404, "That draw budget was not found.")
       return
@@ -564,10 +602,19 @@ drawsRouter.post(
       sendError(res, 400, "A draw needs a property and a name.")
       return
     }
+    if (!(await workableProperty(req, req.body.propertyId))) {
+      sendError(res, 404, "That property is not available.")
+      return
+    }
     const lines = parseDrawLines(req.body.lines)
+    const problem = moneyProblem(req.body, lines)
+    if (problem) {
+      sendError(res, 400, problem)
+      return
+    }
     const draw = await Draw.create({
       propertyId: req.body.propertyId,
-      budgetId: req.body.budgetId || undefined,
+      budgetId: OBJECT_ID.test(String(req.body.budgetId || "")) ? req.body.budgetId : undefined,
       title: req.body.title,
       status: req.body.status || "Requested",
       amount: lines.some((line) => line.amount != null)
@@ -608,14 +655,19 @@ drawsRouter.get(
     const header = ["Property", "City", "Total budget", "Lender funding", "Draw", "Status", "Line item", "Description", "Line budget", "Line amount", "Draw amount", "Pulled", "Remaining", "Forecast finish", "Funded date"]
     const rows = [header]
     const key = (title) => String(title || "").toLowerCase().replace(/\s+/g, " ").trim()
+    // Grouped once (filtering every draw again for each house took most of a minute on a big portfolio).
+    const drawsOf = groupByProperty(draws)
+    // (The first budget of a house, as before.)
+    const budgetOf = new Map()
+    for (const item of budgets) if (!budgetOf.has(String(item.propertyId))) budgetOf.set(String(item.propertyId), item)
     for (const property of properties) {
       if (!allowedIds.has(String(property._id))) continue
-      const budget = budgets.find((item) => String(item.propertyId) === String(property._id))
+      const budget = budgetOf.get(String(property._id))
       const totalBudget = property.rehabBudget ?? budget?.budget ?? ""
       const lender = budget?.fundingLimit ?? ""
       const scope = new Map((property.scopeLines || []).map((line) => [key(line.title), line]))
       const used = new Set()
-      const own = draws.filter((draw) => String(draw.propertyId) === String(property._id))
+      const own = drawsOf.get(String(property._id)) || []
       for (const draw of own) {
         const view = presentDraw(draw)
         const lines = view.lines.length ? view.lines : [{ title: "", description: "", amount: "" }]
@@ -664,9 +716,14 @@ drawsRouter.patch(
   "/:id",
   requirePermission("draws.write"),
   asyncHandler(async (req, res) => {
-    const draw = await Draw.findById(req.params.id)
+    const draw = await workable(req, Draw, req.params.id)
     if (!draw) {
       sendError(res, 404, "That draw was not found.")
+      return
+    }
+    const problem = moneyProblem({ amount: req.body.amount }, "lines" in req.body ? parseDrawLines(req.body.lines) : [])
+    if (problem) {
+      sendError(res, 400, problem)
       return
     }
     const before = draw.toObject()
@@ -709,7 +766,7 @@ drawsRouter.delete(
   "/:id",
   requirePermission("draws.write"),
   asyncHandler(async (req, res) => {
-    const draw = await Draw.findById(req.params.id)
+    const draw = await workable(req, Draw, req.params.id)
     if (!draw) {
       sendError(res, 404, "That draw was not found.")
       return
@@ -724,16 +781,22 @@ drawsRouter.post(
   "/:id/pull",
   requirePermission("draws.write"),
   asyncHandler(async (req, res) => {
-    const draw = await Draw.findById(req.params.id)
-    if (!draw) {
+    const found = await workable(req, Draw, req.params.id)
+    if (!found) {
       sendError(res, 404, "That draw was not found.")
       return
     }
-    draw.status = "Funded"
-    draw.fundedDate = draw.fundedDate || teamToday()
+    // Claimed in one step, so a second tap (or a second person) can't pull it again: one report, one notice.
     // Nothing pulled yet (blank, or 0 after a funded draw was moved back to pending): the lender funded the full draw.
-    if (!(Number(draw.fundedAmount) > 0)) draw.fundedAmount = draw.amount
-    await draw.save()
+    const draw = await Draw.findOneAndUpdate(
+      { _id: found._id, status: { $ne: "Funded" } },
+      { $set: { status: "Funded", fundedDate: found.fundedDate || teamToday(), fundedAmount: Number(found.fundedAmount) > 0 ? found.fundedAmount : found.amount } },
+      { new: true },
+    )
+    if (!draw) {
+      sendError(res, 409, "This draw was already pulled.")
+      return
+    }
     const report = await comparePhotosForDraw(draw)
     // Every admin except whoever pulled it.
     await notify({
@@ -863,6 +926,14 @@ function moneyOrZero(value) {
 
 function countsAsRehab(expense) {
   return expense.costTreatment !== "Exclude from construction margin"
+}
+
+// A message when a draw's amount, pulled amount or a line's amount is not zero or more.
+function moneyProblem(body, lines) {
+  if (drawMoney(body.amount) === null) return "The amount needs to be zero or more."
+  if (drawMoney(body.fundedAmount) === null) return "Pulled needs to be zero or more."
+  if (lines.some((line) => line.amount != null && line.amount < 0)) return "Each line's amount needs to be zero or more."
+  return ""
 }
 
 function parseDrawLines(value) {

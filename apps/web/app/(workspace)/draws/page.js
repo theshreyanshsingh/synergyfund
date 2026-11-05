@@ -51,6 +51,7 @@ export default function DrawsPage() {
   const totals = useMemo(() => sumProjects(projects), [projects])
 
   const [addFor, setAddFor] = useState("")
+  const pulling = useRef(new Set())
   const addProject = projects.find((project) => project.id === addFor)
 
   function chooseProperty(event) {
@@ -192,10 +193,19 @@ export default function DrawsPage() {
     await data.reload()
   }
 
+  // One pull per draw at a time: each would make another photo report and another notice.
   async function pull(id) {
-    const result = await api(`/draws/${id}/pull`, { method: "POST", body: {} })
-    setReport(result.report)
-    data.reload()
+    if (pulling.current.has(id)) return
+    pulling.current.add(id)
+    try {
+      const result = await api(`/draws/${id}/pull`, { method: "POST", body: {} })
+      setReport(result.report)
+    } catch (err) {
+      window.alert(err.message)
+    } finally {
+      pulling.current.delete(id)
+      data.reload()
+    }
   }
 
   if (data.loading && !data.data) {
@@ -1122,7 +1132,7 @@ function collectEvents(projects) {
       const pulled = Number(line.pulled) || funded
       if ((line.status === "Funded" || pulled > 0) && pulled > 0) {
         events.push({ id: `${line.id}-in`, kind: "received", date: line.fundedDate || "", amount: pulled, title: line.title, address: project.address })
-      } else if (line.requestedDate && amount > funded) {
+      } else if (ISO_DAY.test(String(line.requestedDate || "")) && amount > funded) {
         events.push({
           id: `${line.id}-fc`,
           kind: "forecast",
@@ -1140,7 +1150,15 @@ function collectEvents(projects) {
 function groupWeeks(events) {
   const today = weekStart(new Date())
   const weeks = []
+  // Money with no usable date (a draw funded without one, or imported as text) goes at the end, not in an
+  // "Invalid Date" week.
+  const undated = { key: "none", label: "No date", span: "", amount: 0, events: [] }
   for (const event of events) {
+    if (!ISO_DAY.test(String(event.date || ""))) {
+      undated.amount += event.amount
+      undated.events.push(event)
+      continue
+    }
     const start = weekStart(new Date(`${event.date}T12:00:00`))
     const key = iso(start)
     let week = weeks.find((item) => item.key === key)
@@ -1155,7 +1173,7 @@ function groupWeeks(events) {
     week.amount += event.amount
     week.events.push(event)
   }
-  return weeks
+  return undated.events.length ? [...weeks, undated] : weeks
 }
 
 function drawIndex(title) {
@@ -1209,8 +1227,12 @@ function fmtDay(date) {
   return `${date.getMonth() + 1}/${date.getDate()}`
 }
 
+// "11/15/26" for a day; a date imported as typed ("15-Nov-26", "TBD") shows as it was written.
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
+
 function shortDate(value) {
   if (!value) return ""
+  if (!ISO_DAY.test(String(value))) return String(value)
   const [year, month, day] = value.split("-")
   return `${Number(month)}/${Number(day)}/${year.slice(2)}`
 }

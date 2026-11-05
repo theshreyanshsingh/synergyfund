@@ -179,6 +179,8 @@ export default function PropertyDetailPage({ params }) {
                 for (const shot of shots) URL.revokeObjectURL(shot.url)
                 setShots([])
                 element.reset()
+                // (A typed field the reset doesn't clear: next week's photos start with an empty note.)
+                setNote("")
                 detail.reload()
               } catch (err) {
                 setMessage(err.message)
@@ -453,6 +455,8 @@ export default function PropertyDetailPage({ params }) {
             <p className="chat-form-hint wide">To work out the ARV from comparable sales, open the ARV tab.</p>
             <label className="field"><span>Rehab budget</span><input value={editing.rehabBudget} onChange={(event) => setEditing({ ...editing, rehabBudget: event.target.value })} /></label>
             <label className="field"><span>Actual rent</span><input value={editing.actualRent} onChange={(event) => setEditing({ ...editing, actualRent: event.target.value })} /></label>
+            {/* What the house would rent for (the refinance's rental estimate and the lender's copy). */}
+            <label className="field"><span>Market rent</span><input value={editing.marketRent} inputMode="decimal" placeholder="Monthly" onChange={(event) => setEditing({ ...editing, marketRent: event.target.value })} /></label>
             <label className="field"><span>Rent status</span><input value={editing.rentStatus} onChange={(event) => setEditing({ ...editing, rentStatus: event.target.value })} /></label>
             <label className="field"><span>Market</span><input value={editing.rentMarket} onChange={(event) => setEditing({ ...editing, rentMarket: event.target.value })} /></label>
             <label className="field"><span>Company (owner)</span>
@@ -519,6 +523,8 @@ function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, proje
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [addingCost, setAddingCost] = useState(false)
+  // While a cost is being sent (photos can take a while on a phone), so a second tap can't post it twice.
+  const [costPending, setCostPending] = useState(false)
   const [proofs, setProofs] = useState([])
   const [error, setError] = useState("")
 
@@ -584,6 +590,7 @@ function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, proje
           onClose={() => setAddingCost(false)}
           onSubmit={async (event) => {
               event.preventDefault()
+              if (costPending) return
               setError("")
               if (!canPost && !proofs.length) {
                 setError("Take at least one photo with the camera.")
@@ -596,15 +603,20 @@ function DrawFold({ draw, canEdit, canPost, canRequest, costs, propertyId, proje
               body.set("entity", "Construction company")
               body.set("costTreatment", "Include in construction margin")
               for (const shot of proofs) body.append("proof", shot.file, shot.file.name)
+              setCostPending(true)
               try {
                 await api(canPost ? "/expenses/post" : "/expenses", { method: "POST", body })
                 setAddingCost(false)
                 onSaved()
               } catch (err) {
                 setError(err.message)
+              } finally {
+                setCostPending(false)
               }
             }}
           submitLabel={canPost ? "Add cost" : "Submit request"}
+          pending={costPending}
+          pendingLabel={canPost ? "Adding…" : "Sending…"}
           error={error}
         >
             <div className="form-grid">

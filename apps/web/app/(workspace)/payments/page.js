@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, can } from "@synergifund/shared"
+import { PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, can, teamDay } from "@synergifund/shared"
 import { FormSheet } from "../../../components/ui/FormSheet"
 import { RowMenu } from "../../../components/ui/RowMenu"
 import { StatusPill } from "../../../components/ui/StatusPill"
@@ -16,9 +16,9 @@ function cash(value) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: number % 1 ? 2 : 0, maximumFractionDigits: 2 }).format(number)
 }
 
+// The team's today (New York), as Home and the property pages count it, so "Overdue" agrees on every device.
 function today() {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
+  return teamDay()
 }
 
 function shift(key, days) {
@@ -133,7 +133,8 @@ export default function PaymentsPage() {
         title="Upcoming payments"
         action={canPay ? { label: "Add payment", onClick: () => open(null) } : null}
         lead={notice ? <p className={notice.ok ? "settings-note members-notice" : "banner members-notice"}>{notice.text}</p> : null}
-        stats={[
+        // (Not loaded: the reason, not $0 and "Nothing late".)
+        stats={list.error || expenses.error ? [] : [
           { label: "Due in 30 days", value: cash(dueSoon.reduce((sum, item) => sum + Number(item.amount || 0), 0)), hint: `${dueSoon.length} ${dueSoon.length === 1 ? "payment" : "payments"}, overdue included` },
           { label: "Overdue", value: String(overdue.length), hint: overdue.length ? cash(overdue.reduce((sum, item) => sum + Number(item.amount || 0), 0)) : "Nothing late" },
           { label: "Repeating", value: String(unpaid.filter((item) => item.recurrence && item.recurrence !== "One time").length), hint: "Scheduled again when paid" },
@@ -164,7 +165,7 @@ export default function PaymentsPage() {
         ]}
         rows={rows}
         onRow={canPay ? (row) => !row.posted && row.status !== "Paid" && open(row) : undefined}
-        empty={canPay ? "No payments yet. Add a mortgage, tax, insurance or any other payment and it shows on the calendar." : "No payments scheduled."}
+        empty={list.error || expenses.error || (canPay ? "No payments yet. Add a mortgage, tax, insurance or any other payment and it shows on the calendar." : "No payments scheduled.")}
       />
       {editing && (
         <FormSheet

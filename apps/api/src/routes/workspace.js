@@ -286,7 +286,8 @@ async function readBill(req, res, existing) {
   }
   if (!existing || "due" in body) {
     const due = String(body.due || "").slice(0, 10)
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(due) || Number.isNaN(new Date(`${due}T00:00:00`).getTime())) {
+    // A day on the calendar: "2026-02-31" is refused, not rolled over to March 3.
+    if (!isDay(due)) {
       sendError(res, 400, "Choose the date the payment is due.")
       return null
     }
@@ -393,19 +394,18 @@ workspaceRouter.post(
   "/bills/:id/pay",
   requirePermission("expenses.approve"),
   asyncHandler(async (req, res) => {
-    const bill = await Bill.findOne({ _id: req.params.id, ...(await billScope(req.user)) }).catch(() => null)
-    if (!bill) {
+    const found = await Bill.findOne({ _id: req.params.id, ...(await billScope(req.user)) }).catch(() => null)
+    if (!found) {
       sendError(res, 404, "That payment was not found.")
       return
     }
-    if (bill.status === "Paid") {
+    // Marked paid in one step, so a second tap posts nothing more (one cost, one next payment).
+    const paidOn = todayKey()
+    const bill = await Bill.findOneAndUpdate({ _id: found._id, status: { $ne: "Paid" } }, { $set: { status: "Paid", paidOn } }, { new: true })
+    if (!bill) {
       sendError(res, 400, "That payment is already marked paid.")
       return
     }
-    const paidOn = todayKey()
-    bill.paidOn = paidOn
-    bill.status = "Paid"
-    await bill.save()
     await Expense.create({
       propertyId: bill.propertyId,
       title: bill.title,
@@ -926,6 +926,8 @@ workspaceRouter.post(
     user.sessionVersion = (user.sessionVersion || 0) + 1
     await user.save()
     await NativeDevice.deleteMany({ userId: user._id })
+    // Their open chat connections end too (they could otherwise keep reading channels on a lost phone).
+    disconnectChat([user._id])
     const mail = await notify({
       userIds: [user._id],
       title: "Your SynergiFund password was reset",

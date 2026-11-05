@@ -30,6 +30,7 @@ export function BackupSettings() {
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
   const [saving, setSaving] = useState(false)
+  const [starting, setStarting] = useState(false)
   const [restoring, setRestoring] = useState(null)
   const [file, setFile] = useState(null)
   const fileRef = useRef(null)
@@ -94,14 +95,19 @@ export function BackupSettings() {
     }
   }
 
+  // (Starting: until the server answers, so a second tap doesn't ask for a second backup.)
   async function backUpNow() {
+    if (starting) return
     setError("")
     setMessage("")
+    setStarting(true)
     try {
       const data = await api("/backups", { method: "POST", body: {} })
       setState((current) => ({ ...current, job: data.job }))
     } catch (err) {
       setError(err.message)
+    } finally {
+      setStarting(false)
     }
   }
 
@@ -144,7 +150,7 @@ export function BackupSettings() {
             <p>Download one to keep a copy of your own, or restore one to put everything back the way it was then.</p>
           </div>
           <div className="settings-actions settings-wide">
-            <button type="button" className="primary" onClick={backUpNow} disabled={running}>{running && state.job.type === "backup" ? "Backing up…" : "Back up now"}</button>
+            <button type="button" className="primary" onClick={backUpNow} disabled={running || starting}>{starting || (running && state.job.type === "backup") ? "Backing up…" : "Back up now"}</button>
           </div>
           {running && (
             <p className="backups-progress settings-wide"><span className="spinner tw:animate-spin" /> {state.job.type === "restore" ? "Restoring" : "Backing up"}: {state.job.step}</p>

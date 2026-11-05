@@ -68,7 +68,7 @@ export default function NotificationsPage() {
         ]}
         rows={list.data?.mail || []}
         important={(row) => row.status === "Failed"}
-        empty="No emails sent yet."
+        empty={list.error || "No emails sent yet."}
       />
     )
   }
@@ -90,7 +90,7 @@ export default function NotificationsPage() {
       // Opens what the notification is about: the draw's property, the expense list, the company…
       onRow={(row) => { if (row.href) router.push(row.href) }}
       important={(row) => !row.read}
-      empty="No notifications yet."
+      empty={list.error || "No notifications yet."}
     />
   )
 }

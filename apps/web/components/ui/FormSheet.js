@@ -1,4 +1,14 @@
+"use client"
+
+import { useEffect, useRef } from "react"
+
+// A form in a sheet. Its error shows at the top of the form, and comes into view when it appears: on a phone you tap
+// Save at the bottom of a long form, and a message out of sight looks like nothing happened.
 export function FormSheet({ eyebrow, title, hint, onClose, onSubmit, submitLabel, pending, pendingLabel, error, children }) {
+  const banner = useRef(null)
+  useEffect(() => {
+    if (error) banner.current?.scrollIntoView({ block: "nearest", behavior: "smooth" })
+  }, [error])
   return (
     <div className="sheet-backdrop" onMouseDown={onClose}>
       <form className="member-sheet" onSubmit={onSubmit} onMouseDown={(event) => event.stopPropagation()}>
@@ -11,7 +21,7 @@ export function FormSheet({ eyebrow, title, hint, onClose, onSubmit, submitLabel
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">×</button>
         </header>
         <div className="member-sheet-body">
-          {error && <div className="banner">{error}</div>}
+          {error && <div ref={banner} className="banner" role="alert">{error}</div>}
           {children}
         </div>
         {onSubmit && (

@@ -1290,7 +1290,7 @@ export const TOOLS = [
       const contractor = context.user.role === "contractor"
       const and = []
       const where = []
-      if (contractor) and.push({ propertyId: { $in: properties.map((property) => property._id) } })
+      if (contractor) and.push({ propertyId: { $in: properties.map((property) => property._id) } }, ownReceipts(context.user))
       if (args.property) {
         const found = await findProperty(context, args.property)
         if (!found.property) return notFound(args.property, found.matches || [])
@@ -1442,7 +1442,7 @@ export const TOOLS = [
       if (!file || HIDDEN_KINDS.includes(file.kind)) return { success: false, error: "That document is not in the library. Find it with find_documents first." }
       if (context.user.role === "contractor") {
         const properties = await scopedProperties(context)
-        if (!file.propertyId || !properties.some((property) => String(property._id) === String(file.propertyId))) return { success: false, error: "That document is not available to you." }
+        if (!file.propertyId || !properties.some((property) => String(property._id) === String(file.propertyId)) || !mayReadReceipt(file, context.user)) return { success: false, error: "That document is not available to you." }
       }
       const question = String(args.question || "").trim().slice(0, 300)
       const key = `document:${id}:${question}`
@@ -1630,6 +1630,7 @@ export const TOOLS = [
       if (context.user.role === "contractor") {
         const properties = await scopedProperties(context)
         filter.propertyId = { $in: properties.map((property) => property._id) }
+        Object.assign(filter, ownReceipts(context.user))
       }
       const files = await DocumentFile.find(filter).select("name size")
       // One file under another name: the download is named so; the file itself is not renamed.
@@ -1919,7 +1920,7 @@ export const TOOLS = [
         add("task", tasks, (task) => [task.title, ...(task.labels || []), names.get(String(task.propertyId || ""))].filter(Boolean).join(" "), (task) => ({ label: task.title, detail: [task.due, names.get(String(task.propertyId || ""))].filter(Boolean).join(" · ") }))
       }
       if (allowed(PERMISSIONS.documentsRead)) {
-        const files = await DocumentFile.find(staff ? { kind: { $nin: HIDDEN_KINDS } } : { propertyId: { $in: ids }, kind: { $nin: HIDDEN_KINDS } }).select("name propertyId companyId kind labels folder docType").sort({ createdAt: -1 }).limit(20000)
+        const files = await DocumentFile.find(staff ? { kind: { $nin: HIDDEN_KINDS } } : { propertyId: { $in: ids }, kind: { $nin: HIDDEN_KINDS }, ...(context.user.role === "contractor" ? ownReceipts(context.user) : {}) }).select("name propertyId companyId kind labels folder docType").sort({ createdAt: -1 }).limit(20000)
         add("document", files, (file) => `${file.name} ${documentTypeName(effectiveType(file))}`, (file) => ({ label: file.name, detail: [documentTypeName(effectiveType(file)), names.get(String(file.propertyId || "")) || (file.kind === "file" ? "" : file.kind)].filter(Boolean).join(" · ") }))
       }
       if (staff && allowed(PERMISSIONS.expensesRead)) {
@@ -1954,6 +1955,15 @@ export function toolsFor(context) {
 
 export function toolSpecs(tools) {
   return tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }))
+}
+
+// A contractor sees receipts they filed, not what others spent (as in Documents and on Expenses).
+function ownReceipts(user) {
+  return { $or: [{ kind: { $ne: "receipt" } }, { uploadedBy: user._id }] }
+}
+
+function mayReadReceipt(file, user) {
+  return file.kind !== "receipt" || String(file.uploadedBy || "") === String(user._id)
 }
 
 // A model sometimes slips a quote or space into a name ("request”"): the name is read without it.

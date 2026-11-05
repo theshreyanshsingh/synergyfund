@@ -87,6 +87,15 @@ app.use((error, req, res, next) => {
     next(error)
     return
   }
+  // An id that isn't one (a mistyped link, an old bookmark): not found, not a server error with the database's words.
+  if (error.name === "CastError") {
+    res.status(404).json({ error: "That record was not found." })
+    return
+  }
+  if (error.name === "ValidationError" && Object.values(error.errors || {}).some((item) => item.name === "CastError")) {
+    res.status(400).json({ error: "Something in that request is not valid. Reload the page and try again." })
+    return
+  }
   const status = error.status || 500
   res.status(status).json({ error: error.message || "Something went wrong." })
 })

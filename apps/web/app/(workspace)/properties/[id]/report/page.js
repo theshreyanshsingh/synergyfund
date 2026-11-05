@@ -9,6 +9,7 @@ import { money, photoUrl, placedComps, shortDate, useCompLocations } from "../..
 import { addedLabel } from "../../../../../components/properties/PhotosSection"
 import { REPORT_SECTIONS, readReport } from "../../../../../components/properties/ReportSheet"
 import { useApi } from "../../../../../lib/useApi"
+import { inNativeApp } from "../../../../../lib/pwa"
 
 function key(title) {
   return String(title || "").toLowerCase().replace(/\s+/g, " ").trim()
@@ -46,6 +47,9 @@ export default function PropertyReport({ params }) {
   const [settings, setSettings] = useState(null)
   const [mapReady, setMapReady] = useState(false)
   const [printing, setPrinting] = useState(false)
+  // (Read after the page is up, so the first render matches the server's.)
+  const [inApp, setInApp] = useState(false)
+  useEffect(() => setInApp(inNativeApp()), [])
   const property = detail.data?.property
   const location = useCompLocations(property || { id, comps: [] }, Boolean(property && settings?.sections.includes("map")))
 
@@ -91,8 +95,16 @@ export default function PropertyReport({ params }) {
     <div className="report-page">
       <div className="report-toolbar">
         <Link href={`/properties/${id}`} className="import-button">Back to property</Link>
-        <span>{waitingOnMap ? "Loading the map…" : "Check the pages, then save as PDF. In the print window choose “Save as PDF”."}</span>
-        <button type="button" className="primary" disabled={printing || waitingOnMap} onClick={download}>{printing ? "Preparing…" : "Download PDF"}</button>
+        {/* The phone app has no print window to save the PDF from: say where it works instead of a button that does
+            nothing. */}
+        {inApp ? (
+          <span>To save this report as a PDF, open it on a computer or in Safari and press Download PDF.</span>
+        ) : (
+          <>
+            <span>{waitingOnMap ? "Loading the map…" : "Check the pages, then save as PDF. In the print window choose “Save as PDF”."}</span>
+            <button type="button" className="primary" disabled={printing || waitingOnMap} onClick={download}>{printing ? "Preparing…" : "Download PDF"}</button>
+          </>
+        )}
       </div>
 
       <article className="report-doc">
