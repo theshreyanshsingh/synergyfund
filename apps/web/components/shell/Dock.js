@@ -5,9 +5,9 @@ import { usePathname } from "next/navigation"
 import { can, navFor, PERMISSIONS } from "@synergifund/shared"
 import { Icon } from "../ui/Icon"
 
-// The pages in the dock along the bottom on phones, tablets and narrow windows (then Search, five in all): Home, the
-// Agent, Messages and Tasks. The sidebar leaves them out there; a computer screen keeps the full sidebar and no dock.
-export const DOCK = ["/home", "/knowledge", "/messages", "/tasks"]
+// The pages in the dock along the bottom on phones, tablets and narrow windows (then Search, five in all): Home, Tasks,
+// the Agent and Messages. The sidebar leaves them out there; a computer screen keeps the full sidebar and no dock.
+export const DOCK = ["/home", "/tasks", "/knowledge", "/messages"]
 // A contractor's dock: their jobs, expenses, tasks and messages, then More (Channels, Calls, Settings, the theme and
 // Log out). A computer screen keeps their top bar of links instead.
 export const CONTRACTOR_DOCK = ["/properties", "/expenses", "/tasks", "/messages"]
