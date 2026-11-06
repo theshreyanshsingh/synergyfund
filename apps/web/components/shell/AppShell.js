@@ -16,6 +16,7 @@ import { DownloadTray } from "./DownloadTray"
 import { Dock } from "./Dock"
 import { MoreSheet, useTheme } from "./MoreSheet"
 import { AgentSheet } from "../agent/AgentSheet"
+import { NavProgress } from "./NavProgress"
 import { notePage } from "../../lib/back"
 
 const NARROW = "(max-width: 1100px)"
@@ -49,6 +50,13 @@ export function AppShell({ children }) {
     document.documentElement.classList.add("has-shell")
     return () => document.documentElement.classList.remove("has-shell")
   }, [signedIn])
+
+  // iPhones show a pressed look (:active) only where something listens for touches.
+  useEffect(() => {
+    const press = () => {}
+    document.addEventListener("touchstart", press, { passive: true })
+    return () => document.removeEventListener("touchstart", press)
+  }, [])
 
   // Notes each page opened, so a detail page's Back can say where it goes ("← Calendar").
   useEffect(() => {
@@ -101,6 +109,7 @@ export function AppShell({ children }) {
     return (
       <div className="app is-contractor has-dock">
         <SkipLink />
+        <NavProgress />
         <header className="contractor-bar">
           <Link href="/properties" className="contractor-brand">
             <span className="mark">S</span>
@@ -141,6 +150,7 @@ export function AppShell({ children }) {
     <div className={shellClass}>
       {/* Keyboard and screen-reader users jump past the menu to the page. */}
       <SkipLink />
+      <NavProgress />
       <button type="button" className="nav-toggle" aria-label="Open sidebar" onClick={toggleMenu}>
         <Icon name="menu" size={18} />
       </button>

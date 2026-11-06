@@ -78,13 +78,17 @@ export function CommandPalette({ user, open, onClose }) {
   if (!open) return null
   let cursor = 0
   return (
-    <div className="backdrop" onMouseDown={onClose}>
+    <div className="backdrop palette-backdrop" onMouseDown={onClose}>
       <div className="palette" role="dialog" aria-label="Search" onMouseDown={(event) => event.stopPropagation()}>
-        <label className="palette-search">
-          <Icon name="search" size={16} />
-          <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={onKeyDown} placeholder={staff ? "Search properties, companies and pages" : "Search properties and pages"} />
-          <kbd>esc</kbd>
-        </label>
+        {/* On a phone: the whole screen, the box at the top with Cancel beside it (no Esc key there). */}
+        <div className="palette-top">
+          <label className="palette-search">
+            <Icon name="search" size={16} />
+            <input autoFocus type="search" enterKeyHint="go" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={onKeyDown} placeholder={staff ? "Search properties, companies and pages" : "Search properties and pages"} />
+            <kbd>esc</kbd>
+          </label>
+          <button type="button" className="palette-cancel" onClick={onClose}>Cancel</button>
+        </div>
         <div className="palette-list">
           {groups.map((group) => (
             <div key={group.label}>

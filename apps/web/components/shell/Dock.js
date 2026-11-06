@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { can, navFor, PERMISSIONS } from "@synergifund/shared"
@@ -38,11 +39,20 @@ export function Dock({ user, searching = false, onSearch, agentOpen = false, onA
   const pathname = usePathname()
   const items = dockItems(user)
   const covered = searching || Boolean(more?.open)
+  // The page tapped is lit at once, while it loads.
+  const [going, setGoing] = useState("")
+  useEffect(() => setGoing(""), [pathname])
+  useEffect(() => {
+    if (!going) return undefined
+    const timer = setTimeout(() => setGoing(""), 10000)
+    return () => clearTimeout(timer)
+  }, [going])
   return (
     <nav className="dock" aria-label="Main">
       {items.map((item) => {
         const agent = item.href === "/knowledge"
-        const on = !covered && (agent ? agentOpen || pathname === item.href : !agentOpen && docked(item.href, pathname))
+        const here = going ? going === item.href : agent ? agentOpen || pathname === item.href : !agentOpen && docked(item.href, pathname)
+        const on = !covered && here
         const count = item.href === "/messages" ? unread : 0
         return (
           <Link
@@ -50,12 +60,21 @@ export function Dock({ user, searching = false, onSearch, agentOpen = false, onA
             href={item.href}
             className={on ? "dock-link is-on" : "dock-link"}
             aria-current={on ? "page" : undefined}
+            data-no-progress={agent ? "" : undefined}
             onClick={(event) => {
               // On a phone the Agent slides up over the page (as from the menu) instead of opening its own page.
               if (agent && onAgent && pathname !== item.href && window.matchMedia(PHONE).matches) {
                 event.preventDefault()
                 onAgent()
+                return
               }
+              // Tapping the page you are on goes back to its top.
+              if (pathname === item.href && !agentOpen) {
+                event.preventDefault()
+                document.getElementById("main")?.scrollTo({ top: 0, behavior: "smooth" })
+                return
+              }
+              if (pathname !== item.href) setGoing(item.href)
             }}
           >
             <span className="dock-icon">

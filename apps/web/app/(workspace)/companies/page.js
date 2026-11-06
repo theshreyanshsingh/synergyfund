@@ -143,7 +143,8 @@ function CompaniesScreen() {
         ] : []}
         columns={[
           { key: "name", label: "Company", avatar: (row) => row.name, render: (row) => <span className="person-copy"><strong>{row.name}</strong><small>{[row.entityType, row.stateOfFormation].filter(Boolean).join(" · ") || "Type not set"}</small></span> },
-          { key: "properties", label: "Properties", peek: true, render: (row) => <span className="exposure-cell">{row.properties}<ExposureBadge count={row.properties} /></span> },
+          // (On a phone the count and the badge go under the name, as "13 properties".)
+          { key: "properties", label: "Properties", peek: true, className: "peek-below", render: (row) => <span className="exposure-cell"><span>{row.properties}<span className="exposure-unit"> {row.properties === 1 ? "property" : "properties"}</span></span><ExposureBadge count={row.properties} /></span> },
           { key: "loanBalance", label: "Loan balance", className: "num", render: (row) => row.loanBalance == null ? "—" : money(row.loanBalance) },
           { key: "monthlyPayment", label: "Monthly", className: "num", render: (row) => row.monthlyPayment == null ? "—" : money(row.monthlyPayment) },
           {

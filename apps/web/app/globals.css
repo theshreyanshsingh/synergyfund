@@ -1779,6 +1779,8 @@ a.agent-action { text-decoration: none; }
     display: flex; align-items: center; gap: 8px; width: 100%; margin: 0; padding: 9px 10px;
     border: 0; border-radius: 8px; background: transparent; color: var(--text); font-size: 14px; font-weight: 550; text-align: left;
   }
+  /* (Rows of a menu here, roomier than a button.) */
+  .app .main .header-actions .header-actions-menu > * { padding: 9px 10px !important; }
   .app .main .header-actions .header-actions-menu > *:hover { background: var(--hover); }
   .app .main .header-actions .header-actions-menu > .danger { order: 9; color: var(--bad); }
   .app .main .header-actions .header-actions-menu > .header-actions-phone { display: flex; }
@@ -4430,6 +4432,8 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
   .tasks-toolbar:not(:has(.tasks-new)) .tasks-search { grid-column: 1 / -1; }
   .tasks-search input { width: 100%; min-width: 0; font-size: 16px; }
   .tasks-new { grid-row: 1; grid-column: 2; height: 44px; margin: 0; }
+  /* (The box and New task the same height, side by side.) */
+  .tasks-search, .tasks-new { align-self: stretch; }
   .tasks-tools { grid-row: 2; grid-column: 1 / -1; display: flex; gap: 6px; margin: 0 -16px; padding: 0 16px 2px; overflow-x: auto; scrollbar-width: none; }
   .tasks-tools::-webkit-scrollbar { display: none; }
   .tasks-tools > * { flex: none; }
@@ -4468,4 +4472,241 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
 @media (pointer: coarse) {
   .title-copy { position: relative; }
   .title-copy::after { content: ""; position: absolute; inset: -7px; }
+}
+
+/* ---------- Phones: how it feels ---------- */
+
+/* A thin bar along the top while the page a link opened is on its way (NavProgress); a page that is ready shows first. */
+.nav-progress { position: fixed; top: 0; left: 0; right: 0; z-index: 200; height: 2px; background: var(--accent); opacity: 0; pointer-events: none; transform: scaleX(0); transform-origin: left; }
+.nav-progress.is-going { opacity: 1; transform: scaleX(0.8); transition: opacity 0.1s ease 0.12s, transform 6s cubic-bezier(0.08, 0.6, 0.2, 1) 0.12s; }
+.nav-progress.is-done { opacity: 0; transform: scaleX(1); transition: transform 0.18s ease-out, opacity 0.2s ease 0.2s; }
+@media (prefers-reduced-motion: reduce) { .nav-progress.is-going { transform: scaleX(0.6); transition: opacity 0.1s ease 0.12s; } }
+
+/* Touch screens: no grey flash on a tap; what you press dims, and buttons give a little under the finger. */
+@media (hover: none) {
+  :where(button, a[href], [role="button"], summary) { -webkit-tap-highlight-color: transparent; }
+  /* (The dim waits a moment, as on an iPhone, so a list doesn't flicker under a finger that is scrolling it.) */
+  :where(a[href]:not(.dock-link), button:not(:disabled, .dock-link), [role="button"]) { transition: opacity 0.18s ease; }
+  :where(a[href]:not(.dock-link), button:not(:disabled, .dock-link), [role="button"]):active { opacity: 0.6; transition: opacity 0s linear 0.06s; }
+  :where(.primary, .ghost, .tool, .import-button, .icon-btn, .cal-create-button, .calls-fab, .agent-send-button, .title-copy, .nav-toggle, .home-customize, .views .view, .cal-views button, .paycal-nav button, .paycal-head > button, .cal-day-actions button, .row-actions button, .tasks-tool, .tasks-new, .palette-cancel):not(:disabled) { transition: transform 0.12s ease, opacity 0.12s ease; }
+  :where(.primary, .ghost, .tool, .import-button, .icon-btn, .cal-create-button, .calls-fab, .agent-send-button, .title-copy, .nav-toggle, .home-customize, .views .view, .cal-views button, .paycal-nav button, .paycal-head > button, .cal-day-actions button, .row-actions button, .tasks-tool, .tasks-new, .palette-cancel):not(:disabled):active { opacity: 1; transform: scale(0.96); }
+}
+
+/* Phones and tablets: a new page fades in rather than snapping. */
+@media (max-width: 1100px) and (prefers-reduced-motion: no-preference) {
+  .main > * { animation: page-in 0.2s ease-out; }
+}
+@keyframes page-in { from { opacity: 0; } }
+
+@media (pointer: coarse) {
+  /* "← Properties" over a title: a taller place to tap than its small type. */
+  .app:not(.is-contractor) .main .detail-heading .back-link, .back-link { padding-block: 8px; margin-block: -8px -7px; }
+}
+
+@media (max-width: 760px) {
+  /* A page's own button by its title (New property, Add payment…) is just its + there, which leaves the title its room. */
+  .app:not(.is-contractor) .main .workspace-top .primary:has(> svg):not(.header-actions-menu *) { justify-content: center; width: auto; gap: 0; font-size: 0; }
+  .app:not(.is-contractor) .main .workspace-top .primary:has(> svg):not(.header-actions-menu *) > svg { width: 18px; height: 18px; }
+
+  /* The figures at the top of a page are one row that swipes sideways, so the list starts on the first screen. */
+  .stats { display: flex; gap: 10px; margin: 0 -16px 16px; padding: 2px 16px; overflow-x: auto; scroll-snap-type: x proximity; scroll-padding-inline: 16px; overscroll-behavior-x: contain; scrollbar-width: none; }
+  .stats::-webkit-scrollbar { display: none; }
+  .stats .stat { flex: none; width: 42vw; min-width: 142px; max-width: 210px; padding: 12px 14px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 14px; background: var(--white); scroll-snap-align: start; }
+  .stats .stat-label { font-size: 13px; }
+  .stats .stat-value { font-size: 22px; white-space: nowrap; }
+  .stats .stat-hint { display: -webkit-box; min-height: 0; margin-bottom: 0; overflow: hidden; font-size: 12px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+
+  /* A record's card: each detail on one line, its name on the left and the value on the right (a long note keeps its
+     own line under its name). */
+  .grid:not(.is-line) tr:not(.is-collapsed) > td[data-label]:not([data-primary="true"]):not(.pin-right):not(.phone-wide):not(.hide-phone):not(.phone-plain) { display: flow-root; flex: 1 1 100%; text-align: right; }
+  .grid:not(.is-line) tr:not(.is-collapsed) > td[data-label]:not([data-primary="true"]):not(.pin-right):not(.phone-plain)::before { margin-bottom: 2px; color: var(--muted); font-size: 13px; font-weight: 500; letter-spacing: 0; line-height: inherit; text-transform: none; }
+  .grid:not(.is-line) tr:not(.is-collapsed) > td[data-label]:not([data-primary="true"]):not(.pin-right):not(.phone-wide):not(.phone-plain)::before { float: left; margin: 0 12px 0 0; }
+  .grid:not(.is-line) tr:not(.is-collapsed) > td[data-label]:not([data-primary="true"]):not(.pin-right) > .person { justify-content: flex-end; }
+  .grid:not(.is-line) tr { gap: 7px 12px; }
+
+  /* Insights: a chart's key goes under its title instead of squeezing it. */
+  .overview-card-top { flex-wrap: wrap; }
+  .overview-card-top .overview-legend { order: 3; flex: 1 1 100%; justify-content: flex-start; max-width: none; padding-top: 0; }
+
+  .coming-soon-page { min-height: 60dvh; padding: 0 24px; }
+  .coming-soon-line { flex-direction: column; gap: 10px; }
+  .coming-soon-line i { display: none; }
+}
+
+/* Search: on a phone it is the whole screen, the box at the top with Cancel beside it. */
+.palette-top { display: flex; align-items: center; gap: 8px; }
+.palette-top .palette-search { flex: 1; min-width: 0; }
+.palette-cancel { display: none; }
+/* (A search box, so a phone's keyboard says Go; without the browser's own look or its clear button.) */
+.palette-search input { -webkit-appearance: none; appearance: none; }
+.palette-search input::-webkit-search-cancel-button, .palette-search input::-webkit-search-decoration { -webkit-appearance: none; }
+@media (max-width: 760px) {
+  .palette-backdrop { place-items: stretch; padding: 0; background: var(--white); }
+  .palette-backdrop .palette { display: flex; flex-direction: column; width: 100%; height: 100%; padding: calc(6px + env(safe-area-inset-top)) 16px 0; box-sizing: border-box; border: 0; border-radius: 0; box-shadow: none; animation: palette-in 0.18s ease-out; }
+  .palette-top { padding: 6px 0 10px; border-bottom: 1px solid var(--line); }
+  .palette-top .palette-search { border: 0; background: var(--hover); }
+  .palette-search input { font-size: 16px; }
+  .palette-search kbd { display: none; }
+  .palette-cancel { display: block; flex: none; border: 0; background: none; color: var(--accent); font-size: 16px; font-weight: 500; }
+  .palette-list { flex: 1; max-height: none; overflow-y: auto; overscroll-behavior: contain; padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+  .palette-label { padding-top: 16px; }
+  .palette-row { min-height: 48px; font-size: 16px; }
+  .palette-row span { font-size: 13px; }
+}
+@keyframes palette-in { from { opacity: 0; transform: translateY(10px); } }
+@media (prefers-reduced-motion: reduce) { .palette-backdrop .palette { animation: none; } }
+
+/* Calendar on a phone: the month is day numbers with a dot for each thing on them; a tap picks the day and its list shows
+   under the month, and a swipe goes to the next or previous month. */
+.paycal-dots { display: none; }
+@media (max-width: 640px) {
+  .paycal-main.is-month { height: auto; min-height: 0; }
+  /* (The day's Event and Task buttons stand in for the floating Create there.) */
+  .paycal:has(.paycal-main.is-month) .cal-create { display: none; }
+  .paycal-main.is-month .paycal-grid { flex: none; grid-template-rows: auto; grid-auto-rows: 50px; touch-action: pan-y; }
+  .paycal-main.is-month :is(.paycal-dow, .paycal-cell) { box-shadow: none; }
+  .paycal-main.is-month .paycal-cell { align-items: center; gap: 3px; padding: 3px 0 0; background: transparent; }
+  .paycal-main.is-month :is(.paycal-pill, .paycal-more) { display: none; }
+  .paycal-main.is-month .paycal-num { width: 34px; height: 34px; font-size: 15px; font-weight: 600; }
+  .paycal-main.is-month .paycal-cell.is-selected .paycal-num:not(.is-today) { background: var(--ink); color: var(--on-ink); }
+  .paycal-main.is-month .paycal-dots { display: flex; gap: 3px; height: 5px; }
+  .paycal-main.is-month .paycal-dots i { width: 5px; height: 5px; border-radius: 99px; }
+  .paycal-main.is-month .paycal-cell.is-outside .paycal-dots { opacity: 0.45; }
+  .cal-agenda { padding: 14px 16px 10px; border-top: 1px solid var(--line); }
+  .cal-agenda header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 10px; margin-bottom: 6px; }
+  .cal-agenda h2 { margin: 0; font-size: 16px; }
+  .cal-agenda .cal-day-actions { margin: 0; }
+  .cal-agenda .cal-empty { margin: 6px 0 10px; color: var(--muted); font-size: 14px; }
+  .cal-agenda .cal-day-item { padding: 12px 2px; }
+  .cal-agenda .cal-day-item strong { font-size: 15px; }
+  .cal-agenda .cal-day-item em { font-style: normal; color: var(--muted); font-size: 13px; }
+}
+
+/* A list's tools on a phone: one line, the search box across and Filters and Customize as icons beside it (a dot on
+   Filters while any are on); Sort under them. */
+@media (max-width: 760px) {
+  .workspace > .panel > .toolbar { flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px; }
+  .workspace > .panel > .toolbar .toolbar-left { display: contents; }
+  .workspace > .panel > .toolbar .toolbar-right { order: 1; flex: none; align-self: stretch; align-items: stretch; }
+  .workspace > .panel > .toolbar .filter-anchor { position: static; display: flex; align-self: stretch; }
+  .workspace > .panel > .toolbar .search { order: -1; flex: 1 1 0; min-width: 0; box-sizing: border-box; background: var(--hover); }
+  .workspace > .panel > .toolbar .tool { position: relative; align-self: stretch; justify-content: center; gap: 0; box-sizing: border-box; border: 1px solid var(--line); background: var(--white); font-size: 0; }
+  .workspace > .panel > .toolbar .tool > svg { width: 18px; height: 18px; }
+  .workspace > .panel > .toolbar .tool.is-active { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); color: var(--accent); }
+  .workspace > .panel > .toolbar .tool.is-active::after { content: ""; position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 99px; background: var(--accent); }
+  .workspace > .panel > .toolbar .sort-select { order: 5; flex: 1 1 100%; }
+  /* (Sort can be narrower than its longest choice.) */
+  .sort-select, .sort-select select { min-width: 0; }
+  .workspace > .panel > .toolbar .pop { top: calc(100% + 6px); }
+  .workspace > .panel > .toolbar .filter-pop { right: 12px; left: 12px; width: auto; }
+}
+
+/* Conversations on a phone: when each last had a message, at the right. */
+.chat-nav-when { display: none; }
+@media (max-width: 760px) {
+  .chat-nav-row .chat-nav-when { display: block; flex: none; color: var(--faint); font-size: 12.5px; font-weight: 500; }
+  .chat-nav-row.is-unread .chat-nav-when { color: var(--accent); font-weight: 600; }
+  .chat-nav-row.is-active .chat-nav-when { color: inherit; }
+}
+
+/* A list on a phone: its cards straight on the page (white on grey) rather than grey cards in a white box. A one-line
+   list (a contractor's houses) keeps its box, which its dividing lines need. */
+@media (max-width: 760px) {
+  .workspace > .panel:has(> .toolbar, .grid):not(.doc-panel, :has(.grid.is-line)) { border: 0; border-radius: 0; background: transparent; }
+  .workspace > .panel:has(> .toolbar, .grid):not(.doc-panel, :has(.grid.is-line)) > .toolbar { padding: 0 0 12px; }
+  .workspace > .panel:has(> .toolbar, .grid):not(.doc-panel, :has(.grid.is-line)) > .toolbar .search { border: 1px solid var(--line); background: var(--white); }
+  .workspace > .panel:has(> .toolbar, .grid):not(.doc-panel, :has(.grid.is-line)) .grid tbody { padding: 0; }
+  .workspace > .panel:has(> .toolbar, .grid):not(.doc-panel, :has(.grid.is-line)) .grid tr { background: var(--white); }
+  .workspace > .panel:has(> .toolbar, .grid):not(.doc-panel, :has(.grid.is-line)) .grid tr.is-expanded { background: color-mix(in srgb, var(--accent) 4%, var(--white)); }
+}
+
+/* Team activity on a phone: a feed. Who did what, with the time at the top right and the house after the person,
+   and the detail under them, without the table's labels. */
+.activity-short, .activity-at { display: none; }
+@media (max-width: 760px) {
+  .grid tr > td.phone-plain[data-label]:not([data-primary="true"])::before { display: none; }
+  .grid tr:has(> td.activity-when) { gap: 6px 12px; padding: 12px 14px; }
+  .grid tr:has(> td.activity-when) > td[data-primary="true"] { padding-right: 76px; }
+  .grid tr > td.activity-when { position: absolute; top: 13px; right: 14px; color: var(--faint); font-size: 12.5px; white-space: nowrap; }
+  .grid td.activity-when .activity-exact { display: none; }
+  .grid td.activity-when .activity-short, .grid .activity-at { display: inline; }
+  .grid tr > td.activity-detail { padding-left: 36px; color: var(--muted); font-size: 13.5px; line-height: 1.4; }
+  .grid td.activity-detail:has(.activity-none) { display: none; }
+}
+
+/* The narrowest phones (320–360 wide): the dock's names a point smaller, so "Messages" fits its slot. */
+@media (max-width: 360px) {
+  .dock-link { font-size: 11px; }
+}
+
+/* ---------- Buttons and fields: one shape, on a computer and on a phone ---------- */
+/* Every button and every field: 4px above and below, 8px at the sides and 6px corners (Tailwind's px-2 py-1
+   rounded-md), as tall as its words. An icon-only button keeps its square, with the same corners; a search box's
+   frame takes the shape and the box inside it stays bare. What only acts like a button keeps its own shape: a list's
+   rows and cards, headings that open and close, a calendar's or a date picker's days, checkboxes and switches, menu
+   rows, scrims, a call's round controls and links within a sentence. */
+:root { --control-y: 4px; --control-x: 8px; --control-radius: 6px; }
+
+:is(button, a.primary, a.ghost, a.tool, a.import-button, .chat-switch a, .doc-actions a):not(
+  .dock-link, .chat-nav-row, .palette-row, .overview-attn, .paycal-attn, .paycal-num, .paycal-pill, .paycal-more, .cal-day-item, .cal-day-head,
+  .more-row, .more-scrim, .more-switch, .menu-backdrop, .agent-panel-scrim, .agent-chat-open, .agent-chat-delete, .agent-chat-item-open, .agent-title-button,
+  .agent-worked-toggle, .user-button, .access-row, .th-sort, .tasks-edit, .task-name, .task-card-main, .task-card-status, .task-bubble, .tasks-group-head,
+  .tasks-menu-row, .task-pick-row, .scope-line-head, .draw-fold-head, .draw-property-head, .draw-lines-head, .line-card-head, .line-draw-head,
+  .company-owners-head, .chat-nav-heading > button:first-child, .cost-type-toggle, .folder-tile, .folders-toggle, .check, .task-check, .drag-handle, .overview-handle, .property-figure, .stat,
+  .overview-card, .comp-card, .legal-card, .home-row, .chat-result, .chat-image, .chat-attachment, .chat-thread-link, .chat-inline-link, .chat-head-link,
+  .tracking-thumb, .comp-photo-add, .import-row, .quick-row, .back-link, .crumbs-link, .crumbs-back, .doc-open, .doc-head-link, .company-file-link,
+  .cost-line-file, .table-link, .report-doc, .agent-doc-name, .agent-download, .call-round, .call-control, .call-pill, .camera-shutter, .skip-link,
+  .refi-banner, .multi-option, [role="menuitem"], [role="option"], [role="switch"], [role="menu"] *, [role="listbox"] *, .pop > *,
+  .date-picker-grid *, .paycal-mini-grid *, .task-pick-list *, p button
+) {
+  padding: var(--control-y) var(--control-x) !important;
+  border-radius: var(--control-radius) !important;
+}
+/* (A button with words is as tall as they are; one with only an icon, or a floating one, keeps its size.) */
+:is(button, a.primary, a.ghost, a.tool, a.import-button, .chat-switch a, .doc-actions a):not([aria-label], .icon-btn, .agent-icon-button, .agent-send-button,
+  .agent-action, .agent-sheet-icon, .row-menu-button, .sidebar-dismiss, .title-copy, .chat-nav-add, .chat-send, .home-customize, .nav-toggle, .multi-toggle,
+  .call-icon-button, .call-mini-icon, .cal-create-button, .calls-fab, .dock-link, .more-switch, .check, .task-check, .drag-handle, .overview-handle, .paycal-num,
+  .menu-backdrop, .more-scrim, .agent-panel-scrim, [role="menuitem"], [role="option"], [role="switch"], [role="menu"] *, .pop > *,
+  .date-picker-grid *, .paycal-mini-grid *, .chat-nav-heading > button:first-child, p button) {
+  height: auto !important;
+  min-height: 0 !important;
+}
+
+/* Fields, and the frames that hold a bare search box. */
+:is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"], [type="hidden"], [type="button"], [type="submit"], [type="reset"], [type="image"]), select, textarea):not(
+  :is(.search, .palette-search, .agent-panel-search, .agent-list-search, .draws-search, .chat-nav-search, .folders-search, .agent-sheet-search, .tasks-search,
+    .task-pick-search, .multi-box, .agent-box, .chat-box, .tasks-cell) *, .tasks-add-input, .task-panel-title, .cal-editor-title
+),
+.search, .palette-search, .agent-panel-search, .agent-list-search, .draws-search, .chat-nav-search, .folders-search, .agent-sheet-search, .tasks-search,
+.task-pick-search, .multi-box {
+  padding: var(--control-y) var(--control-x) !important;
+  border-radius: var(--control-radius) !important;
+}
+:is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"], [type="hidden"], [type="button"], [type="submit"], [type="reset"], [type="image"]), select):not(
+  :is(.search, .palette-search, .agent-panel-search, .agent-list-search, .draws-search, .chat-nav-search, .folders-search, .agent-sheet-search, .tasks-search,
+    .task-pick-search, .multi-box, .agent-box, .chat-box, .tasks-cell) *, .tasks-add-input, .task-panel-title, .cal-editor-title
+),
+.palette-search, .agent-panel-search, .agent-list-search, .draws-search, .chat-nav-search, .folders-search, .agent-sheet-search, .tasks-search, .task-pick-search {
+  height: auto !important;
+  min-height: 0 !important;
+}
+/* The password box keeps room at its right for Show. */
+.password-input input { padding-right: 56px !important; }
+
+/* Companies on a phone: how many houses it holds and its exposure go under its name, which keeps its own line. */
+.exposure-unit { display: none; }
+@media (max-width: 760px) {
+  .grid.is-collapsible tr.is-collapsed:has(> td.peek-below) > td[data-primary="true"] { flex: 1 1 calc(100% - 44px); }
+  .grid.is-collapsible tr.is-collapsed > td.peek-col.peek-below[data-label] { order: 2; flex: 1 1 100%; max-width: none; padding-left: 36px; color: var(--muted); font-size: 13px; }
+  .grid tr.is-collapsed .exposure-unit { display: inline; }
+}
+
+/* Documents on a phone: a file's name and details wrap rather than being cut off; on a narrow one the two lists take a
+   line each, so "All files (1026)" shows whole. */
+@media (max-width: 760px) {
+  .doc-copy strong { display: -webkit-box; overflow: hidden; white-space: normal; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .doc-copy small { white-space: normal; }
+}
+@media (max-width: 480px) {
+  .doc-select { flex: 1 1 100%; }
 }

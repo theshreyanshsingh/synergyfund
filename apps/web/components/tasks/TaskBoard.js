@@ -7,6 +7,7 @@ import { Icon } from "../ui/Icon"
 import { PageSpinner } from "../ui/Spinner"
 import { api } from "../../lib/api"
 import { useApi } from "../../lib/useApi"
+import { usePhone } from "../../lib/usePhone"
 import { DatePicker } from "./DatePicker"
 import { TaskPanel } from "./TaskPanel"
 import { Avatar, LabelOptions, PeopleOptions, PickerCell, PriorityOptions, PriorityPill, PropertyOptions, StatusOptions, StatusPill } from "./TaskPickers"
@@ -20,20 +21,6 @@ const ARRIVE_MS = 600
 const TOAST_MS = 5000
 const WIDTHS = { property: "150px", assignee: "160px", status: "128px", due: "108px", priority: "104px", labels: "170px", createdBy: "140px" }
 const NO_FILTERS = { status: [], priority: [], assignee: [], property: [], label: [], due: [] }
-const PHONE = "(max-width: 760px)"
-
-// True on a phone: the table becomes a list of cards there.
-function usePhone() {
-  const [phone, setPhone] = useState(() => typeof window !== "undefined" && window.matchMedia(PHONE).matches)
-  useEffect(() => {
-    const query = window.matchMedia(PHONE)
-    const update = () => setPhone(query.matches)
-    update()
-    query.addEventListener("change", update)
-    return () => query.removeEventListener("change", update)
-  }, [])
-  return phone
-}
 
 function mailProblem(mail) {
   const status = typeof mail === "string" ? mail : mail?.status

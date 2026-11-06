@@ -173,6 +173,7 @@ function NavLink({ item, count = 0, onNavigate, onAgent = null }) {
     <Link
       href={item.href}
       className={className}
+      data-no-progress={onAgent ? "" : undefined}
       onClick={(event) => {
         if (onAgent && pathname !== item.href && window.matchMedia(PHONE).matches) {
           event.preventDefault()

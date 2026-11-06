@@ -12,6 +12,7 @@ import { emitChat, setActiveChat, useChatEvents, useChatStatus } from "../../lib
 import { Avatar, ChatComposer } from "./ChatComposer"
 import { ChatMessages, ChatSafety, ReportDialog } from "./ChatMessages"
 import { channelTitle, clock, dayLabel, nameOf, plain, sameDay } from "./chatFormat"
+import { shortWhen } from "../../lib/format"
 import { CallButtons } from "../calls/CallButtons"
 
 const NARROW = "(max-width: 900px)"
@@ -665,6 +666,8 @@ function ChatNav({ mode, error, onDismissError, channels, people, peopleList, me
       <button key={channel.id} type="button" className={`chat-nav-row${channel.id === activeId ? " is-active" : ""}${unread ? " is-unread" : ""}`} onClick={() => onOpen(channel.id)} title={title}>
         {icon}
         <span>{title}</span>
+        {/* (Phones: when it last had a message, as in a phone's messages list.) */}
+        {channel.lastMessageAt && <small className="chat-nav-when">{shortWhen(channel.lastMessageAt)}</small>}
         {channel.mentions > 0 && <em>{channel.mentions}</em>}
       </button>
     )

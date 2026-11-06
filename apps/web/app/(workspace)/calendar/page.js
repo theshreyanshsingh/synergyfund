@@ -11,7 +11,10 @@ import { PageSpinner } from "../../../components/ui/Spinner"
 import { api } from "../../../lib/api"
 import { day, money } from "../../../lib/format"
 import { useApi } from "../../../lib/useApi"
+import { usePhone } from "../../../lib/usePhone"
 
+// On a phone the month is a grid of dots, with the picked day's list under it.
+const PHONE = "(max-width: 640px)"
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const KINDS = [
   { id: "event", label: "Events" },
@@ -53,6 +56,10 @@ function CalendarScreen() {
   const events = (data.data?.events || []).filter((event) => kinds[event.kind])
   const today = iso(new Date())
   const urgent = events.filter((event) => event.urgent)
+  const phone = usePhone(PHONE)
+  // The day listed under the month on a phone (a tap on a day picks it; elsewhere a tap opens the day's popover).
+  const [picked, setPicked] = useState(today)
+  const openDay = phone && view === "month" ? setPicked : setDayOpen
 
   // Remember the view; a link to a date (from an invitation) opens that day.
   useEffect(() => {
@@ -65,7 +72,8 @@ function CalendarScreen() {
     const date = params.get("date")
     if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
       setCursor(parse(date))
-      setDayOpen(date)
+      setPicked(date)
+      if (!window.matchMedia(PHONE).matches) setDayOpen(date)
     }
   }, [params])
 
@@ -94,7 +102,7 @@ function CalendarScreen() {
 
   function goTo(date) {
     setCursor(parse(date))
-    if (view === "month") setDayOpen(date)
+    if (view === "month") openDay(date)
   }
 
   function shift(direction) {
@@ -102,6 +110,8 @@ function CalendarScreen() {
     if (view === "month") next.setMonth(next.getMonth() + direction, 1)
     else next.setDate(next.getDate() + direction * (view === "week" ? 7 : 1))
     setCursor(next)
+    // A new month lists today if it is in it, else its first day.
+    if (view === "month") setPicked(today.slice(0, 7) === iso(next).slice(0, 7) ? today : iso(next))
   }
 
   // A new event or task, on a day (and time) or at the next full hour today.
@@ -167,10 +177,10 @@ function CalendarScreen() {
             ))}
           </div>
         </aside>
-        <section className="paycal-main">
+        <section className={view === "month" ? "paycal-main is-month" : "paycal-main"}>
           <header className="paycal-head">
             <h1>{title}</h1>
-            <button type="button" onClick={() => { setCursor(parse(today)); setDayOpen("") }}>Today</button>
+            <button type="button" onClick={() => { setCursor(parse(today)); setDayOpen(""); setPicked(today) }}>Today</button>
             <span className="paycal-nav">
               <button type="button" aria-label={`Previous ${view}`} onClick={() => shift(-1)}>‹</button>
               <button type="button" aria-label={`Next ${view}`} onClick={() => shift(1)}>›</button>
@@ -180,7 +190,21 @@ function CalendarScreen() {
             </span>
           </header>
           {!data.data && !data.error ? <PageSpinner /> : view === "month" ? (
-            <MonthView cursor={cursor} events={events} today={today} selected={dayOpen} onDay={setDayOpen} onItem={setDetail} />
+            <>
+              <MonthView cursor={cursor} events={events} today={today} selected={phone ? picked : dayOpen} onDay={openDay} onItem={setDetail} onSwipe={phone ? shift : null} />
+              {phone && (
+                <section className="cal-agenda" aria-live="polite">
+                  <header>
+                    <h2>{picked === today ? `Today · ${longDate(picked)}` : longDate(picked)}</h2>
+                    <span className="cal-day-actions">
+                      <button type="button" onClick={() => create("event", picked)}><Icon name="plus" size={14} /> Event</button>
+                      {canTask && <button type="button" onClick={() => create("task", picked)}><Icon name="plus" size={14} /> Task</button>}
+                    </span>
+                  </header>
+                  <DayItems items={events.filter((event) => event.date === picked)} onItem={setDetail} />
+                </section>
+              )}
+            </>
           ) : (
             <TimeGrid days={days} events={events} today={today} onDay={(date) => { setCursor(parse(date)); chooseView("day") }} onMore={setDayOpen} onSlot={(date, start) => create("event", date, start)} onItem={setDetail} />
           )}
@@ -222,10 +246,23 @@ function CalendarScreen() {
 
 /* ---------- month ---------- */
 
-function MonthView({ cursor, events, today, selected, onDay, onItem }) {
+// `onSwipe` (a phone): a swipe left or right across the month goes to the next or the previous one.
+function MonthView({ cursor, events, today, selected, onDay, onItem, onSwipe }) {
   const cells = useMemo(() => monthCells(cursor), [cursor])
+  const touch = useRef(null)
+  const swipe = onSwipe ? {
+    onTouchStart: (event) => { touch.current = { x: event.touches[0].clientX, y: event.touches[0].clientY } },
+    onTouchEnd: (event) => {
+      const start = touch.current
+      touch.current = null
+      if (!start) return
+      const dx = event.changedTouches[0].clientX - start.x
+      const dy = event.changedTouches[0].clientY - start.y
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) onSwipe(dx < 0 ? 1 : -1)
+    },
+  } : {}
   return (
-    <div className="paycal-grid">
+    <div className="paycal-grid" {...swipe}>
       {WEEKDAYS.map((day) => <div key={day} className="paycal-dow">{day}</div>)}
       {cells.map((cell) => {
         const key = iso(cell.date)
@@ -240,6 +277,8 @@ function MonthView({ cursor, events, today, selected, onDay, onItem }) {
               </button>
             ))}
             {matches.length > 3 && <em className="paycal-more">+{matches.length - 3} more</em>}
+            {/* (A phone shows a dot for each instead.) */}
+            {matches.length > 0 && <span className="paycal-dots" aria-hidden="true">{matches.slice(0, 3).map((event) => <i key={event.id} className={`tone-${event.tone}`} />)}</span>}
           </div>
         )
       })}
@@ -390,7 +429,6 @@ function Popover({ title, onClose, children, wide = false }) {
 }
 
 function DayList({ date, today, items, canTask, onClose, onCreate, onItem }) {
-  const sorted = sortDay(items)
   return (
     <Popover title={longDate(date)} onClose={onClose}>
       <header>
@@ -401,20 +439,27 @@ function DayList({ date, today, items, canTask, onClose, onCreate, onItem }) {
         <button type="button" onClick={() => onCreate("event")}><Icon name="plus" size={14} /> Event</button>
         {canTask && <button type="button" onClick={() => onCreate("task")}><Icon name="plus" size={14} /> Task</button>}
       </div>
-      {sorted.length === 0 && <p className="cal-empty">Nothing on this day yet.</p>}
-      <div className="cal-day-list">
-        {sorted.map((event) => (
-          <button key={event.id} type="button" className="cal-day-item" onClick={() => onItem(event)}>
-            <i className={`tone-${event.tone}`} />
-            <span>
-              <strong>{event.title}</strong>
-              <em>{[event.detail, kindLabel(event.kind), event.property].filter(Boolean).join(" · ")}</em>
-            </span>
-            {event.amount != null && <b>{money(event.amount)}</b>}
-          </button>
-        ))}
-      </div>
+      <DayItems items={items} onItem={onItem} />
     </Popover>
+  )
+}
+
+function DayItems({ items, onItem }) {
+  const sorted = sortDay(items)
+  if (sorted.length === 0) return <p className="cal-empty">Nothing on this day yet.</p>
+  return (
+    <div className="cal-day-list">
+      {sorted.map((event) => (
+        <button key={event.id} type="button" className="cal-day-item" onClick={() => onItem(event)}>
+          <i className={`tone-${event.tone}`} />
+          <span>
+            <strong>{event.title}</strong>
+            <em>{[event.detail, kindLabel(event.kind), event.property].filter(Boolean).join(" · ")}</em>
+          </span>
+          {event.amount != null && <b>{money(event.amount)}</b>}
+        </button>
+      ))}
+    </div>
   )
 }
 
