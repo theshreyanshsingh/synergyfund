@@ -1095,7 +1095,10 @@ workspaceRouter.get(
       // Events this person made or is invited to.
       CalendarEvent.find({ $or: [{ createdBy: req.user._id }, { guestIds: req.user._id }], date: { $gte: shiftKey(todayKey(), -180) } }).sort({ date: 1, start: 1 }),
     ])
-    const guestNames = new Map((await User.find({ _id: { $in: [...new Set(meetings.flatMap((event) => event.guestIds.map(String)))] } }).select("name")).map((user) => [String(user._id), user.name]))
+    const [guestNames, assignees] = await Promise.all([
+      User.find({ _id: { $in: [...new Set(meetings.flatMap((event) => event.guestIds.map(String)))] } }).select("name").then((users) => new Map(users.map((user) => [String(user._id), user.name]))),
+      assigneeMap(tasks),
+    ])
     const today = todayKey()
     const soon = shiftKey(today, 7)
     const monthOut = shiftKey(today, 30)
@@ -1221,6 +1224,8 @@ workspaceRouter.get(
           amount: null,
           status: task.priority || "",
           property: names.get(String(task.propertyId || "")) || "",
+          assigneeId: task.assigneeId ? String(task.assigneeId) : "",
+          assignee: assignees.get(String(task.assigneeId || ""))?.name || "",
           urgent: overdue || dueSoon,
           tone: overdue ? "bad" : dueSoon ? "warn" : "neutral",
           detail: overdue ? "Overdue" : dueSoon ? "Due soon" : task.priority || "Task",

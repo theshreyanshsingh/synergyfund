@@ -23,7 +23,9 @@ const SECTIONS = [
   { id: "tasks", name: "My tasks", hint: "Tasks assigned to you: overdue, today and this week" },
   { id: "catchup", name: "Catch up", hint: "Unread direct messages, mentions and missed calls" },
 ]
+const TODAY_SHOWN = 8
 const COMING_UP = 8
+const NEXT_UP = 3
 const MISSED_DAYS = 7
 
 export default function HomePage() {
@@ -49,8 +51,9 @@ export default function HomePage() {
   })
   const shows = (id) => available.some((section) => section.id === id) && !hidden.includes(id)
 
-  // The calendar feeds Today and the payments in the greeting; chat and calls feed Catch up.
-  const calendar = useApi(seesCalendar && (shows("today") || shows("greeting")) ? "/calendar" : null)
+  // The calendar feeds Today and the payments in the greeting; chat and calls feed Catch up. Its tasks are the team's
+  // for those who can see every task (the server decides), else this person's.
+  const calendar = useApi(seesCalendar && (shows("today") || shows("greeting")) ? "/calendar?tasks=all" : null)
   const bootstrap = useApi(chats && shows("catchup") ? "/chat/bootstrap" : null)
   const calls = useApi(chats && shows("catchup") ? "/calls" : null)
   const refreshTimer = useRef(null)
@@ -72,7 +75,7 @@ export default function HomePage() {
 
   const today = home.data.today
   const week = shiftDay(today, 7)
-  const events = (calendar.data?.events || []).filter((event) => event.kind !== "task" && event.kind !== "expense")
+  const events = calendar.data?.events || []
   const payments = (calendar.data?.events || []).filter((event) => event.date >= today && event.date <= week && ((event.kind === "bill" && event.status !== "Paid") || String(event.id).startsWith("loan-payment-")))
   const dueToday = tasks.filter((task) => !task.done && task.due === today).length
   const summary = [
@@ -130,7 +133,7 @@ export default function HomePage() {
       )}
 
       <div className="home-grid">
-        {shows("today") && <TodayCard today={today} events={events} loading={calendar.loading && !calendar.data} error={calendar.error} />}
+        {shows("today") && <TodayCard today={today} me={user.id} events={events} loading={calendar.loading && !calendar.data} error={calendar.error} />}
         {shows("tasks") && <TasksCard user={user} today={today} tasks={tasks} setTasks={setTasks} />}
         {shows("catchup") && <CatchUpCard bootstrap={bootstrap} calls={calls} />}
       </div>
@@ -186,22 +189,34 @@ function Card({ title, link, children }) {
   )
 }
 
-// Today's calendar (bills, loan payments and maturities, insurance, draws, meetings), then the next 7 days. Tasks are
-// under My tasks, and posted costs stay on the Calendar.
-function TodayCard({ today, events, loading, error }) {
-  const now = events.filter((event) => event.date === today).sort((a, b) => (a.start || "99").localeCompare(b.start || "99"))
-  const next = events.filter((event) => event.date > today && event.date <= shiftDay(today, 7))
+// Today's calendar (meetings, bills, loan payments and maturities, insurance, draws, tasks due and the day's posted
+// costs in one line), then the next 7 days; when both are clear, the next few things after them. Past-due items are
+// under Needs attention.
+function TodayCard({ today, me, events, loading, error }) {
+  const week = shiftDay(today, 7)
+  const items = [...events.filter((event) => event.kind !== "expense"), ...postedByDay(events.filter((event) => event.kind === "expense" && event.date >= today && event.date <= week))]
+  const now = items.filter((event) => event.date === today).sort((a, b) => (a.start || "99").localeCompare(b.start || "99"))
+  const next = items.filter((event) => event.date > today && event.date <= week).sort((a, b) => a.date.localeCompare(b.date))
+  const later = items.filter((event) => event.date > week).slice(0, NEXT_UP)
+  const moreToday = now.length - TODAY_SHOWN
   const more = next.length - COMING_UP
   return (
     <Card title="Today" link={<Link href={`/calendar?date=${today}`} className="home-card-link">Calendar</Link>}>
       {error ? <p className="home-empty">{error}</p> : loading ? <p className="home-empty">Loading the calendar…</p> : !now.length && !next.length ? (
-        <Blank art="calendar" text="Nothing on your calendar today or in the next 7 days." action={<Link href={`/calendar?date=${today}`} className="tool">Open calendar</Link>} />
+        later.length ? (
+          <>
+            <p className="home-empty">Nothing on the calendar today or in the next 7 days.</p>
+            <h3 className="home-sub">Next on the calendar</h3>
+            <ul className="home-list">{later.map((event) => <EventRow key={event.id} event={event} me={me} day />)}</ul>
+          </>
+        ) : <Blank art="calendar" text="Nothing on your calendar today or in the next 7 days." action={<Link href={`/calendar?date=${today}`} className="tool">Open calendar</Link>} />
       ) : (
         <>
-          {now.length ? <ul className="home-list">{now.map((event) => <EventRow key={event.id} event={event} />)}</ul> : <p className="home-empty">Nothing on the calendar today.</p>}
+          {now.length ? <ul className="home-list">{now.slice(0, TODAY_SHOWN).map((event) => <EventRow key={event.id} event={event} me={me} />)}</ul> : <p className="home-empty">Nothing on the calendar today.</p>}
+          {moreToday > 0 && <Link href={`/calendar?date=${today}`} className="home-more">{moreToday} more today on the Calendar</Link>}
           <h3 className="home-sub">Coming up</h3>
           {next.length ? (
-            <ul className="home-list">{next.slice(0, COMING_UP).map((event) => <EventRow key={event.id} event={event} day />)}</ul>
+            <ul className="home-list">{next.slice(0, COMING_UP).map((event) => <EventRow key={event.id} event={event} me={me} day />)}</ul>
           ) : <p className="home-empty">Nothing in the next 7 days.</p>}
           {more > 0 && <Link href="/calendar" className="home-more">{more} more in the next 7 days on the Calendar</Link>}
         </>
@@ -210,9 +225,33 @@ function TodayCard({ today, events, loading, error }) {
   )
 }
 
-function EventRow({ event, day = false }) {
+// A day's posted costs as one row: how many, on which house (or how many), and the total.
+function postedByDay(costs) {
+  const days = new Map()
+  for (const cost of costs) days.set(cost.date, [...(days.get(cost.date) || []), cost])
+  return [...days].map(([date, list]) => {
+    const houses = [...new Set(list.map((cost) => cost.property).filter(Boolean))]
+    return {
+      id: `posted-${date}`,
+      kind: "expense",
+      date,
+      title: list.length === 1 ? list[0].title : `${list.length} costs posted`,
+      property: houses.length === 1 ? houses[0] : houses.length ? `${houses.length} properties` : "",
+      detail: list.length === 1 ? "Posted" : "",
+      amount: list.reduce((sum, cost) => sum + (Number(cost.amount) || 0), 0),
+      tone: "neutral",
+      href: `/calendar?date=${date}`,
+    }
+  })
+}
+
+function EventRow({ event, me, day = false }) {
   const when = event.kind === "event" ? event.detail : ""
-  const line = [day ? shortDay(event.date) : "", when, event.property, event.kind === "event" ? "" : event.detail].filter(Boolean).join(" · ")
+  // A task names who it is for (You for one's own) and High priority; its "Due soon" is plain from the list it is in.
+  const extra = event.kind === "task"
+    ? [event.assigneeId === me ? "You" : event.assignee || "Unassigned", event.property, event.status === "High" ? "High priority" : ""]
+    : [event.property, event.kind === "event" ? "" : event.detail]
+  const line = [day ? shortDay(event.date) : "", when, ...extra].filter(Boolean).join(" · ")
   return (
     <li>
       <Link href={event.href || `/calendar?date=${event.date}`} className={`home-row is-${event.tone || "neutral"}`}>
@@ -368,6 +407,8 @@ function eventIcon(kind) {
   if (kind === "loan") return "bank"
   if (kind === "property") return "file"
   if (kind === "draw") return "layers"
+  if (kind === "task") return "check"
+  if (kind === "expense") return "receipt"
   return "calendar"
 }
 
