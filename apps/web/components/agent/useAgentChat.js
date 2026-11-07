@@ -24,7 +24,7 @@ function threadRows(messages) {
       content: "",
       toolResult: { UsedTool: call.tool, result: call.result },
     }))
-    return [...tools, { id: message.id, role: "assistant", content: message.content, error: message.error, feedback: message.feedback || "", agentRun: { durationMs: message.agentRunDurationMs } }]
+    return [...tools, { id: message.id, role: "assistant", content: message.content, error: message.error, feedback: message.feedback || "", memoryNotes: message.memoryNotes || [], agentRun: { durationMs: message.agentRunDurationMs } }]
   })
 }
 
@@ -231,6 +231,7 @@ export function useAgentChat({ openId = "" } = {}) {
       streamingRef.current = false
       setStreaming(false)
       if (chatId) sync(chatId)
+      settingsApi.reload()
       threadsApi.reload()
       for (const delay of [3000, 8000, 15000]) setTimeout(() => threadsApi.reload(), delay)
     }
@@ -310,6 +311,8 @@ export function useAgentChat({ openId = "" } = {}) {
     promptZone: promptsApi.data?.zone || "",
     briefOffered: Boolean(promptsApi.data?.briefOffered),
     connected: settingsApi.data?.settings?.modelConnected,
+    // This month's AI budget is used up: why the Agent can't answer until it starts again or is raised.
+    budgetMessage: settingsApi.data?.settings?.budgetReached ? settingsApi.data.settings.budgetMessage || "" : "",
     threadId,
     rows,
     streaming,

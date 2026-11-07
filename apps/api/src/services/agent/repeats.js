@@ -5,7 +5,7 @@ import { teamHour, teamToday } from "../../lib/dates.js"
 import { devServer } from "../../lib/runtime.js"
 import { publicUser } from "../../lib/serialize.js"
 import { notify } from "../notify.js"
-import { agentSettings, modelKey } from "./llm.js"
+import { agentSettings, budgetMessage, budgetState, modelKey } from "./llm.js"
 import { runAgent } from "./run.js"
 import { silentResponse } from "./stream.js"
 
@@ -76,9 +76,16 @@ async function ask(prompt, day) {
     return
   }
   const name = repeatName(prompt)
+  // This month's AI budget is used up: not asked today, and the person hears why.
+  const budget = await budgetState()
+  if (budget.reached) {
+    await AgentPrompt.updateOne({ _id: prompt._id }, { $set: { lastRunAt: new Date(), lastError: `Not asked: ${budgetMessage(budget)}` }, $unset: { runningAt: 1 } }, { timestamps: false })
+    await notify({ userIds: [user._id], title: `${name} was not asked today`, body: budgetMessage(budget), href: "/knowledge", event: "agent.repeat", email: false })
+    return
+  }
   // Saved with its answer (runAgent saves it), so the chat never shows half asked for someone to post into.
   const thread = new AgentThread({ userId: user._id, title: `${name} · ${dayLabel(day)}`.slice(0, 80), named: true, messages: [{ role: "user", content: prompt.text }] })
-  await runAgent({ user, permissions, thread, prompt: prompt.text, res: silentResponse(), settings: await agentSettings() })
+  await runAgent({ user, permissions, thread, prompt: prompt.text, res: silentResponse(), settings: await agentSettings(), learn: false })
   const answer = thread.messages[thread.messages.length - 1]
   const failed = answer?.role !== "assistant" || answer.error
   await AgentPrompt.updateOne({ _id: prompt._id }, { $set: { lastRunAt: new Date(), lastThreadId: thread._id, lastError: failed ? "The Agent could not finish the answer. Open the chat and press Retry." : "" }, $unset: { runningAt: 1 } }, { timestamps: false })

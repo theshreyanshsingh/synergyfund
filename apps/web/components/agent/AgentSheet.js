@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { AgentComposer } from "./AgentComposer"
 import { AgentMessages } from "./AgentMessages"
 import { AgentWelcome } from "./AgentWelcome"
+import { MemoryPanel } from "./MemoryPanel"
 import { chatWhen, hasStoredThread, useAgentChat } from "./useAgentChat"
 import { Icon } from "../ui/Icon"
 import { PageSpinner } from "../ui/Spinner"
@@ -12,7 +13,7 @@ const SLIDE_MS = 240
 const DELETE_WIDTH = 88
 
 // Phones: the Agent slides up over the page you are on, to full height. X, a swipe down on its top bar, or the phone's
-// Back closes it and leaves you where you were. ⋮ has New chat, Chats, Prompts and Temporary chat.
+// Back closes it and leaves you where you were. ⋮ has New chat, Chats, Prompts, Memory and Temporary chat.
 export function AgentSheet({ onClose }) {
   const chat = useAgentChat()
   const [view, setView] = useState("chat")
@@ -106,6 +107,7 @@ export function AgentSheet({ onClose }) {
     if (action === "new") { chat.newChat(); setView("chat") }
     if (action === "chats") setView("chats")
     if (action === "prompts") setView("prompts")
+    if (action === "memory") setView("memory")
     if (action === "temporary") { chat.toggleTemporary(); setView("chat") }
   }
 
@@ -129,7 +131,7 @@ export function AgentSheet({ onClose }) {
         ) : (
           <button type="button" className="agent-sheet-icon" onClick={() => setView("chat")} aria-label="Back to the chat"><Icon name="back" size={20} /></button>
         )}
-        <h2 className="agent-sheet-title">{view === "chats" ? "Chats" : view === "prompts" ? "Prompts" : chat.temporary ? "Temporary chat" : savedTitle}</h2>
+        <h2 className="agent-sheet-title">{view === "chats" ? "Chats" : view === "prompts" ? "Prompts" : view === "memory" ? "Memory" : chat.temporary ? "Temporary chat" : savedTitle}</h2>
         {view === "chat" ? (
           <div className="agent-sheet-more" ref={menuRef}>
             <button type="button" className="agent-sheet-icon" onClick={() => setMenu((open) => !open)} aria-label="More" aria-haspopup="menu" aria-expanded={menu}><Icon name="kebab" size={20} /></button>
@@ -138,6 +140,7 @@ export function AgentSheet({ onClose }) {
                 <button type="button" role="menuitem" disabled={chat.streaming} onClick={() => choose("new")}><Icon name="plus" size={18} /> New chat</button>
                 <button type="button" role="menuitem" onClick={() => choose("chats")}><Icon name="history" size={18} /> Chats</button>
                 <button type="button" role="menuitem" onClick={() => choose("prompts")}><Icon name="forward" size={18} /> Prompts</button>
+                <button type="button" role="menuitem" onClick={() => choose("memory")}><Icon name="person" size={18} /> Memory</button>
                 <button type="button" role="menuitem" disabled={chat.streaming} onClick={() => choose("temporary")}><Icon name="tempChat" size={18} /> {chat.temporary ? "Leave temporary chat" : "Temporary chat"}</button>
               </div>
             )}
@@ -158,15 +161,17 @@ export function AgentSheet({ onClose }) {
                 empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} />}
                 onRetry={chat.retry}
                 onEdit={chat.edit}
+                onMemory={() => setView("memory")}
                 onRate={chat.rate}
                 onStar={star}
                 starred={starred}
               />
             )}
           </div>
-          <AgentComposer onSend={chat.send} streaming={chat.streaming} connected={chat.connected} temporary={chat.temporary} autoFocus={typeAway} fill={fill} placeholder="Ask Agent anything…" />
+          <AgentComposer onSend={chat.send} streaming={chat.streaming} connected={chat.connected} temporary={chat.temporary} autoFocus={typeAway} fill={fill} placeholder="Ask Agent anything…" blocked={chat.budgetMessage} />
         </>
       )}
+      {view === "memory" && <div className="agent-sheet-memory"><MemoryPanel onOpen={(id) => { chat.openThread(id); setView("chat") }} /></div>}
       {view === "chats" && <ChatList threads={chat.threads} activeId={chat.threadId} onOpen={(id) => { chat.openThread(id); setView("chat") }} onDelete={chat.deleteThread} />}
       {view === "prompts" && (
         // Saved prompts (the star under an answer, or New on the Agent page). Tap one to put it in the box.

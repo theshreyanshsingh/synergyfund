@@ -4655,7 +4655,7 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
   .company-owners-head, .chat-nav-heading > button:first-child, .cost-type-toggle, .folder-tile, .folders-toggle, .check, .task-check, .drag-handle, .overview-handle, .property-figure, .stat,
   .overview-card, .comp-card, .legal-card, .home-row, .chat-result, .chat-image, .chat-attachment, .chat-thread-link, .chat-inline-link, .chat-head-link,
   .tracking-thumb, .comp-photo-add, .import-row, .quick-row, .back-link, .crumbs-link, .crumbs-back, .doc-open, .doc-head-link, .company-file-link,
-  .cost-line-file, .table-link, .report-doc, .agent-doc-name, .agent-download, .call-round, .call-control, .call-pill, .camera-shutter, .skip-link,
+  .cost-line-file, .table-link, .report-doc, .agent-doc-name, .agent-download, .agent-spend-day, .call-round, .call-control, .call-pill, .camera-shutter, .skip-link,
   .refi-banner, .multi-option, [role="menuitem"], [role="option"], [role="switch"], [role="menu"] *, [role="listbox"] *, .pop > *,
   .date-picker-grid *, .paycal-mini-grid *, .task-pick-list *, p button
 ) {
@@ -4709,4 +4709,85 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
 }
 @media (max-width: 480px) {
   .doc-select { flex: 1 1 100%; }
+}
+
+/* ---------- AI spending (Settings → Agent): the monthly budget and what the AI cost ---------- */
+.agent-spend { display: grid; gap: 14px; padding-top: 16px; }
+.agent-spend h2 { margin: 0 0 4px; font-size: 14px; }
+.agent-spend > div:first-child p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.agent-spend-now { display: grid; gap: 8px; }
+.agent-spend-now p { margin: 0; font-size: 14px; }
+.agent-spend-now strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.agent-spend-bar { height: 8px; overflow: hidden; border-radius: 999px; background: var(--active); }
+.agent-spend-bar i { display: block; height: 100%; border-radius: inherit; background: var(--good); transition: width 0.4s ease; }
+.agent-spend-bar.is-warn i { background: var(--warn); }
+.agent-spend-bar.is-bad i { background: var(--bad); }
+.agent-spend-detail, .agent-spend-hint { margin: 0; color: var(--muted); font-size: 13px !important; line-height: 1.45; }
+.agent-spend-budget { display: grid; grid-template-columns: minmax(0, 220px) auto; align-items: end; gap: 8px 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+.agent-spend-budget .field input { width: 100%; font-variant-numeric: tabular-nums; }
+.agent-spend-budget .primary { justify-self: start; }
+.agent-spend-budget .agent-spend-hint, .agent-spend-budget .settings-note { grid-column: 1 / -1; }
+.agent-spend-month { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+.agent-spend-month-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.agent-spend-month-head h3 { margin: 0; font-size: 14px; }
+.agent-spend-pick select { max-width: 220px; }
+.agent-spend-total { margin: 0; color: var(--muted); font-size: 13px; }
+.agent-spend-total strong { color: var(--text); font-size: 16px; font-variant-numeric: tabular-nums; }
+.agent-spend-none { margin: 0; color: var(--muted); font-size: 13px; }
+/* The day bars: one hue, thin, 4px rounded tops on the baseline, 2px apart; the whole column is the hover target. */
+.agent-spend-chart { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 132px auto; column-gap: 8px; margin: 18px 0 0; }
+.agent-spend-scale { display: flex; flex-direction: column; justify-content: space-between; padding-bottom: 1px; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
+.agent-spend-scale span:first-child { transform: translateY(-50%); }
+.agent-spend-scale span:last-child { transform: translateY(50%); }
+.agent-spend-plot { position: relative; display: flex; align-items: stretch; gap: 2px; border-bottom: 1px solid var(--line); background: linear-gradient(var(--row-line), var(--row-line)) 0 0 / 100% 1px no-repeat; }
+.agent-spend-day { position: relative; display: flex; flex: 1 1 0; align-items: flex-end; min-width: 0; height: 100%; padding: 0; border: 0; background: transparent; cursor: default; }
+.agent-spend-day i { display: block; width: 100%; max-width: 18px; margin: 0 auto; border-radius: 4px 4px 0 0; background: var(--accent); opacity: 0.85; }
+.agent-spend-day.is-on i, .agent-spend-day:focus-visible i { opacity: 1; }
+.agent-spend-day:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.agent-spend-peak { position: absolute; bottom: calc(100% + 2px); left: 50%; color: var(--muted); font-size: 11px; font-style: normal; white-space: nowrap; transform: translateX(-50%); pointer-events: none; }
+.agent-spend-peak.is-left { left: auto; right: 0; transform: none; }
+.agent-spend-peak.is-right { left: 0; transform: none; }
+.agent-spend-tip { position: absolute; bottom: calc(100% + 8px); left: 50%; z-index: 3; display: grid; gap: 2px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--white); box-shadow: var(--shadow); color: var(--text); font-size: 12px; text-align: left; white-space: nowrap; transform: translateX(-50%); pointer-events: none; }
+.agent-spend-tip.is-left { left: auto; right: 0; transform: none; }
+.agent-spend-tip.is-right { left: 0; transform: none; }
+.agent-spend-tip span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.agent-spend-axis { position: relative; grid-column: 2; height: 18px; color: var(--faint); font-size: 11px; }
+.agent-spend-axis span { position: absolute; top: 4px; transform: translateX(-50%); }
+.agent-spend-tables { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 4px; }
+.agent-spend-table h4 { margin: 0 0 6px; color: var(--faint); font-size: 12px; font-weight: 600; }
+.agent-spend-table table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.agent-spend-table th, .agent-spend-table td { padding: 6px 0; border-bottom: 1px solid var(--row-line); text-align: right; font-weight: 400; font-variant-numeric: tabular-nums; }
+.agent-spend-table thead th { color: var(--faint); font-size: 11px; font-weight: 600; }
+.agent-spend-table th:first-child { position: relative; padding-right: 8px; text-align: left; overflow-wrap: anywhere; }
+.agent-spend-table th + th, .agent-spend-table td { padding-left: 10px; }
+.agent-spend-table td + td { color: var(--muted); }
+.agent-spend-table tbody th i { position: absolute; bottom: -1px; left: 0; height: 2px; border-radius: 2px; background: var(--accent); opacity: 0.55; }
+@media (max-width: 900px) {
+  .agent-spend-tables { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 480px) {
+  .agent-spend-budget { grid-template-columns: minmax(0, 1fr) auto; }
+  .agent-spend-month-head { flex-direction: column; align-items: stretch; }
+  .agent-spend-pick select { width: 100%; max-width: none; }
+}
+
+/* ---------- Memory (the Agent page and the phone sheet) ---------- */
+.agent-memory-switch { margin: 0 0 12px; padding: 12px 16px !important; border: 1px solid var(--line) !important; border-radius: 14px !important; background: var(--white); color: var(--text); }
+.agent-memory-switch:disabled { opacity: 1; }
+.agent-memory-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 10px; }
+.agent-memory-item .agent-memory-meta { display: block; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.agent-memory-meta .agent-prompt-last { min-height: 0; padding: 0; }
+.agent-memory-item.is-off p { color: var(--muted); }
+.agent-memory-item p { -webkit-line-clamp: 6; }
+.agent-memory-count { margin-right: auto; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.agent-memory-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; color: var(--faint); font-size: 13px; }
+.agent-memory-note { display: inline-flex; align-self: flex-start; justify-self: start; align-items: center; gap: 6px; width: max-content; max-width: 100%; margin: 2px 0 0; border: 1px solid var(--line); background: var(--white); color: var(--muted); font-size: 12px; font-weight: 600; }
+.agent-memory-note:not(:disabled):hover { color: var(--text); }
+.agent-memory-note:disabled { opacity: 1; cursor: default; }
+.agent-composer-note.is-blocked { border-color: var(--danger-border); background: var(--bad-bg); color: var(--bad); }
+.agent-sheet-memory { flex: 1; min-height: 0; overflow-y: auto; }
+.agent-sheet-memory .agent-page-list { overflow: visible; }
+@media (max-width: 760px) {
+  .agent-memory .agent-prompts-head { flex-direction: column; align-items: stretch; }
+  .agent-memory .agent-prompts-head .primary { align-self: flex-start; }
 }

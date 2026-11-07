@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { api } from "../../lib/api"
+import { AgentSpending } from "./AgentSpending"
 import { ModelSelect } from "./ModelSelect"
 
 export function AgentSettings() {
@@ -72,6 +73,7 @@ export function AgentSettings() {
         <div className="settings-actions"><button className="primary" type="submit" disabled={pending || !changed}>{pending ? "Saving…" : "Save models"}</button></div>
       </form>
     </section>
+    <AgentSpending settings={settings} onSaved={(next) => setSettings((current) => ({ ...current, ...next }))} />
     {settings.documents && <DocumentReading initial={settings.documents} />}
     </>
   )

@@ -28,7 +28,8 @@ async function ready(file) {
 // Under the box a grey line: that answers may be wrong, or in a temporary chat (`temporary`, with a dashed box) that it
 // is not kept. `autoFocus` opens the keyboard at once (it
 // runs in the tap that opened it, which phones require). `fill` ({ text, key }) puts a prompt in the box to send or edit.
-export function AgentComposer({ onSend, streaming, connected, temporary = false, autoFocus = false, fill = null, placeholder = "Ask Agent" }) {
+// `blocked`: why the Agent can't answer now (this month's AI budget is used up), shown over the box.
+export function AgentComposer({ onSend, streaming, connected, temporary = false, autoFocus = false, fill = null, placeholder = "Ask Agent", blocked = "" }) {
   const [message, setMessage] = useState("")
   const [files, setFiles] = useState([])
   const [menu, setMenu] = useState(false)
@@ -134,6 +135,7 @@ export function AgentComposer({ onSend, streaming, connected, temporary = false,
       {connected === false && (
         <p className="agent-composer-note">The agent is not connected to a model yet. Add OPENROUTER_API_KEY to the server .env file.</p>
       )}
+      {connected !== false && blocked && <p className="agent-composer-note is-blocked">{blocked}</p>}
       {speech.error && <p className="agent-composer-note">{speech.error}</p>}
       {note && <p className="agent-composer-note">{note}</p>}
       <div

@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs"
 import { AGENT_DEFAULTS, LINE_STATUSES, TEAMMATE_DEFAULTS, isPendingDraw } from "@synergifund/shared"
 import { AgentSetting, ChatChannel, ChatMessage, DocumentFile, Draw, ExpenseRequest, PhotoSet, Property, SiteWatch, Task, User } from "../models/index.js"
 import { postChatMessage } from "../routes/chat.js"
-import { chat, modelKey } from "./agent/llm.js"
+import { budgetState, chat, createMeter, modelKey } from "./agent/llm.js"
 import { setAlwaysOnline } from "./chatHub.js"
 import { bus } from "./events.js"
 import { readStoredFile } from "./files.js"
@@ -225,6 +225,9 @@ export async function reviewProperty(propertyId, { reply = false, force = false 
   try {
     const settings = await teammateSettings()
     if ((!settings.on && !force) || !modelKey()) return { skipped: "off" }
+    // This month's AI budget is used up: the teammate stays quiet until there is budget again (before the day's
+    // count, so a quiet spell doesn't use up the house's reviews).
+    if ((await budgetState()).reached) return { skipped: "budget" }
     if (!force && !underDailyLimit(propertyId)) return { skipped: "limit" }
     const bot = await ensureTeammate(settings)
     const property = await Property.findById(propertyId)
@@ -268,7 +271,7 @@ export async function reviewProperty(propertyId, { reply = false, force = false 
     }
     const content = [{ type: "text", text: `Records for this house:\n${JSON.stringify(facts, null, 1)}\n\nChat (oldest first; "(new)" marks what you have not read yet):\n${transcript || "(no messages yet)"}${images.length ? `\n\nThe ${images.length} newest photos follow.` : ""}` }]
     for (const image of images) content.push({ type: "image_url", image_url: { url: image.url } })
-    const answer = await chat({ model: settings.decisionModel, temperature: 0.3, maxTokens: 2500, timeoutMs: 120000, messages: [{ role: "system", content: reviewPrompt(settings, { reply }) }, { role: "user", content }] })
+    const answer = await chat({ model: settings.decisionModel, temperature: 0.3, maxTokens: 2500, timeoutMs: 120000, meter: createMeter("teammate"), messages: [{ role: "system", content: reviewPrompt(settings, { reply }) }, { role: "user", content }] })
     const result = readJson(answer.content)
     if (!result) throw new Error("The AI model's answer could not be read.")
 
@@ -397,6 +400,7 @@ export async function followUpSweep({ force = false, propertyId = "" } = {}) {
   const settings = await teammateSettings()
   if ((!settings.on && !force) || !modelKey()) return []
   if (!force && !workingHours()) return []
+  if ((await budgetState()).reached) return []
   const bot = await ensureTeammate(settings)
   const filter = propertyId ? { _id: propertyId } : { stage: "Renovation" }
   const properties = await Property.find(filter).select("address city stage scopeLines assignedUserIds")
@@ -442,6 +446,7 @@ async function checkInText({ settings, property, contractors, watch, days }) {
   const next = (property.scopeLines || []).filter((line) => (line.status || "Not started") === "Not started").map((line) => line.title).slice(0, 4)
   const answer = await chat({
     model: settings.decisionModel,
+    meter: createMeter("teammate"),
     temperature: 0.8,
     maxTokens: 300,
     timeoutMs: 60000,

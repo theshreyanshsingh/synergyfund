@@ -89,7 +89,7 @@ async function fileText(file, kind) {
 }
 
 // Notes on every attached file, for the agent. `question` helps the reader know what matters.
-export async function readAttachments({ files, question, settings, tracker }) {
+export async function readAttachments({ files, question, settings, tracker, meter = null }) {
   const sections = []
   const pictures = []
   for (const file of files) {
@@ -124,7 +124,7 @@ export async function readAttachments({ files, question, settings, tracker }) {
     let lastError = null
     for (const model of models) {
       try {
-        read = (await chat({ model, tracker, temperature: 0, maxTokens: 6000, timeoutMs: 120000, messages: [{ role: "system", content: READ_PROMPT }, { role: "user", content }] })).content.trim()
+        read = (await chat({ model, tracker, meter, temperature: 0, maxTokens: 6000, timeoutMs: 120000, messages: [{ role: "system", content: READ_PROMPT }, { role: "user", content }] })).content.trim()
         if (read) break
       } catch (error) {
         lastError = error
@@ -136,9 +136,9 @@ export async function readAttachments({ files, question, settings, tracker }) {
   return clip(sections.join("\n\n"), NOTES_LIMIT)
 }
 
-// The files on these chat messages, for removing them with the chat.
+// The files on these chat messages (attachments, and the PDFs the Agent made), for removing them with the chat.
 export function threadFileIds(threads) {
-  return threads.flatMap((thread) => (thread.messages || []).flatMap((message) => (message.attachments || []).map((item) => item.fileId))).filter(Boolean)
+  return threads.flatMap((thread) => (thread.messages || []).flatMap((message) => [...(message.attachments || []), ...(message.files || [])].map((item) => item.fileId))).filter(Boolean)
 }
 
 export async function removeAttachments(ids) {
@@ -146,12 +146,13 @@ export async function removeAttachments(ids) {
   await removeFiles(await DocumentFile.find({ _id: { $in: ids }, kind: "agent" }))
 }
 
-// Attachments of this person that no chat holds any more (a temporary chat that expired, or an upload whose
-// question never went through), once they are a day old.
+// Attachments and made PDFs of this person that no chat holds any more (a temporary chat that expired, an upload whose
+// question never went through, an answer replaced by Retry), once they are a day old.
 export async function sweepAttachments(userId) {
   const files = await DocumentFile.find({ kind: "agent", uploadedBy: userId, createdAt: { $lt: new Date(Date.now() - ORPHAN_AFTER_MS) } }).select("_id storage storagePath")
   if (!files.length) return
-  const threads = await AgentThread.find({ userId, "messages.attachments.fileId": { $in: files.map((file) => file._id) } }).select("messages.attachments")
+  const ids = files.map((file) => file._id)
+  const threads = await AgentThread.find({ userId, $or: [{ "messages.attachments.fileId": { $in: ids } }, { "messages.files.fileId": { $in: ids } }] }).select("messages.attachments messages.files")
   const held = new Set(threadFileIds(threads).map(String))
   await removeFiles(files.filter((file) => !held.has(String(file._id))))
 }

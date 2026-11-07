@@ -1,12 +1,14 @@
 import { Router } from "express"
 import { chatTitleFromPrompt } from "@synergifund/shared"
 import mongoose from "mongoose"
-import { AgentPrompt, AgentProposal, AgentRename, AgentSetting, AgentThread, DocumentFile, Loan, Property } from "../models/index.js"
+import { AgentMemory, AgentPrompt, AgentProposal, AgentRename, AgentSetting, AgentThread, AiMonth, AiUsage, DocumentFile, Loan, Property, User } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
-import { teamZoneName } from "../lib/dates.js"
+import { teamToday, teamZoneName } from "../lib/dates.js"
 import { ownsProperty } from "../services/access.js"
-import { agentSettings, modelKey } from "../services/agent/llm.js"
+import { agentSettings, budgetLimit, budgetMessage, budgetState, dollars, modelKey, teamMonth } from "../services/agent/llm.js"
+import { MAX_MEMORIES, MAX_MEMORY_CHARS, forgetNotes, makeRoom, memoryText, presentMemory, secretIn } from "../services/agent/memory.js"
+import { openRouterModels } from "../services/agent/catalog.js"
 import { HIDDEN_KINDS, documentReading, nudgeDocumentReader } from "../services/agent/documents.js"
 import { BRIEF_REPEAT, BRIEF_TEXT, MAX_REPEATING, REPEAT_EVERY, cleanRepeat, repeatName, startingDay } from "../services/agent/repeats.js"
 import { applyRename, freshRenames, presentRename } from "../services/agent/renames.js"
@@ -23,29 +25,10 @@ export const agentRouter = Router()
 
 const MAX_PROMPT = 10000
 const MODEL_ID = /^[a-z0-9][\w.-]*\/[\w.:-]+$/i
-const CATALOG_TTL_MS = 60 * 60 * 1000
 const TEMPORARY_CHAT_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_TITLE = 80
 const MAX_PROMPTS = 200
 const FEEDBACK = ["up", "down", ""]
-let catalog = { at: 0, models: null }
-
-async function openRouterModels() {
-  if (catalog.models && Date.now() - catalog.at < CATALOG_TTL_MS) return catalog.models
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 10000)
-  try {
-    const response = await fetch(`${(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, "")}/models`, { signal: controller.signal })
-    const data = await response.json()
-    if (!response.ok || !Array.isArray(data.data)) return null
-    catalog = { at: Date.now(), models: new Map(data.data.map((model) => [model.id, model])) }
-    return catalog.models
-  } catch {
-    return null
-  } finally {
-    clearTimeout(timer)
-  }
-}
 
 async function checkModel(id) {
   if (!MODEL_ID.test(id)) return "Enter an OpenRouter model id such as anthropic/claude-sonnet-5.5."
@@ -87,19 +70,25 @@ function presentModel(model) {
   }
 }
 
-function presentSettings(settings, user) {
+// `budget` (budgetState): everyone hears when this month's AI budget is used up; admins see the budget and spending.
+function presentSettings(settings, user, budget) {
   const admin = user.role === "admin"
   return {
     canManage: admin,
     modelConnected: Boolean(modelKey()),
     webConnected: Boolean(String(process.env.FIRECRAWL_API_KEY || "").trim()),
-    ...(admin ? settings : {}),
+    budgetReached: budget.reached,
+    ...(budget.reached ? { budgetMessage: budgetMessage(budget) } : {}),
+    ...(admin ? { ...settings, monthlyLimit: budget.limit, spent: budget.spent, resets: budget.resets } : {}),
   }
 }
 
 function presentMessage(message) {
   return {
     id: String(message._id),
+    // PDFs the Agent made for the answer (their words stay on the server).
+    files: (message.files || []).map((item) => ({ id: String(item.fileId), name: item.name || "Document.pdf", mime: item.mime || "application/pdf", size: item.size || 0 })),
+    memoryNotes: (message.memoryNotes || []).map(String),
     role: message.role === "user" ? "user" : "assistant",
     content: message.content || "",
     toolCalls: (message.toolCalls || []).map((call) => ({ tool: call.tool, args: call.args || {}, result: call.result || {} })),
@@ -144,7 +133,8 @@ agentRouter.get(
     // ?documents=1 (Settings): admins also see how far the Agent has got reading the documents. The Agent page asks
     // without it, so opening the Agent never counts the library.
     const documents = req.user.role === "admin" && req.query.documents === "1" ? await documentReading() : null
-    res.json({ settings: { ...presentSettings(await agentSettings(), req.user), ...(documents ? { documents } : {}) } })
+    const [settings, budget] = await Promise.all([agentSettings(), budgetState()])
+    res.json({ settings: { ...presentSettings(settings, req.user, budget), ...(documents ? { documents } : {}) } })
   }),
 )
 
@@ -182,6 +172,15 @@ agentRouter.patch(
       sendError(res, 400, "readAllDocuments must be true or false.")
       return
     }
+    // monthlyLimit: the team's AI budget for a month in dollars (a number, or digits); blank (or null) for no limit.
+    const asked = req.body.monthlyLimit
+    const limitGiven = asked !== undefined
+    const blank = asked === null || (typeof asked === "string" && !asked.trim())
+    const limit = !limitGiven || blank ? null : typeof asked === "number" || (typeof asked === "string" && /^\d+(\.\d+)?$/.test(asked.trim())) ? budgetLimit(asked) : NaN
+    if (limitGiven && !blank && (limit == null || Number.isNaN(limit) || limit > 1000000 || Math.abs(Math.round(limit * 100) - limit * 100) > 1e-6)) {
+      sendError(res, 400, "Enter the monthly budget in dollars, like 500, or leave it blank for no limit.")
+      return
+    }
     const modelsGiven = ["taskModel", "decisionModel"].some((key) => req.body[key] !== undefined)
     const next = await agentSettings()
     const before = { ...next }
@@ -195,7 +194,13 @@ agentRouter.patch(
       }
       next[key] = id
     }
-    await AgentSetting.findOneAndUpdate({ key: "org" }, { ...next, ...(reading !== undefined ? { docsReadAll: reading } : {}), key: "org", updatedBy: req.user.email }, { upsert: true, new: true, setDefaultsOnInsert: true })
+    const was = limitGiven ? await budgetState() : null
+    await AgentSetting.findOneAndUpdate({ key: "org" }, { ...next, ...(reading !== undefined ? { docsReadAll: reading } : {}), ...(limitGiven ? { monthlyLimit: limit } : {}), key: "org", updatedBy: req.user.email }, { upsert: true, new: true, setDefaultsOnInsert: true })
+    if (limitGiven && was.limit !== limit) {
+      // With a new budget the admins hear again at its 80% and 100%, unless spending is already past them.
+      await AiMonth.updateOne({ month: was.month }, { $set: { alerted80: limit != null && was.spent >= limit * 0.8, alerted100: limit != null && was.spent >= limit } })
+      await recordActivity({ user: req.user, title: "AI budget changed", detail: `Monthly AI budget ${was.limit == null ? "no limit" : dollars(was.limit)} → ${limit == null ? "no limit" : dollars(limit)}` })
+    }
     if (reading !== undefined) {
       await recordActivity({ user: req.user, title: "Agent document reading changed", detail: reading ? "The Agent reads the documents that were already there, as well as new ones" : "The Agent reads new documents only" })
       if (reading) nudgeDocumentReader()
@@ -204,8 +209,78 @@ agentRouter.patch(
       before.taskModel !== next.taskModel ? `Task model ${before.taskModel} → ${next.taskModel}` : "",
       before.decisionModel !== next.decisionModel ? `Decision model ${before.decisionModel} → ${next.decisionModel}` : "",
     ].filter(Boolean).join(" · ")
-    if (modelsGiven || reading === undefined) await recordActivity({ user: req.user, title: "Agent models changed", detail: changes || "Saved with no changes" })
-    res.json({ settings: { ...presentSettings(next, req.user), documents: await documentReading() } })
+    if (modelsGiven || (reading === undefined && !limitGiven)) await recordActivity({ user: req.user, title: "Agent models changed", detail: changes || "Saved with no changes" })
+    res.json({ settings: { ...presentSettings(next, req.user, await budgetState()), documents: await documentReading() } })
+  }),
+)
+
+// What the AI cost in a month (Settings → Agent → AI spending; admins only): the total and the budget, each day, and
+// by what it was for, by person and by model. ?month=YYYY-MM, this month when left out. `months`: the months with
+// spending, newest first, for the month picker.
+const FEATURES = ["agent", "memory", "receipts", "documents", "calls", "teammate", "other"]
+
+// The days of `month` for the chart: every one, or this month's up to today.
+function monthDays(month) {
+  const [year, number] = month.split("-").map(Number)
+  const today = teamToday()
+  const last = month === today.slice(0, 7) ? Number(today.slice(8, 10)) : new Date(Date.UTC(year, number, 0)).getUTCDate()
+  return Array.from({ length: last }, (_, index) => `${month}-${String(index + 1).padStart(2, "0")}`)
+}
+
+agentRouter.get(
+  "/usage",
+  asyncHandler(async (req, res) => {
+    if (req.user.role !== "admin") return sendError(res, 403, "Only an admin can see AI spending.")
+    const current = teamMonth()
+    const asked = String(req.query.month || "")
+    const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(asked) && asked <= current ? asked : current
+    const [budget, totals, groups] = await Promise.all([
+      budgetState(),
+      AiMonth.find({ cost: { $gt: 0 } }).select("month").sort({ month: -1 }).limit(24).lean(),
+      AiUsage.aggregate([
+        { $match: { month } },
+        { $group: { _id: { day: "$day", feature: "$feature", userId: "$userId", model: "$model" }, cost: { $sum: "$cost" }, calls: { $sum: 1 }, tokens: { $sum: { $add: ["$promptTokens", "$completionTokens"] } }, estimated: { $max: "$estimated" } } },
+      ]),
+    ])
+    const people = new Map((await User.find({ _id: { $in: [...new Set(groups.map((row) => row._id.userId).filter(Boolean).map(String))] } }).select("name").lean()).map((user) => [String(user._id), user.name]))
+    const add = (map, key, row, extra = {}) => {
+      const item = map.get(key) || { ...extra, cost: 0, calls: 0, tokens: 0 }
+      item.cost += row.cost
+      item.calls += row.calls
+      item.tokens += row.tokens
+      map.set(key, item)
+    }
+    const byDay = new Map(monthDays(month).map((day) => [day, { day, cost: 0, calls: 0, tokens: 0 }]))
+    const byFeature = new Map()
+    const byPerson = new Map()
+    const byModel = new Map()
+    for (const row of groups) {
+      const { day, feature, userId, model } = row._id
+      add(byDay, day, row, { day })
+      const kind = FEATURES.includes(feature) ? feature : "other"
+      add(byFeature, kind, row, { feature: kind })
+      const id = userId ? String(userId) : ""
+      add(byPerson, id, row, { id, name: id ? people.get(id) || "Former member" : "Background work" })
+      add(byModel, model || "", row, { model: model || "Unknown model" })
+    }
+    const sorted = (map) => [...map.values()].sort((left, right) => right.cost - left.cost)
+    const round = (item) => ({ ...item, cost: Math.round(item.cost * 1e6) / 1e6 })
+    const total = groups.reduce((sum, row) => sum + row.cost, 0)
+    const months = [...new Set([current, ...totals.map((item) => item.month)])].sort().reverse()
+    res.json({
+      month,
+      current: month === current,
+      months,
+      limit: budget.limit,
+      resets: budget.resets,
+      total: Math.round(total * 1e6) / 1e6,
+      calls: groups.reduce((sum, row) => sum + row.calls, 0),
+      estimated: groups.some((row) => row.estimated),
+      byDay: [...byDay.values()].sort((left, right) => left.day.localeCompare(right.day)).map(round),
+      byFeature: sorted(byFeature).map(round),
+      byPerson: sorted(byPerson).map(round),
+      byModel: sorted(byModel).map(round),
+    })
   }),
 )
 
@@ -243,7 +318,7 @@ agentRouter.get(
 agentRouter.delete(
   "/threads/:id",
   asyncHandler(async (req, res) => {
-    const thread = await AgentThread.findOne({ _id: req.params.id, userId: req.user._id }).select("title temporary messages.attachments").catch(() => null)
+    const thread = await AgentThread.findOne({ _id: req.params.id, userId: req.user._id }).select("title temporary messages.attachments messages.files").catch(() => null)
     const result = thread ? await AgentThread.deleteOne({ _id: thread._id }) : null
     if (!result?.deletedCount) {
       sendError(res, 404, "That conversation was not found.")
@@ -397,6 +472,90 @@ agentRouter.delete(
   }),
 )
 
+/* ---------- memory: what the Agent remembers about this person (only they see it) ---------- */
+
+agentRouter.get(
+  "/memories",
+  asyncHandler(async (req, res) => {
+    const items = await AgentMemory.find({ userId: req.user._id }).sort({ createdAt: -1 }).lean()
+    res.json({ on: !req.user.agentMemoryOff, items: items.map(presentMemory), max: MAX_MEMORIES })
+  }),
+)
+
+// Memory on or off for this person: off, the Agent neither uses nor learns what it remembers (the notes are kept).
+agentRouter.patch(
+  "/memories/settings",
+  asyncHandler(async (req, res) => {
+    if (typeof req.body.on !== "boolean") return sendError(res, 400, "Send on as true or false.")
+    req.user.agentMemoryOff = !req.body.on
+    await req.user.save()
+    res.json({ on: req.body.on })
+  }),
+)
+
+function memoryProblem(text) {
+  if (!text) return "Write what the Agent should remember."
+  if (secretIn(text)) return "The Agent doesn't remember passwords, account numbers or other secrets."
+  return ""
+}
+
+agentRouter.post(
+  "/memories",
+  asyncHandler(async (req, res) => {
+    const raw = String(req.body.text ?? "")
+    if (raw.trim().length > MAX_MEMORY_CHARS) return sendError(res, 400, `Keep a memory under ${MAX_MEMORY_CHARS} characters.`)
+    const text = memoryText(raw)
+    const problem = memoryProblem(text)
+    if (problem) return sendError(res, 400, problem)
+    const existing = await AgentMemory.findOne({ userId: req.user._id, text })
+    if (existing) return res.json({ memory: presentMemory(existing) })
+    // Full: the oldest the Agent learned makes way; when all are ones the person wrote, one has to go first.
+    if (!(await makeRoom(req.user._id, 1))) return sendError(res, 400, `The Agent keeps up to ${MAX_MEMORIES} memories. Delete one first.`)
+    const memory = await AgentMemory.create({ userId: req.user._id, text, source: "added" })
+    res.status(201).json({ memory: presentMemory(memory) })
+  }),
+)
+
+agentRouter.patch(
+  "/memories/:id",
+  asyncHandler(async (req, res) => {
+    const memory = mongoose.isValidObjectId(req.params.id) ? await AgentMemory.findOne({ _id: req.params.id, userId: req.user._id }) : null
+    if (!memory) return sendError(res, 404, "That memory was not found.")
+    const raw = String(req.body.text ?? "")
+    if (raw.trim().length > MAX_MEMORY_CHARS) return sendError(res, 400, `Keep a memory under ${MAX_MEMORY_CHARS} characters.`)
+    const text = memoryText(raw)
+    const problem = memoryProblem(text)
+    if (problem) return sendError(res, 400, problem)
+    // The old words go from the chats' "Memory updated" notes (they were wrong, or out of date).
+    const before = memory.text
+    memory.text = text
+    await memory.save()
+    if (before !== text) await forgetNotes(req.user._id, [before], ["Saved", "Updated"])
+    res.json({ memory: presentMemory(memory) })
+  }),
+)
+
+// A deleted memory goes from the chats' "Memory updated" notes too, so its words aren't kept anywhere.
+agentRouter.delete(
+  "/memories/:id",
+  asyncHandler(async (req, res) => {
+    const memory = mongoose.isValidObjectId(req.params.id) ? await AgentMemory.findOneAndDelete({ _id: req.params.id, userId: req.user._id }) : null
+    if (!memory) return sendError(res, 404, "That memory was not found.")
+    await forgetNotes(req.user._id, [memory.text])
+    res.json({ ok: true })
+  }),
+)
+
+// Forget everything, and every "Memory updated" note in the chats.
+agentRouter.delete(
+  "/memories",
+  asyncHandler(async (req, res) => {
+    const result = await AgentMemory.deleteMany({ userId: req.user._id })
+    await AgentThread.updateMany({ userId: req.user._id, "messages.memoryNotes.0": { $exists: true } }, { $set: { "messages.$[].memoryNotes": [] } }, { timestamps: false })
+    res.json({ ok: true, deleted: result.deletedCount || 0 })
+  }),
+)
+
 // A question can come with files (sent as a form); a plain question is JSON.
 function receiveAttachments(req, res, next) {
   if (!req.is("multipart/form-data")) return next()
@@ -428,6 +587,12 @@ agentRouter.post(
     }
     if (prompt.length > MAX_PROMPT) {
       sendError(res, 400, "Keep the question under 10,000 characters.")
+      return
+    }
+    // This month's AI budget is used up: the question is not saved or asked.
+    const budget = await budgetState()
+    if (budget.reached) {
+      sendError(res, 402, budgetMessage(budget))
       return
     }
     let thread = null

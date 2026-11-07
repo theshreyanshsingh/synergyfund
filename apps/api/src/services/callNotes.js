@@ -1,6 +1,6 @@
 import { AGENT_DEFAULTS } from "@synergifund/shared"
 import { AgentSetting, CallNote, ChatChannel, ChatMessage, Property } from "../models/index.js"
-import { chat, modelKey } from "./agent/llm.js"
+import { budgetMessage, budgetState, chat, createMeter, modelKey } from "./agent/llm.js"
 import { audience, presentChannel, presentMessage, propertyFor } from "./chat.js"
 import { emitToUsers } from "./chatHub.js"
 import { notify } from "./notify.js"
@@ -143,13 +143,16 @@ async function transcribePiece(note, user, audio, at, durationMs) {
     { role: "user", content: [{ type: "text", text: "Transcribe this audio." }, { type: "input_audio", input_audio: { data: audio.toString("base64"), format: "wav" } }] },
   ]
   const model = transcribeModel()
+  // What each person says counts as their AI use. The notes were checked against the budget when they were turned on,
+  // so the rest of the call is heard even if the budget runs out meanwhile.
+  const meter = { ...createMeter("calls", user._id), cleared: true }
   let reply
   try {
-    reply = await chat({ model, messages, temperature: 0, maxTokens: 1500, extra: { reasoning: { effort: "low" } }, timeoutMs: 60000 })
+    reply = await chat({ model, messages, temperature: 0, maxTokens: 1500, extra: { reasoning: { effort: "low" } }, timeoutMs: 60000, meter })
   } catch (error) {
     // Some models do not take a thinking setting; ask again without it.
     if (!/reasoning/i.test(error.message || "")) throw error
-    reply = await chat({ model, messages, temperature: 0, maxTokens: 1500, timeoutMs: 60000 })
+    reply = await chat({ model, messages, temperature: 0, maxTokens: 1500, timeoutMs: 60000, meter })
   }
   const text = String(reply.content || "").trim().replace(/^["“]|["”]$/g, "").trim()
   if (!text || NO_SPEECH.test(text)) return
@@ -168,7 +171,7 @@ function settleThenWrite(noteId) {
       return
     }
     work.closed = true
-    writeNotes(noteId)
+    writeNotes(noteId, { started: true })
       .catch((error) => markFailed(noteId, error))
       .finally(() => jobs.delete(String(noteId)))
   }
@@ -220,12 +223,16 @@ async function notesModel() {
   return stored?.decisionModel || AGENT_DEFAULTS.decisionModel
 }
 
-export async function writeNotes(noteId) {
+// `started`: the call's own write-up when it ends (its notes were on under the budget, so it is written); a Try again
+// later is checked against the budget like any new work.
+export async function writeNotes(noteId, { started = false } = {}) {
   const note = await CallNote.findById(noteId)
   if (!note || note.status !== "writing") return
   if (!note.segments.length) {
     note.status = "empty"
-    note.error = note.failedChunks ? "The speech could not be transcribed. Check that the AI model is connected, then try again on the next call." : "Nobody was heard while AI notes were on."
+    // (Not heard because this month's AI budget ran out: it says so.)
+    const budget = note.failedChunks ? await budgetState() : null
+    note.error = budget?.reached ? budgetMessage(budget) : note.failedChunks ? "The speech could not be transcribed. Check that the AI model is connected, then try again on the next call." : "Nobody was heard while AI notes were on."
     await note.save()
     await notify({ userIds: [note.startedBy], title: "AI notes: nothing to write up", body: note.error, href: `/calls/notes/${note._id}`, event: "call.notes", email: false })
     return
@@ -241,9 +248,10 @@ export async function writeNotes(noteId) {
     { role: "user", content: `${note.media === "video" ? "Video" : "Voice"} call on ${when} with ${names.join(", ") || "the team"}.\n\nTranscript:\n${transcriptText(note)}` },
   ]
   let notes = null
+  const meter = { ...createMeter("calls", note.startedBy), cleared: started }
   try {
     for (let attempt = 0; attempt < 2 && !notes; attempt += 1) {
-      const reply = await chat({ model, messages, temperature: 0.2, maxTokens: 3000, timeoutMs: 120000 })
+      const reply = await chat({ model, messages, temperature: 0.2, maxTokens: 3000, timeoutMs: 120000, meter })
       notes = readNotes(reply.content)
     }
   } catch (error) {

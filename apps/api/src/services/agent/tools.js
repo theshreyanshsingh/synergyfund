@@ -1379,7 +1379,7 @@ export const TOOLS = [
       }
       const searched = `${plural(files.length, "document")}${where.length ? ` in ${where.join(", ")}` : ""}`
       if (request) {
-        const picked = await pickDocuments({ request, files, names: places, places: where.filter((item) => !item.startsWith("the ")), settings: context.settings, tracker: context.tracker })
+        const picked = await pickDocuments({ request, files, names: places, places: where.filter((item) => !item.startsWith("the ")), settings: context.settings, tracker: context.tracker, meter: context.meter })
         const unread = files.filter((file) => READ_KINDS.includes(file.kind) && !["read", "skipped"].includes(file.insightState)).length
         const found = picked.match.length ? "exact" : picked.closest.length ? "closest" : "none"
         return {
@@ -1446,7 +1446,7 @@ export const TOOLS = [
       }
       const question = String(args.question || "").trim().slice(0, 300)
       const key = `document:${id}:${question}`
-      if (!context.cache[key]) context.cache[key] = documentContents(file, { question, settings: context.settings, tracker: context.tracker })
+      if (!context.cache[key]) context.cache[key] = documentContents(file, { question, settings: context.settings, tracker: context.tracker, meter: context.meter })
       const contents = await context.cache[key]
       const properties = await scopedProperties(context)
       const company = file.companyId ? await Company.findById(file.companyId).select("name") : null
@@ -1550,7 +1550,7 @@ export const TOOLS = [
         // Every reading read_document did of it this run (each may hold different pages), or a fresh one: the figures
         // must be in them.
         const keys = Object.keys(context.cache).filter((name) => name.startsWith(`document:${source._id}:`))
-        const readings = keys.length ? await Promise.all(keys.map((name) => context.cache[name])) : [await documentContents(source, { settings: context.settings, tracker: context.tracker })]
+        const readings = keys.length ? await Promise.all(keys.map((name) => context.cache[name])) : [await documentContents(source, { settings: context.settings, tracker: context.tracker, meter: context.meter })]
         allowed = writtenNumbers(readings.map((contents) => contents?.text || "").join("\n"))
         where = source.name
       }

@@ -5,7 +5,7 @@ import { AGENT_DEFAULTS, DOCUMENT_TYPES, QUICK_ACCESS, documentType, documentTyp
 import { AgentSetting, Company, DocumentFile, Property } from "../../models/index.js"
 import { readStoredFile } from "../files.js"
 import { devServer } from "../../lib/runtime.js"
-import { chat, createUsageTracker, modelKey } from "./llm.js"
+import { budgetState, chat, createMeter, createUsageTracker, modelKey } from "./llm.js"
 
 // The Agent reads every document in the library once, so it can tell what each one is (a Purchase Contract, an ALTA
 // settlement statement, a builder's risk policy…) and find exactly the one someone asks for, and opens a document to
@@ -231,7 +231,8 @@ async function models() {
 
 // A note on one document: from its text (the task model, else the decision model), or from the file itself (a scan
 // or a picture: the decision model), or from its name alone when nothing in it can be read.
-export async function describeDocument(file, { place = "", settings, tracker = createUsageTracker() } = {}) {
+// `meter`: counted as the background reader's (no one's) unless a person's question reads it.
+export async function describeDocument(file, { place = "", settings, tracker = createUsageTracker(), meter = createMeter("documents") } = {}) {
   const chosen = settings || (await models())
   const read = await documentText(file)
   let content
@@ -254,12 +255,14 @@ export async function describeDocument(file, { place = "", settings, tracker = c
   let lastError = null
   for (const model of [...new Set(order.filter(Boolean))]) {
     try {
-      const response = await chat({ model, tracker, temperature: 0, maxTokens: 900, timeoutMs: 120000, messages: [{ role: "system", content: describePrompt() }, { role: "user", content }] })
+      const response = await chat({ model, tracker, meter, temperature: 0, maxTokens: 900, timeoutMs: 120000, messages: [{ role: "system", content: describePrompt() }, { role: "user", content }] })
       const raw = jsonOf(response.content)
       if (!raw) throw new Error("The model did not reply with a note.")
       return { ...cleanNote(raw), from, pages: read.totalPages || 0, v: NOTE_VERSION }
     } catch (error) {
       lastError = error
+      // The budget is used up: the next model would be stopped too.
+      if (error.budgetReached) break
     }
   }
   throw lastError || new Error("The document could not be read.")
@@ -310,7 +313,8 @@ async function tick() {
   running = true
   let found = false
   try {
-    if (modelKey()) found = await readNext()
+    // While this month's AI budget is used up it reads nothing, so nothing waits as failed.
+    if (modelKey() && !(await budgetState()).reached) found = await readNext()
   } catch (error) {
     console.error("Document reader:", error.message)
   } finally {
@@ -368,7 +372,9 @@ export async function readOne(file) {
       file.set({ docType: note.type, insight: JSON.stringify(note), insightState: "read", insightAt: new Date(), insightError: "" })
     }
   } catch (error) {
-    file.set({ insightState: "failed", insightAt: new Date(), insightError: String(error.message || error).slice(0, 300), insightTries: (file.insightTries || 0) + 1 })
+    // Stopped by the budget, not by the file: it waits to be read when there is budget again, with no try counted.
+    if (error.budgetReached) file.set({ insightState: "", insightError: "" })
+    else file.set({ insightState: "failed", insightAt: new Date(), insightError: String(error.message || error).slice(0, 300), insightTries: (file.insightTries || 0) + 1 })
   }
   try {
     // Not a change anyone made to the file: its Modified date stays.
@@ -507,7 +513,7 @@ const PICK_PROMPT = `You pick documents for SynergiFund's agent. Someone asked f
 // The files that are what was asked for. The model decides among the likeliest candidates; without a model (or when it
 // fails) the kind and label decide alone.
 // `places`: the property or company the search was narrowed to; their address or name says where, not which document.
-export async function pickDocuments({ request, files, names, places = [], settings, tracker }) {
+export async function pickDocuments({ request, files, names, places = [], settings, tracker, meter = null }) {
   const kinds = typesFor(request)
   const skip = [...new Set(places.flatMap((place) => words(place)))].filter((word) => !kinds.some((kind) => normalize(DOCUMENT_TYPES.find((type) => type.id === kind.id)?.words.join(" ")).includes(` ${word} `)))
   const scored = files.map((file) => ({ file, score: fitScore(file, request, { kinds, skip }) })).filter((item) => item.score > 0)
@@ -520,6 +526,7 @@ export async function pickDocuments({ request, files, names, places = [], settin
       const response = await chat({
         model: settings?.taskModel || AGENT_DEFAULTS.taskModel,
         tracker,
+        meter,
         temperature: 0,
         maxTokens: 300,
         timeoutMs: 60000,
@@ -552,7 +559,7 @@ const SCAN_READ_PROMPT = `Someone asked SynergiFund's agent about this document.
 
 // What a document says, for answering from it: its pages' text (the pages that fit the question first when it is
 // long), or, for a scan or a picture, what the decision model reads in it.
-export async function documentContents(file, { question = "", settings, tracker } = {}) {
+export async function documentContents(file, { question = "", settings, tracker, meter = null } = {}) {
   const read = await documentText(file, { pages: 200 })
   if (readable(read.text)) {
     const pages = read.pages.length ? read.pages : [{ page: 0, text: read.text }]
@@ -589,7 +596,7 @@ export async function documentContents(file, { question = "", settings, tracker 
   let lastError = null
   for (const model of [...new Set([chosen.decisionModel, AGENT_DEFAULTS.decisionModel].filter(Boolean))]) {
     try {
-      const response = await chat({ model, tracker, temperature: 0, maxTokens: 6000, timeoutMs: 150000, messages: [{ role: "system", content: SCAN_READ_PROMPT }, { role: "user", content: [{ type: "text", text: `The question: ${question || "(what the document says)"}\nThe document: ${file.name}` }, part] }] })
+      const response = await chat({ model, tracker, meter, temperature: 0, maxTokens: 6000, timeoutMs: 150000, messages: [{ role: "system", content: SCAN_READ_PROMPT }, { role: "user", content: [{ type: "text", text: `The question: ${question || "(what the document says)"}\nThe document: ${file.name}` }, part] }] })
       if (response.content.trim()) return { from: read.type === "pdf" ? "scan" : "image", pages: read.totalPages || 0, text: response.content.trim().slice(0, READ_LIMIT) }
     } catch (error) {
       lastError = error

@@ -5,6 +5,7 @@ import { audience, hasMemberList, isGuest, loadChannel, presentChannel, presentM
 import { chatIo, emitToUsers } from "./chatHub.js"
 import { isApplePush, pushToUsers, sendPush, subscriptionsFor } from "./push.js"
 import { addNoteParticipant, notesAvailable, startNotes, stopNotes } from "./callNotes.js"
+import { budgetMessage, budgetState } from "./agent/llm.js"
 
 // Everyone in a call connects to everyone else (a mesh), which stays smooth up to about eight people.
 export const MAX_PEERS = 8
@@ -687,6 +688,8 @@ export function registerCallHandlers(socket) {
     if (on) {
       if (state.notes) return reply({ notes: summary(state).notes })
       if (!notesAvailable()) return reply({ error: "AI notes need an AI model. An admin can add OPENROUTER_API_KEY to the server settings." })
+      const budget = await budgetState()
+      if (budget.reached) return reply({ error: budgetMessage(budget) })
       if (state.notesStarting) return reply({ error: "AI notes are already turning on." })
       state.notesStarting = true
       try {

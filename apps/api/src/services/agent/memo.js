@@ -309,6 +309,14 @@ export function writeMemo(out, { title, name, at, question, answer, looked = [] 
   }
 
   // Every page: who wrote it and that the figures want checking, and the page number.
+  writeFooters(doc, `Written by the SynergiFund Agent from the records on ${day(at)}. Check the figures before relying on them.`)
+  doc.end()
+}
+
+// Each page's foot: a line on the left and the page number on the right.
+function writeFooters(doc, line) {
+  const left = doc.page.margins.left
+  const width = contentWidth(doc)
   const pages = doc.bufferedPageRange()
   for (let index = 0; index < pages.count; index += 1) {
     doc.switchToPage(pages.start + index)
@@ -316,9 +324,45 @@ export function writeMemo(out, { title, name, at, question, answer, looked = [] 
     doc.page.margins.bottom = 0
     const y = doc.page.height - 36
     doc.font("Helvetica").fontSize(7.5).fillColor(COLORS.muted)
-    doc.text(`Written by the SynergiFund Agent from the records on ${day(at)}. Check the figures before relying on them.`, left, y, { width: width - 60, lineBreak: false })
+    if (line) doc.text(line, left, y, { width: width - 60, lineBreak: false })
     doc.text(`${index + 1} of ${pages.count}`, left + width - 60, y, { width: 60, align: "right", lineBreak: false })
     doc.page.margins.bottom = keep
   }
-  doc.end()
+  return pages.count
+}
+
+const squashed = (text) => plainOf(text).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+
+// A document the Agent wrote for someone (a report, letter, summary or table they asked for as a PDF), ready to send on:
+// its title and date, then the markdown with its headings, lists and tables, and page numbers. `name` (who asked) is
+// only its author in the file's properties. Resolves to { buffer, pages }.
+export function renderPdf({ title, markdown, name, at }) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: PAGE.size, margin: PAGE.margin, bufferPages: true, info: { Title: pdfText(title), Author: pdfText(name || "SynergiFund"), Creator: "SynergiFund" } })
+    const chunks = []
+    let pages = 0
+    doc.on("data", (chunk) => chunks.push(chunk))
+    doc.on("end", () => resolve({ buffer: Buffer.concat(chunks), pages }))
+    doc.on("error", reject)
+    try {
+      const left = doc.page.margins.left
+      const width = contentWidth(doc)
+      doc.font("Helvetica-Bold").fontSize(8.5).fillColor(COLORS.muted).text("SYNERGIFUND", left, doc.y, { characterSpacing: 1.2 })
+      doc.moveDown(0.8)
+      doc.font("Helvetica-Bold").fontSize(18).fillColor(COLORS.text).text(pdfText(title || "Document"), left, doc.y, { width, characterSpacing: 0 })
+      doc.moveDown(0.25)
+      doc.font("Helvetica").fontSize(9.5).fillColor(COLORS.muted).text(day(at), { width })
+      doc.moveDown(0.8)
+      doc.moveTo(left, doc.y).lineTo(left + width, doc.y).lineWidth(0.8).strokeColor(COLORS.line).stroke()
+      doc.moveDown(0.9)
+      // A first heading that only repeats the title is left out.
+      const blocks = blocksOf(markdown)
+      if (blocks[0]?.type === "heading" && squashed(blocks[0].text) === squashed(title)) blocks.shift()
+      writeBlocks(doc, blocks)
+      pages = writeFooters(doc, "")
+      doc.end()
+    } catch (error) {
+      reject(error)
+    }
+  })
 }

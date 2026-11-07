@@ -49,6 +49,8 @@ export const User = register(
       bot: { type: Boolean, default: false },
       // People this person blocked in chat: their messages are hidden for them, and they can't message them directly.
       blockedUserIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      // The Agent's memory turned off (Memory on the Agent page): it neither uses nor learns what it remembers.
+      agentMemoryOff: { type: Boolean, default: false },
     },
     { timestamps: true },
   ),
@@ -799,12 +801,18 @@ export const AgentThread = register(
           toolCalls: [{ tool: String, args: Schema.Types.Mixed, result: Schema.Types.Mixed }],
           todos: [{ id: String, content: String, status: String }],
           models: { task: String, decision: String },
-          usage: { promptTokens: Number, completionTokens: Number, totalTokens: Number, calls: Number },
+          // `cost`: what the answer's model calls cost, in US dollars.
+          usage: { promptTokens: Number, completionTokens: Number, totalTokens: Number, calls: Number, cost: Number },
           agentRunDurationMs: { type: Number, default: null },
           error: { type: Boolean, default: false },
           // Files the person attached to a question, and what was read from them (the agent works from these notes).
           attachments: [{ fileId: { type: Schema.Types.ObjectId, ref: "Document" }, name: String, mime: String, size: Number, _id: false }],
           attachmentNotes: String,
+          // PDFs the Agent made for an answer (services/agent/pdfs.js), kept like attachments: only this person opens them.
+          // `source`: the words it wrote them from, so a later "change the PDF" can rewrite one.
+          files: [{ fileId: { type: Schema.Types.ObjectId, ref: "Document" }, name: String, mime: String, size: Number, source: String, _id: false }],
+          // What the Agent remembered or forgot from the question ("Saved: …", "Forgot: …"), for "Memory updated".
+          memoryNotes: [String],
           // The person's thumbs on an answer: "up", "down" or "".
           feedback: { type: String, default: "" },
           at: { type: Date, default: Date.now },
@@ -908,10 +916,67 @@ export const AgentSetting = register(
       // documents already there before it once an admin turns on docsReadAll.
       docsReadFrom: Date,
       docsReadAll: { type: Boolean, default: false },
+      // The team's AI budget for a month, in US dollars (null: no limit). Reached, new AI work waits for the next month.
+      monthlyLimit: { type: Number, default: null },
       updatedBy: String,
     },
     { timestamps: true },
   ),
+)
+
+// One model call and what it cost (services/agent/llm.js), for Settings → Agent → AI spending. `month` and `day` are
+// on the team's clock. `feature`: agent, memory, receipts, documents (the background reader), calls (AI notes) or
+// teammate. `userId`: who it was for (none for background work). `estimated`: worked out from the model's price list
+// because the model service gave no cost.
+export const AiUsage = register(
+  "AiUsage",
+  new Schema(
+    {
+      at: { type: Date, default: Date.now },
+      month: { type: String, required: true },
+      day: { type: String, required: true },
+      feature: { type: String, default: "other" },
+      userId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+      model: String,
+      promptTokens: { type: Number, default: 0 },
+      completionTokens: { type: Number, default: 0 },
+      cachedTokens: { type: Number, default: 0 },
+      cost: { type: Number, default: 0 },
+      estimated: { type: Boolean, default: false },
+    },
+    { versionKey: false },
+  ).index({ month: 1, feature: 1 }).index({ month: 1, userId: 1 }).index({ at: 1 }, { expireAfterSeconds: 400 * 24 * 60 * 60 }),
+)
+
+// The team's AI spending for a month, added to with each call, so the budget check is one read. `alerted80` and
+// `alerted100`: the admins were told it reached 80% and 100% of the budget this month.
+export const AiMonth = register(
+  "AiMonth",
+  new Schema(
+    {
+      month: { type: String, required: true, unique: true },
+      cost: { type: Number, default: 0 },
+      calls: { type: Number, default: 0 },
+      alerted80: { type: Boolean, default: false },
+      alerted100: { type: Boolean, default: false },
+    },
+    { timestamps: true },
+  ),
+)
+
+// What the Agent remembers about one person (services/agent/memory.js), used in their chats only. `source`: "auto" (it
+// learned it from a chat, `threadId`) or "added" (the person wrote it on the Memory page).
+export const AgentMemory = register(
+  "AgentMemory",
+  new Schema(
+    {
+      userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+      text: { type: String, required: true },
+      source: { type: String, default: "auto" },
+      threadId: { type: Schema.Types.ObjectId, ref: "AgentThread" },
+    },
+    { timestamps: true },
+  ).index({ userId: 1, createdAt: 1 }),
 )
 
 export const Call = register(

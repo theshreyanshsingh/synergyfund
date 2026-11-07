@@ -985,6 +985,16 @@ function ReplyActions({ row, memo, onRetry, onRate, onStar, starred }) {
   )
 }
 
+// What the Agent remembered or forgot from the question; it opens Memory, where they can be changed.
+function MemoryNote({ notes, onOpen }) {
+  return (
+    <button type="button" className="agent-memory-note" onClick={onOpen || undefined} disabled={!onOpen} title={notes.join("\n")}>
+      <Icon name="person" size={13} />
+      Memory updated
+    </button>
+  )
+}
+
 function lastTodos(rows) {
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const todos = rows[index].toolResult?.UsedTool === "todo_write" ? rows[index].toolResult.result?.metadata?.todos : null
@@ -1012,7 +1022,7 @@ function Thinking() {
 // onRate(answer, "up" | "down"), onStar(question text); `starred(text)` says whether a question is already a prompt.
 // They only show on messages the server has saved (and not while an answer is coming).
 // `threadId` and `title`: the open chat, for Download as PDF.
-export function AgentMessages({ rows, streaming, empty = null, threadId = "", title = "", onRetry, onEdit, onRate, onStar, starred = () => false }) {
+export function AgentMessages({ rows, streaming, empty = null, threadId = "", title = "", onRetry, onEdit, onRate, onStar, starred = () => false, onMemory = null }) {
   const endRef = useRef(null)
 
   useEffect(() => {
@@ -1050,6 +1060,7 @@ export function AgentMessages({ rows, streaming, empty = null, threadId = "", ti
               {!live && arvOf(turn.replies) && <ArvCard key={`arv-${question?.id || turnIndex}`} analysis={arvOf(turn.replies)} />}
               {!live && proposalsOf(turn.replies).map((proposal) => <ChangeCard key={proposal.id} proposal={proposal} />)}
               {!live && renamesOf(turn.replies).map((rename) => <RenameCard key={rename.id} rename={rename} />)}
+              {!live && finalRow?.memoryNotes?.length > 0 && <MemoryNote notes={finalRow.memoryNotes} onOpen={onMemory} />}
               {!live && finalRow && (
                 <ReplyActions
                   row={finalRow}

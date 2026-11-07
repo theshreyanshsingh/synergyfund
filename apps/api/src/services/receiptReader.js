@@ -1,6 +1,6 @@
 import { AGENT_DEFAULTS, RECEIPT_CATEGORIES, RECEIPT_MAX_ITEMS, fromCents, toCents } from "@synergifund/shared"
 import { AgentSetting, DocumentFile, Receipt } from "../models/index.js"
-import { chat, modelKey } from "./agent/llm.js"
+import { chat, createMeter, modelKey } from "./agent/llm.js"
 import { readStoredFile } from "./files.js"
 import { teamToday } from "../lib/dates.js"
 
@@ -134,8 +134,9 @@ async function pictureParts(fileIds) {
   return { parts, skipped }
 }
 
-// Reads the receipt's pictures. Returns { ok, ... } like cleanReading, plus the model used.
-export async function readReceiptFiles(fileIds) {
+// Reads the receipt's pictures. Returns { ok, ... } like cleanReading, plus the model used. `userId`: whose receipt it
+// is, for AI spending.
+export async function readReceiptFiles(fileIds, { userId = null } = {}) {
   if (!receiptReadingAvailable()) return { ok: false, error: "Receipt reading needs an AI model. An admin can add OPENROUTER_API_KEY to the server settings. Type the items in for now." }
   const { parts, skipped } = await pictureParts(fileIds)
   if (!parts.length) return { ok: false, error: skipped[0] || "There is no picture to read. Type the items in." }
@@ -146,15 +147,18 @@ export async function readReceiptFiles(fileIds) {
   ]
   const preferred = await readingModel()
   const models = [...new Set([preferred, AGENT_DEFAULTS.decisionModel])]
+  const meter = createMeter("receipts", userId)
   let lastError = null
   for (const model of models) {
     try {
-      const answer = await chat({ model, messages, temperature: 0, maxTokens: 8000, timeoutMs: 90000 })
+      const answer = await chat({ model, messages, temperature: 0, maxTokens: 8000, timeoutMs: 90000, meter })
       const result = cleanReading(readJson(answer.content), today)
       if (skipped.length && result.ok) result.warnings.push(...skipped)
       return { ...result, model }
     } catch (error) {
       lastError = error
+      // This month's AI budget is used up: say so, and type the items in.
+      if (error.budgetReached) return { ok: false, error: `${error.message} Type the items in for now.` }
       console.error(`Receipt reading with ${model} failed`, error.message)
     }
   }
@@ -168,7 +172,7 @@ export function readReceiptInBackground(receiptId) {
     if (!receipt) return
     let result
     try {
-      result = await readReceiptFiles(receipt.fileIds || [])
+      result = await readReceiptFiles(receipt.fileIds || [], { userId: receipt.createdBy })
     } catch (error) {
       result = { ok: false, error: `The receipt could not be read (${error.message}). Type the items in.` }
     }
