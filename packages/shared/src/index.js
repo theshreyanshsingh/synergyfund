@@ -1330,6 +1330,14 @@ export function can(user, permission) {
   return permissionsFor(user).includes(permission)
 }
 
+// The Agent's team knowledge (the team's notes and the house summaries) is for the people who use the Agent and see the
+// whole books: admins, finance, members and investors, never contractors, lenders or anyone who sees only part of the
+// records.
+export function seesKnowledge(user, permissions = permissionsFor(user)) {
+  const books = [PERMISSIONS.agentAsk, PERMISSIONS.propertiesRead, PERMISSIONS.expensesRead, PERMISSIONS.drawsRead, PERMISSIONS.documentsRead]
+  return Boolean(user) && !["contractor", "lender"].includes(user.role) && books.every((permission) => permissions.includes(permission))
+}
+
 export function assignmentFee(property) {
   // A blank price is not $0: no fee until both prices are entered.
   if ([property?.purchasePrice, property?.houseBoughtPrice].some((value) => value == null || value === "")) return null

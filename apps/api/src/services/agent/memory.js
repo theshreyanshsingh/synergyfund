@@ -1,10 +1,10 @@
 import { AgentMemory, AgentThread } from "../../models/index.js"
 import { chat, createMeter } from "./llm.js"
 
-// What the Agent remembers about each person (Memory on the Agent page): short notes it learns from what they write in
-// their chats, or that they add themselves. Only that person's chats use them, and only they see or change them. It
-// learns from the person's own words only, never from documents, web pages or records it read (they could carry
-// instructions), and never keeps figures from the records (they change) or secrets.
+// What the Agent remembers about each person (Knowledge → About you on the Agent page): short notes it learns from what
+// they write in their chats, or that they add themselves. Only that person's chats use them, and only they see or
+// change them. It learns from the person's own words only, never from documents, web pages or records it read (they
+// could carry instructions), and never keeps figures from the records (they change) or secrets.
 
 export const MAX_MEMORIES = 100
 export const MAX_MEMORY_CHARS = 300
@@ -66,8 +66,8 @@ export function memoryPrompt(user, memories) {
 // How the Agent answers "remember that…" or "forget…" in this chat.
 export function memoryRule(user, thread) {
   if (thread?.temporary) return "- If the person asks you to remember or forget something, say that nothing from a temporary chat is remembered, and do not call a tool."
-  if (user.agentMemoryOff) return "- If the person asks you to remember or forget something, say that memory is turned off for them and that they can turn it on under Memory on the Agent page, and do not call a tool."
-  return "- If the person asks you to remember something, or to forget something you remember, and asks nothing else, reply in one short sentence that you will (it is saved as you answer; they can see and change it under Memory on the Agent page), and do not call a tool. If they also ask a question, answer it as usual."
+  if (user.agentMemoryOff) return "- If the person asks you to remember or forget something, say that memory is turned off for them and that they can turn it on under Knowledge → About you on the Agent page, and do not call a tool."
+  return "- If the person asks you to remember something, or to forget something you remember, and asks nothing else, reply in one short sentence that you will (it is saved as you answer; they can see and change it under Knowledge → About you on the Agent page), and do not call a tool. If they also ask a question, answer it as usual."
 }
 
 // A memory's words go from the "Memory updated" notes of the person's chats once it is deleted or changed.
@@ -104,6 +104,7 @@ Never keep:
 - questions or tasks for this chat only;
 - figures, balances, dates or statuses from the company's records (they change; the Agent looks them up);
 - anything they pasted or quoted from a document, email, web page or file;
+- what they ask to be remembered for the whole team (the team's knowledge keeps that, not this);
 - passwords, logins, keys or tokens, PINs, account, routing, card or Social Security numbers, or any other secret;
 - guesses about them.
 

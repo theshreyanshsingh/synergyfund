@@ -4,11 +4,13 @@ import { sealedFields } from "../lib/sealed.js"
 const { Schema, model, models } = mongoose
 
 // Encrypted before they reach the database (lib/sealed.js): a company's tax and bank details, a property's lockbox and
-// door codes, and what the Agent read in a document (it holds the document's contents). Nothing looks these up by value.
+// door codes, what the Agent read in a document (it holds the document's contents) and the house summaries it writes
+// from them. Nothing looks these up by value.
 export const SEALED_FIELDS = {
   Company: ["ein", "wireBankName", "wireRoutingNumber", "wireAccountNumber", "wireEntityName", "wireAddress"],
   Property: ["accessInfo"],
   Document: ["insight"],
+  HouseSummary: ["summary"],
 }
 
 function register(name, schema) {
@@ -49,7 +51,7 @@ export const User = register(
       bot: { type: Boolean, default: false },
       // People this person blocked in chat: their messages are hidden for them, and they can't message them directly.
       blockedUserIds: [{ type: Schema.Types.ObjectId, ref: "User" }],
-      // The Agent's memory turned off (Memory on the Agent page): it neither uses nor learns what it remembers.
+      // The Agent's memory turned off (Knowledge → About you on the Agent page): it neither uses nor learns what it remembers.
       agentMemoryOff: { type: Boolean, default: false },
     },
     { timestamps: true },
@@ -965,7 +967,7 @@ export const AiMonth = register(
 )
 
 // What the Agent remembers about one person (services/agent/memory.js), used in their chats only. `source`: "auto" (it
-// learned it from a chat, `threadId`) or "added" (the person wrote it on the Memory page).
+// learned it from a chat, `threadId`) or "added" (the person wrote it under Knowledge → About you).
 export const AgentMemory = register(
   "AgentMemory",
   new Schema(
@@ -977,6 +979,68 @@ export const AgentMemory = register(
     },
     { timestamps: true },
   ).index({ userId: 1, createdAt: 1 }),
+)
+
+// Team knowledge (Knowledge → Team on the Agent page): notes admins write for everyone's Agent, about the business
+// (the team's terms, its companies, how it works) or about one house (propertyId). Only people who see the whole books
+// read them (services/agent/knowledge.js).
+export const TeamNote = register(
+  "TeamNote",
+  new Schema(
+    {
+      text: { type: String, required: true },
+      propertyId: { type: Schema.Types.ObjectId, ref: "Property", index: true },
+      createdBy: { type: Schema.Types.ObjectId, ref: "User" },
+      createdByName: String,
+      updatedByName: String,
+    },
+    { timestamps: true },
+  ),
+)
+
+// A team note the Agent prepared when an admin asked it to remember something for the team: only their Confirm on the
+// card saves it.
+export const TeamNoteDraft = register(
+  "TeamNoteDraft",
+  new Schema(
+    {
+      userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+      threadId: { type: Schema.Types.ObjectId, ref: "AgentThread" },
+      text: String,
+      propertyId: { type: Schema.Types.ObjectId, ref: "Property" },
+      address: String,
+      noteId: { type: Schema.Types.ObjectId, ref: "TeamNote" },
+      status: { type: String, default: "pending" },
+      decidedAt: Date,
+      expiresAt: Date,
+    },
+    { timestamps: true },
+  ),
+)
+
+// A house's summary, written by the Agent in the background from its records, its documents' notes and the team's
+// notes on it (services/agent/knowledge.js): what it is, the plan, how it got here, who is involved, what is on file
+// and what is open. `summary` is the JSON it wrote; `factsKey` what it was written from, so a change to that has it
+// written again. state: "" waiting, "writing", "written" or "failed" (error says why). `wanted`: an admin asked for it
+// to be written again now.
+export const HouseSummary = register(
+  "HouseSummary",
+  new Schema(
+    {
+      propertyId: { type: Schema.Types.ObjectId, ref: "Property", required: true, unique: true },
+      summary: String,
+      factsKey: String,
+      state: { type: String, default: "" },
+      startedAt: Date,
+      writtenAt: Date,
+      error: String,
+      // Failed tries at the facts it was last tried with (triedKey); a change to them starts the count again.
+      tries: { type: Number, default: 0 },
+      triedKey: String,
+      wanted: { type: Boolean, default: false },
+    },
+    { timestamps: true },
+  ).plugin(sealedFields, { model: "HouseSummary", fields: SEALED_FIELDS.HouseSummary }),
 )
 
 export const Call = register(

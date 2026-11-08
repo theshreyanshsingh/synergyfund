@@ -31,6 +31,7 @@ const STATUS_LABELS = {
   find_documents: "Finding documents",
   read_document: "Reading the document",
   rename_document: "Preparing the rename",
+  save_team_note: "Preparing the team note",
   propose_loan_change: "Preparing the loan update",
   check_records: "Checking the records",
   zip_documents: "Zipping documents",
@@ -739,6 +740,62 @@ function RenameCard({ rename }) {
   )
 }
 
+// The team notes this answer prepared ("remember for the team…"), one card each.
+function teamNotesOf(rows) {
+  const found = new Map()
+  for (const row of rows) {
+    const step = row.toolResult
+    if (step?.UsedTool === "save_team_note" && step.result?.draft?.id) found.set(step.result.draft.id, step.result.draft)
+  }
+  return [...found.values()]
+}
+
+const TEAM_NOTE_STATES = {
+  saved: "Added. Everyone's Agent knows it now.",
+  cancelled: "Cancelled. Nothing was added.",
+  expired: "Not added: this has expired. Ask the agent again.",
+  closed: "This note can no longer be added.",
+}
+
+// A team note the Agent prepared. Only the admin's Confirm adds it to the team's knowledge.
+function TeamNoteCard({ draft }) {
+  const session = useSession()
+  const [status, setStatus] = useState(draft.status)
+  const [pending, setPending] = useState("")
+  const [error, setError] = useState("")
+  const canAdd = session?.user?.role === "admin"
+  async function decide(action) {
+    setPending(action)
+    setError("")
+    try {
+      const data = await api(`/agent/team-notes/${draft.id}/${action}`, { method: "POST" })
+      setStatus(data.draft.status)
+    } catch (err) {
+      setError(err.message)
+      if (err.status === 409 || err.status === 404) setStatus("closed")
+    } finally {
+      setPending("")
+    }
+  }
+  return (
+    <section className="agent-arv agent-change agent-team-card" aria-label="Team note to confirm" data-team-note={draft.id}>
+      <header className="agent-arv-head">
+        <span><Icon name="book" size={15} /> {status === "saved" ? "Added to team knowledge" : status === "pending" ? "Team note to confirm" : "Not added"}</span>
+        <small>{draft.address ? <Link href={`/properties/${draft.propertyId}`}>{draft.address}</Link> : "For the whole team"}</small>
+      </header>
+      <p className="agent-team-card-text">{draft.text}</p>
+      {error && <p className="agent-arv-warn">{error}</p>}
+      {status !== "pending" && !error && <p className={status === "saved" ? "agent-change-note is-saved" : "agent-change-note"}>{TEAM_NOTE_STATES[status]}</p>}
+      {status === "pending" && (
+        <footer className="agent-draft-foot">
+          <button type="button" className="agent-change-cancel" disabled={Boolean(pending)} onClick={() => decide("cancel")}>Cancel</button>
+          {canAdd && <button type="button" className="agent-arv-save" disabled={Boolean(pending)} onClick={() => decide("confirm")}>{pending === "confirm" ? "Adding…" : "Confirm"}</button>}
+        </footer>
+      )}
+    </section>
+  )
+}
+
 function proposalsOf(rows) {
   const found = new Map()
   for (const row of rows) {
@@ -1060,6 +1117,7 @@ export function AgentMessages({ rows, streaming, empty = null, threadId = "", ti
               {!live && arvOf(turn.replies) && <ArvCard key={`arv-${question?.id || turnIndex}`} analysis={arvOf(turn.replies)} />}
               {!live && proposalsOf(turn.replies).map((proposal) => <ChangeCard key={proposal.id} proposal={proposal} />)}
               {!live && renamesOf(turn.replies).map((rename) => <RenameCard key={rename.id} rename={rename} />)}
+              {!live && teamNotesOf(turn.replies).map((draft) => <TeamNoteCard key={draft.id} draft={draft} />)}
               {!live && finalRow?.memoryNotes?.length > 0 && <MemoryNote notes={finalRow.memoryNotes} onOpen={onMemory} />}
               {!live && finalRow && (
                 <ReplyActions

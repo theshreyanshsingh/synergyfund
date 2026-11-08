@@ -22,6 +22,7 @@ import { presentContractorDraw, presentDraw } from "./draws.js"
 import { teamToday } from "../lib/dates.js"
 import { nextDueAfter } from "../services/schedule.js"
 import { forgetPropertyOnReceipts } from "../services/receiptCleanup.js"
+import { forgetHouse, nudgeSummaryWriter } from "../services/agent/summaries.js"
 
 export const propertiesRouter = Router()
 
@@ -558,6 +559,8 @@ propertiesRouter.post(
       stage: STAGES.includes(parsed.data.stage) ? parsed.data.stage : "Under contract",
       updatedBy: req.user.name,
     })
+    // Its summary is written soon.
+    nudgeSummaryWriter()
     // (Ids only: the property is saved by now, so a bad one must not fail the request and invite a duplicate retry.)
     const contractorIds = parseList(req.body.assignedUserIds).map(String).filter((id) => /^[a-f0-9]{24}$/i.test(id))
     if (contractorIds.length) {
@@ -966,6 +969,8 @@ propertiesRouter.delete(
       CalendarEvent.updateMany({ propertyId: property._id }, { $unset: { propertyId: 1 } }),
     ])
     await forgetPropertyOnReceipts(property._id)
+    // Its summary and the team's notes on it.
+    await forgetHouse(property._id)
     await property.deleteOne()
     await recordActivity({ user: req.user, title: "Property deleted", detail: property.address })
     res.json({ ok: true })

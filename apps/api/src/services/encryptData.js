@@ -1,6 +1,6 @@
 import { currentKeyId, decryptField, encryptField, encryptionOn, fieldKeys, fieldNeedsSealing, readField } from "../lib/crypto.js"
 import { sealedContext } from "../lib/sealed.js"
-import { Activity, Company, DocumentFile, EncryptionKey, Notification, Property, SEALED_FIELDS } from "../models/index.js"
+import { Activity, Company, DocumentFile, EncryptionKey, HouseSummary, Notification, Property, SEALED_FIELDS } from "../models/index.js"
 import { resealFileCopies } from "./backup.js"
 import { resealStoredFile } from "./files.js"
 
@@ -40,11 +40,13 @@ export async function checkEncryptionKeys() {
 export async function encryptStoredData() {
   if (!encryptionOn()) throw new Error("FIELD_ENCRYPTION_KEYS is not set, so there is nothing to encrypt with.")
   await checkEncryptionKeys()
-  const done = { companies: 0, properties: 0, documentNotes: 0, logEntries: 0, files: 0, fileCopies: 0, missing: 0 }
+  const done = { companies: 0, properties: 0, documentNotes: 0, houseSummaries: 0, logEntries: 0, files: 0, fileCopies: 0, missing: 0 }
   done.companies = await sealRecords(Company, "Company")
   done.properties = await sealRecords(Property, "Property")
   // What the Agent read in documents before encryption was on.
   done.documentNotes = await sealRecords(DocumentFile, "Document")
+  // The house summaries the Agent wrote from them.
+  done.houseSummaries = await sealRecords(HouseSummary, "HouseSummary")
   done.logEntries = await hideAccessCodes()
 
   // Reading a file back is the slow, costly part, so only files not yet under the current key are read.

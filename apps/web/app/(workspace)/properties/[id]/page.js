@@ -3,7 +3,7 @@
 import { use, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { LINE_STATUSES, PROPERTY_FOLDERS, PROPERTY_LABELS, STAGES, STRATEGIES, can, cityLine, fullAddress, isPaidOff, rehabLeft, splitCity } from "@synergifund/shared"
+import { LINE_STATUSES, PROPERTY_FOLDERS, PROPERTY_LABELS, STAGES, STRATEGIES, can, cityLine, fullAddress, isPaidOff, rehabLeft, seesKnowledge, splitCity } from "@synergifund/shared"
 import { FormSheet } from "../../../../components/ui/FormSheet"
 import { DrawEditor } from "../../../../components/draws/DrawEditor"
 import { FinancingSection } from "../../../../components/properties/FinancingSection"
@@ -13,6 +13,7 @@ import { ArvSection } from "../../../../components/properties/ArvSection"
 import { DocumentsSection } from "../../../../components/properties/DocumentsSection"
 import { FiledPhotos, PhotosSection } from "../../../../components/properties/PhotosSection"
 import { ReportSheet } from "../../../../components/properties/ReportSheet"
+import { HouseSummaryCard } from "../../../../components/properties/HouseSummaryCard"
 import { money } from "../../../../lib/format"
 import { api } from "../../../../lib/api"
 import { useApi } from "../../../../lib/useApi"
@@ -235,6 +236,9 @@ export default function PropertyDetailPage({ params }) {
             <Figure label="Rehab budget" value={money(budget)} hint={figures?.budgetEstimated ? "Estimated from line items and draws" : property.rehabBudget == null && budget != null ? (draws?.recordBudget ? "From the draw budget" : "From the line items") : ""} />
             <Figure label="Rehab left" value={left == null ? "Not entered" : money(left)} hint={budget == null ? "" : hasDraws ? `${money(figures.received)} pulled · ${money(spent)} posted` : `${money(spent)} posted`} />
           </section>
+
+          {/* What the house is, written by the Agent, and the team's notes on it (for people who see the whole books). */}
+          {seesKnowledge(session?.user) && <HouseSummaryCard propertyId={id} />}
 
           {internal && (
             <div className="property-layout property-heads">

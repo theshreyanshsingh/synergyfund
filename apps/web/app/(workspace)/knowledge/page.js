@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { AgentComposer } from "../../../components/agent/AgentComposer"
 import { AgentMessages } from "../../../components/agent/AgentMessages"
 import { AgentWelcome } from "../../../components/agent/AgentWelcome"
-import { MemoryPanel } from "../../../components/agent/MemoryPanel"
+import { KnowledgePanel } from "../../../components/agent/KnowledgePanel"
 import { chatWhen, useAgentChat } from "../../../components/agent/useAgentChat"
 import { Icon } from "../../../components/ui/Icon"
 import { RowMenu } from "../../../components/ui/RowMenu"
@@ -35,6 +35,8 @@ function Agent() {
   const linked = useSearchParams().get("chat") || ""
   const chat = useAgentChat({ openId: linked })
   const [view, setView] = useState("chat")
+  // Knowledge's tab: "team", or "you" (what the Agent remembers about this person).
+  const [knowing, setKnowing] = useState("team")
   const [query, setQuery] = useState("")
   const [panel, setPanel] = useState(true)
   const [drawer, setDrawer] = useState(false)
@@ -67,7 +69,8 @@ function Agent() {
     } catch {}
   }
 
-  const go = (next) => {
+  const go = (next, tab = "team") => {
+    if (next === "knowledge") setKnowing(tab)
     setView(next)
     setDrawer(false)
   }
@@ -106,7 +109,7 @@ function Agent() {
           </button>
           <div className="page-heading">
             {view !== "chat" ? (
-              <h1 className="page-title agent-title">{view === "chats" ? "Chats" : view === "prompts" ? "Prompts" : "Memory"}</h1>
+              <h1 className="page-title agent-title">{view === "chats" ? "Chats" : view === "prompts" ? "Prompts" : "Knowledge"}</h1>
             ) : renaming && canRename ? (
               <TitleEditor title={chat.chatTitle} onDone={async (name) => {
                 setRenaming(false)
@@ -155,7 +158,7 @@ function Agent() {
                     empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} />}
                     onRetry={chat.retry}
                     onEdit={chat.edit}
-                    onMemory={() => go("memory")}
+                    onMemory={() => go("knowledge", "you")}
                     onRate={chat.rate}
                     onStar={star}
                     starred={starred}
@@ -170,7 +173,7 @@ function Agent() {
         )}
         {view === "chats" && <ChatsView chat={chat} query={query} onQuery={setQuery} onOpen={open} />}
         {view === "prompts" && <PromptsView chat={chat} onUse={use} onOpen={open} />}
-        {view === "memory" && <MemoryPanel onOpen={open} />}
+        {view === "knowledge" && <KnowledgePanel tab={knowing} onOpen={open} />}
       </section>
     </div>
   )
@@ -203,7 +206,7 @@ function TitleEditor({ title, onDone }) {
   )
 }
 
-// The left panel: search, New chat, Chats, Prompts, Memory, then pinned chats and the last few. Each chat's ⋯: Rename,
+// The left panel: search, New chat, Chats, Prompts, Knowledge, then pinned chats and the last few. Each chat's ⋯: Rename,
 // Pin, Delete.
 function AgentPanel({ chat, view, query, onQuery, onNew, onView, onOpen, onFold }) {
   const pinned = chat.threads.filter((thread) => thread.pinned)
@@ -225,7 +228,7 @@ function AgentPanel({ chat, view, query, onQuery, onNew, onView, onOpen, onFold 
         <button type="button" onClick={onNew} disabled={chat.streaming}><Icon name="plus" size={16} /> New chat</button>
         <button type="button" className={view === "chats" ? "is-on" : ""} onClick={() => onView("chats")}><Icon name="history" size={16} /> Chats</button>
         <button type="button" className={view === "prompts" ? "is-on" : ""} onClick={() => onView("prompts")}><Icon name="starLine" size={16} /> Prompts</button>
-        <button type="button" className={view === "memory" ? "is-on" : ""} onClick={() => onView("memory")}><Icon name="person" size={16} /> Memory</button>
+        <button type="button" className={view === "knowledge" ? "is-on" : ""} onClick={() => onView("knowledge")}><Icon name="book" size={16} /> Knowledge</button>
       </nav>
       <div className="agent-panel-scroll">
         {pinned.length > 0 && (

@@ -25,6 +25,7 @@ import { trackActivity } from "./middleware/activity.js"
 import { seedIfEmpty } from "./services/seed.js"
 import { startDocumentReader } from "./services/agent/documents.js"
 import { startRepeats } from "./services/agent/repeats.js"
+import { startSummaryWriter } from "./services/agent/summaries.js"
 import { rememberAppOrigin } from "./services/appUrl.js"
 import { recoverNotes } from "./services/callNotes.js"
 import { startTeammate } from "./services/siteAgent.js"
@@ -117,6 +118,8 @@ startBackupSchedule()
 startDocumentReader()
 // Prompts set to repeat (the weekly brief) are asked when their time comes.
 startRepeats()
+// The Agent writes a summary of each house in the background, and again when what it knows about the house changes.
+startSummaryWriter()
 const server = http.createServer(app)
 attachChatSockets(server)
 server.listen(port, () => {

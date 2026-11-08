@@ -199,14 +199,24 @@ export function jsonOf(text) {
   }
 }
 
-// Long runs of digits (account, routing or card numbers) never reach the note, even if a model copied one. Dates,
-// dollar amounts with commas and ZIP codes stay.
-function scrub(text, limit) {
-  return String(text || "").replace(/\d[\d -]{7,}\d/g, (match) => (/^\d{4}-\d{2}-\d{2}$/.test(match) ? match : "on file")).replace(/\s+/g, " ").trim().slice(0, limit)
+// Long runs of digits (account, routing, card or Social Security numbers: nine digits or more, perhaps with spaces or
+// dashes between them) never reach the note, even if a model copied one. Dates, ZIP+4 codes, street numbers ("12345
+// 103rd St") and dollar amounts with commas stay. Also used for the house summaries (summaries.js).
+export function scrub(text, limit) {
+  const kept = (match) => /^\d{4}-\d{2}-\d{2}(?: \d{4}-\d{2}-\d{2})*$/.test(match) || /^\d{5}-\d{4}$/.test(match)
+  return String(text || "").replace(/\d(?:[ -]?\d){8,}/g, (match) => (kept(match) ? match : "on file")).replace(/\s+/g, " ").trim().slice(0, limit)
+}
+
+// A list item a model wrote, as words: a string, or an object's words joined ("Lender: Kiavi" from {"role": "Lender",
+// "name": "Kiavi"}). "" for anything else.
+export function itemText(item) {
+  if (typeof item === "string" || typeof item === "number") return String(item)
+  if (item && typeof item === "object" && !Array.isArray(item)) return Object.values(item).filter((value) => typeof value === "string" && value.trim()).join(": ")
+  return ""
 }
 
 function strings(list, limit, length) {
-  return (Array.isArray(list) ? list : []).map((item) => scrub(item, length)).filter(Boolean).slice(0, limit)
+  return (Array.isArray(list) ? list : []).map((item) => scrub(itemText(item), length)).filter(Boolean).slice(0, limit)
 }
 
 export function cleanNote(raw) {

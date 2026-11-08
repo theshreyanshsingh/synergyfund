@@ -1092,7 +1092,7 @@ a.agent-action { text-decoration: none; }
 .agent-prompt-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .agent-prompt-item, .agent-prompt-editor { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--white); }
 .agent-prompt-editor { margin-bottom: 10px; }
-.agent-prompt-item p { display: -webkit-box; margin: 0; overflow: hidden; font-size: 15px; line-height: 1.5; white-space: pre-wrap; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.agent-prompt-item p { display: -webkit-box; margin: 0; overflow: hidden; font-size: 15px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
 .agent-prompt-editor textarea { width: 100%; min-height: 80px; padding: 10px 12px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; font-size: 15px; resize: vertical; }
 .agent-prompt-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .agent-prompt-actions .primary { margin-left: 0; }
@@ -4790,4 +4790,44 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 760px) {
   .agent-memory .agent-prompts-head { flex-direction: column; align-items: stretch; }
   .agent-memory .agent-prompts-head .primary { align-self: flex-start; }
+}
+
+/* ---------- Knowledge (the Agent page and the phone sheet), and a house's Summary on its page ---------- */
+.agent-knowledge-tabs { display: flex; gap: 6px; margin: 12px 0 2px; }
+.agent-knowledge-tabs button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: transparent; color: var(--muted); font-weight: 650; }
+.agent-knowledge-tabs button.is-on { border-color: var(--ink); background: var(--ink); color: var(--on-ink); }
+.agent-knowledge-section { margin: 0 0 24px; }
+.agent-knowledge-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 0 0 10px; font-size: 15px; }
+.agent-knowledge-title span { color: var(--faint); font-size: 13px; font-weight: 500; }
+.agent-knowledge-hint { margin: -4px 0 10px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.agent-house-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.agent-house { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--white); color: var(--text); text-decoration: none; }
+.agent-house:hover { border-color: var(--muted); }
+.agent-house-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
+.agent-house-head strong { min-width: 0; overflow: hidden; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-house-head small { flex: none; color: var(--muted); font-size: 12px; }
+.agent-house-what { display: -webkit-box; overflow: hidden; font-size: 14px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.agent-house-what.is-none { color: var(--faint); }
+.agent-house-meta { color: var(--faint); font-size: 12px; }
+.agent-team-card-text { margin: 0; padding: 12px 14px; font-size: 14.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.agent-team-card .agent-change-note { border-top: 1px solid var(--line); }
+.house-summary-actions { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.house-summary .settings-note { margin: -6px 0 10px; }
+.house-summary-body { display: grid; gap: 8px; }
+.house-summary-body p { margin: 0; line-height: 1.55; }
+.house-summary-lead { font-size: 15px; }
+.house-summary-lists { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 20px; margin-top: 8px; }
+.house-summary-lists h3, .house-summary-notes h3 { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 650; }
+.house-summary-lists ul { display: grid; gap: 4px; margin: 0; padding-left: 16px; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.house-summary-notes { display: grid; gap: 8px; margin-top: 16px; }
+.house-summary-notes h3 { margin-bottom: 0; }
+.house-summary-notes > .property-missing { margin: 0 0 2px; }
+.house-summary-more { display: block; margin: 12px 0 0 -8px; border: 0; background: transparent; color: var(--accent); font-size: 13px; font-weight: 600; }
+@media (max-width: 760px) {
+  .agent-team .agent-prompts-head { flex-direction: column; align-items: stretch; }
+  .agent-team .agent-prompts-head .primary { align-self: flex-start; }
+  .house-summary .property-card-head { flex-wrap: wrap; gap: 10px; }
+  .house-summary .property-card-head > div:first-child { flex: 1 1 100%; }
+  .house-summary-actions { justify-content: flex-start; }
+  .house-summary-lists { grid-template-columns: minmax(0, 1fr); }
 }

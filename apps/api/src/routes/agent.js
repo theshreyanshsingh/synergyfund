@@ -1,7 +1,8 @@
 import { Router } from "express"
 import { chatTitleFromPrompt } from "@synergifund/shared"
 import mongoose from "mongoose"
-import { AgentMemory, AgentPrompt, AgentProposal, AgentRename, AgentSetting, AgentThread, AiMonth, AiUsage, DocumentFile, Loan, Property, User } from "../models/index.js"
+import { NOT_OWNED_STAGES, cityLine } from "@synergifund/shared"
+import { AgentMemory, AgentPrompt, AgentProposal, AgentRename, AgentSetting, AgentThread, AiMonth, AiUsage, DocumentFile, HouseSummary, Loan, Property, TeamNote, TeamNoteDraft, User } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
 import { teamToday, teamZoneName } from "../lib/dates.js"
@@ -9,6 +10,8 @@ import { ownsProperty } from "../services/access.js"
 import { agentSettings, budgetLimit, budgetMessage, budgetState, dollars, modelKey, teamMonth } from "../services/agent/llm.js"
 import { MAX_MEMORIES, MAX_MEMORY_CHARS, forgetNotes, makeRoom, memoryText, presentMemory, secretIn } from "../services/agent/memory.js"
 import { openRouterModels } from "../services/agent/catalog.js"
+import { MAX_HOUSE_NOTES, MAX_NOTE_CHARS, MAX_TEAM_NOTES, addressesOf, businessRoom, editsKnowledge, freshDrafts, noteText, presentDraft, presentTeamNote, seesKnowledge } from "../services/agent/knowledge.js"
+import { presentSummary, summaryStatus, wantSummary } from "../services/agent/summaries.js"
 import { HIDDEN_KINDS, documentReading, nudgeDocumentReader } from "../services/agent/documents.js"
 import { BRIEF_REPEAT, BRIEF_TEXT, MAX_REPEATING, REPEAT_EVERY, cleanRepeat, repeatName, startingDay } from "../services/agent/repeats.js"
 import { applyRename, freshRenames, presentRename } from "../services/agent/renames.js"
@@ -132,9 +135,9 @@ agentRouter.get(
   asyncHandler(async (req, res) => {
     // ?documents=1 (Settings): admins also see how far the Agent has got reading the documents. The Agent page asks
     // without it, so opening the Agent never counts the library.
-    const documents = req.user.role === "admin" && req.query.documents === "1" ? await documentReading() : null
-    const [settings, budget] = await Promise.all([agentSettings(), budgetState()])
-    res.json({ settings: { ...presentSettings(settings, req.user, budget), ...(documents ? { documents } : {}) } })
+    const forAdmin = req.user.role === "admin" && req.query.documents === "1"
+    const [settings, budget, documents, summaries] = await Promise.all([agentSettings(), budgetState(), forAdmin ? documentReading() : null, forAdmin ? summaryStatus() : null])
+    res.json({ settings: { ...presentSettings(settings, req.user, budget), ...(documents ? { documents, summaries } : {}) } })
   }),
 )
 
@@ -210,14 +213,14 @@ agentRouter.patch(
       before.decisionModel !== next.decisionModel ? `Decision model ${before.decisionModel} → ${next.decisionModel}` : "",
     ].filter(Boolean).join(" · ")
     if (modelsGiven || (reading === undefined && !limitGiven)) await recordActivity({ user: req.user, title: "Agent models changed", detail: changes || "Saved with no changes" })
-    res.json({ settings: { ...presentSettings(next, req.user, await budgetState()), documents: await documentReading() } })
+    res.json({ settings: { ...presentSettings(next, req.user, await budgetState()), documents: await documentReading(), summaries: await summaryStatus() } })
   }),
 )
 
 // What the AI cost in a month (Settings → Agent → AI spending; admins only): the total and the budget, each day, and
 // by what it was for, by person and by model. ?month=YYYY-MM, this month when left out. `months`: the months with
 // spending, newest first, for the month picker.
-const FEATURES = ["agent", "memory", "receipts", "documents", "calls", "teammate", "other"]
+const FEATURES = ["agent", "memory", "knowledge", "receipts", "documents", "calls", "teammate", "other"]
 
 // The days of `month` for the chart: every one, or this month's up to today.
 function monthDays(month) {
@@ -311,6 +314,7 @@ agentRouter.get(
     const messages = thread.messages.map(presentMessage)
     await freshProposals(messages)
     await freshRenames(messages)
+    await freshDrafts(messages)
     res.json({ thread: { ...presentThread(thread), messages } })
   }),
 )
@@ -327,6 +331,7 @@ agentRouter.delete(
     await removeAttachments(threadFileIds([thread])).catch((error) => console.error("Agent attachment removal failed", error))
     await AgentProposal.deleteMany({ threadId: thread._id, status: "pending" })
     await AgentRename.deleteMany({ threadId: thread._id, status: "pending" })
+    await TeamNoteDraft.deleteMany({ threadId: thread._id, status: "pending" })
     if (!thread.temporary) await recordActivity({ user: req.user, title: "Agent chat deleted", detail: thread.title || "" })
     res.json({ ok: true })
   }),
@@ -502,7 +507,8 @@ function memoryProblem(text) {
 agentRouter.post(
   "/memories",
   asyncHandler(async (req, res) => {
-    const raw = String(req.body.text ?? "")
+    if (typeof req.body.text !== "string") return sendError(res, 400, "Write what the Agent should remember.")
+    const raw = req.body.text
     if (raw.trim().length > MAX_MEMORY_CHARS) return sendError(res, 400, `Keep a memory under ${MAX_MEMORY_CHARS} characters.`)
     const text = memoryText(raw)
     const problem = memoryProblem(text)
@@ -521,7 +527,8 @@ agentRouter.patch(
   asyncHandler(async (req, res) => {
     const memory = mongoose.isValidObjectId(req.params.id) ? await AgentMemory.findOne({ _id: req.params.id, userId: req.user._id }) : null
     if (!memory) return sendError(res, 404, "That memory was not found.")
-    const raw = String(req.body.text ?? "")
+    if (typeof req.body.text !== "string") return sendError(res, 400, "Write what the Agent should remember.")
+    const raw = req.body.text
     if (raw.trim().length > MAX_MEMORY_CHARS) return sendError(res, 400, `Keep a memory under ${MAX_MEMORY_CHARS} characters.`)
     const text = memoryText(raw)
     const problem = memoryProblem(text)
@@ -553,6 +560,219 @@ agentRouter.delete(
     const result = await AgentMemory.deleteMany({ userId: req.user._id })
     await AgentThread.updateMany({ userId: req.user._id, "messages.memoryNotes.0": { $exists: true } }, { $set: { "messages.$[].memoryNotes": [] } }, { timestamps: false })
     res.json({ ok: true, deleted: result.deletedCount || 0 })
+  }),
+)
+
+/* ---------- team knowledge: what the team wrote down, and the house summaries (Knowledge → Team) ---------- */
+
+// For the people who see the whole books (knowledge.js); only admins change it.
+function knowledgeReader(req, res) {
+  if (seesKnowledge(req.user)) return true
+  sendError(res, 403, "Team knowledge is for people who see the whole books.")
+  return false
+}
+
+function knowledgeEditor(req, res) {
+  if (editsKnowledge(req.user)) return true
+  sendError(res, 403, "Only an admin can change the team's knowledge.")
+  return false
+}
+
+function teamNoteProblem(raw) {
+  if (typeof raw !== "string") return { error: "Write the note." }
+  const text = noteText(raw)
+  if (!text) return { error: "Write the note." }
+  if (String(raw ?? "").trim().length > MAX_NOTE_CHARS) return { error: `Keep a team note under ${MAX_NOTE_CHARS} characters.` }
+  if (secretIn(text)) return { error: "Team notes never hold passwords, account numbers or other secrets." }
+  return { text }
+}
+
+// Room for one more note of `text`: up to MAX_TEAM_NOTES in all, MAX_HOUSE_NOTES on one house, and the notes about the
+// business within what goes into every question.
+async function teamNoteRoom(propertyId, text) {
+  if ((await TeamNote.countDocuments()) >= MAX_TEAM_NOTES) return `The team keeps up to ${MAX_TEAM_NOTES} notes. Delete one first.`
+  if (propertyId && (await TeamNote.countDocuments({ propertyId })) >= MAX_HOUSE_NOTES) return `A house keeps up to ${MAX_HOUSE_NOTES} notes. Delete one first.`
+  return propertyId ? "" : businessRoom(text.length)
+}
+
+// Notes about a house are part of what its summary is written from (and right where the records differ): it is written
+// again soon.
+async function addTeamNote({ user, text, property = null }) {
+  const note = await TeamNote.create({ text, propertyId: property?._id, createdBy: user._id, createdByName: user.name, updatedByName: user.name })
+  await recordActivity({ user, title: "Team note added", detail: property ? `About ${property.address}` : "About the business", propertyId: property?._id })
+  if (property) await wantSummary(property._id)
+  return note
+}
+
+// Knowledge → Team: the team's notes about the business, and every house with its summary.
+agentRouter.get(
+  "/knowledge",
+  asyncHandler(async (req, res) => {
+    if (!knowledgeReader(req, res)) return
+    const [notes, properties, summaries, houseNotes, status] = await Promise.all([
+      TeamNote.find({ propertyId: null }).sort({ createdAt: -1 }).lean(),
+      Property.find().select("address city state zip stage").lean(),
+      HouseSummary.find().select("propertyId summary state writtenAt error").lean(),
+      TeamNote.aggregate([{ $match: { propertyId: { $ne: null } } }, { $group: { _id: "$propertyId", count: { $sum: 1 } } }]),
+      summaryStatus(),
+    ])
+    const byHouse = new Map(summaries.map((record) => [String(record.propertyId), record]))
+    const noted = new Map(houseNotes.map((row) => [String(row._id), row.count]))
+    const sold = (property) => NOT_OWNED_STAGES.includes(property.stage)
+    const houses = [...properties]
+      .sort((left, right) => Number(sold(left)) - Number(sold(right)) || left.address.localeCompare(right.address, undefined, { numeric: true }))
+      .map((property) => {
+        const summary = presentSummary(byHouse.get(String(property._id)))
+        return { id: String(property._id), address: property.address, city: cityLine(property), stage: property.stage || "", state: summary.state, what: summary.what || "", writtenAt: summary.writtenAt, notes: noted.get(String(property._id)) || 0 }
+      })
+    res.json({ canEdit: editsKnowledge(req.user), notes: notes.map((note) => presentTeamNote(note)), houses, max: MAX_TEAM_NOTES, maxChars: MAX_NOTE_CHARS, writing: { connected: status.connected, on: status.on } })
+  }),
+)
+
+// One house's summary and the team's notes on it (the property page's Summary card).
+agentRouter.get(
+  "/knowledge/houses/:id",
+  asyncHandler(async (req, res) => {
+    if (!knowledgeReader(req, res)) return
+    const property = mongoose.isValidObjectId(req.params.id) ? await Property.findById(req.params.id).select("address").lean() : null
+    if (!property) return sendError(res, 404, "That property is not available.")
+    const [record, notes, status] = await Promise.all([HouseSummary.findOne({ propertyId: property._id }).lean(), TeamNote.find({ propertyId: property._id }).sort({ createdAt: 1 }).lean(), summaryStatus()])
+    const addresses = new Map([[String(property._id), property.address]])
+    res.json({ canEdit: editsKnowledge(req.user), summary: presentSummary(record), notes: notes.map((note) => presentTeamNote(note, addresses)), maxChars: MAX_NOTE_CHARS, writing: { connected: status.connected, on: status.on } })
+  }),
+)
+
+// Write a house's summary again now (or every house's, with no id).
+agentRouter.post(
+  "/knowledge/rewrite",
+  asyncHandler(async (req, res) => {
+    if (!knowledgeEditor(req, res)) return
+    const id = req.body.propertyId
+    if (id !== undefined && id !== null && id !== "") {
+      const property = mongoose.isValidObjectId(id) ? await Property.findById(id).select("_id").lean() : null
+      if (!property) return sendError(res, 404, "That property is not available.")
+      await wantSummary(property._id)
+      return res.json({ ok: true, summary: presentSummary(await HouseSummary.findOne({ propertyId: property._id }).lean()) })
+    }
+    await wantSummary()
+    await recordActivity({ user: req.user, title: "House summaries rewritten", detail: "The Agent writes every house's summary again" })
+    res.json({ ok: true, summaries: await summaryStatus() })
+  }),
+)
+
+agentRouter.post(
+  "/knowledge/notes",
+  asyncHandler(async (req, res) => {
+    if (!knowledgeEditor(req, res)) return
+    const { text, error } = teamNoteProblem(req.body.text)
+    if (error) return sendError(res, 400, error)
+    const id = req.body.propertyId
+    let property = null
+    if (id !== undefined && id !== null && id !== "") {
+      property = mongoose.isValidObjectId(id) ? await Property.findById(id).select("address").lean() : null
+      if (!property) return sendError(res, 404, "That property is not available.")
+    }
+    const existing = await TeamNote.findOne({ propertyId: property?._id ?? null, text })
+    if (existing) return res.json({ note: presentTeamNote(existing, new Map(property ? [[String(property._id), property.address]] : [])) })
+    const room = await teamNoteRoom(property?._id, text)
+    if (room) return sendError(res, 400, room)
+    const note = await addTeamNote({ user: req.user, text, property })
+    res.status(201).json({ note: presentTeamNote(note, new Map(property ? [[String(property._id), property.address]] : [])) })
+  }),
+)
+
+agentRouter.patch(
+  "/knowledge/notes/:id",
+  asyncHandler(async (req, res) => {
+    if (!knowledgeEditor(req, res)) return
+    const note = mongoose.isValidObjectId(req.params.id) ? await TeamNote.findById(req.params.id) : null
+    if (!note) return sendError(res, 404, "That note was not found.")
+    const { text, error } = teamNoteProblem(req.body.text)
+    if (error) return sendError(res, 400, error)
+    if (note.text !== text) {
+      const room = note.propertyId ? "" : await businessRoom(text.length, note._id)
+      if (room) return sendError(res, 400, room)
+      note.text = text
+      note.updatedByName = req.user.name
+      await note.save()
+      const address = note.propertyId ? (await addressesOf([note])).get(String(note.propertyId)) : ""
+      await recordActivity({ user: req.user, title: "Team note changed", detail: address ? `About ${address}` : "About the business", propertyId: note.propertyId })
+      if (note.propertyId) await wantSummary(note.propertyId)
+    }
+    res.json({ note: presentTeamNote(note, await addressesOf([note])) })
+  }),
+)
+
+agentRouter.delete(
+  "/knowledge/notes/:id",
+  asyncHandler(async (req, res) => {
+    if (!knowledgeEditor(req, res)) return
+    const note = mongoose.isValidObjectId(req.params.id) ? await TeamNote.findByIdAndDelete(req.params.id) : null
+    if (!note) return sendError(res, 404, "That note was not found.")
+    const address = note.propertyId ? (await addressesOf([note])).get(String(note.propertyId)) : ""
+    await recordActivity({ user: req.user, title: "Team note deleted", detail: address ? `About ${address}` : "About the business", propertyId: note.propertyId })
+    if (note.propertyId) await wantSummary(note.propertyId)
+    res.json({ ok: true })
+  }),
+)
+
+// A team note the Agent prepared ("remember for the team…"): Confirm adds it, Cancel drops it. Only the admin who asked.
+const DRAFT_CLOSED = {
+  saved: "This note was already added.",
+  cancelled: "This note was cancelled. Ask the agent again.",
+  expired: "This note has expired. Ask the agent again.",
+}
+
+async function openDraft(req, res) {
+  const draft = mongoose.isValidObjectId(req.params.id) ? await TeamNoteDraft.findOne({ _id: req.params.id, userId: req.user._id }) : null
+  if (!draft) {
+    sendError(res, 404, "That note was not found.")
+    return null
+  }
+  const { status } = presentDraft(draft)
+  if (status !== "pending") {
+    sendError(res, 409, DRAFT_CLOSED[status] || DRAFT_CLOSED.expired)
+    return null
+  }
+  return draft
+}
+
+agentRouter.post(
+  "/team-notes/:id/confirm",
+  asyncHandler(async (req, res) => {
+    if (!knowledgeEditor(req, res)) return
+    const draft = await openDraft(req, res)
+    if (!draft) return
+    const property = draft.propertyId ? await Property.findById(draft.propertyId).select("address").lean() : null
+    if (draft.propertyId && !property) return sendError(res, 409, "Not added: that house is no longer in the records.")
+    const existing = await TeamNote.findOne({ propertyId: property?._id ?? null, text: draft.text })
+    const room = existing ? "" : await teamNoteRoom(property?._id, draft.text)
+    if (room) return sendError(res, 400, room)
+    // Taken first, so a second tap can't add it twice.
+    const taken = await TeamNoteDraft.findOneAndUpdate({ _id: draft._id, status: "pending" }, { status: "saved", decidedAt: new Date() }, { new: true })
+    if (!taken) return sendError(res, 409, DRAFT_CLOSED.saved)
+    let note = existing
+    try {
+      note ||= await addTeamNote({ user: req.user, text: draft.text, property })
+    } catch (error) {
+      // Not added: the card can be confirmed again.
+      await TeamNoteDraft.updateOne({ _id: draft._id, status: "saved" }, { status: "pending", $unset: { decidedAt: 1 } })
+      throw error
+    }
+    taken.noteId = note._id
+    await taken.save()
+    res.json({ draft: presentDraft(taken) })
+  }),
+)
+
+agentRouter.post(
+  "/team-notes/:id/cancel",
+  asyncHandler(async (req, res) => {
+    const draft = await openDraft(req, res)
+    if (!draft) return
+    const taken = await TeamNoteDraft.findOneAndUpdate({ _id: draft._id, status: "pending" }, { status: "cancelled", decidedAt: new Date() }, { new: true })
+    if (!taken) return sendError(res, 409, DRAFT_CLOSED.saved)
+    res.json({ draft: presentDraft(taken) })
   }),
 )
 
