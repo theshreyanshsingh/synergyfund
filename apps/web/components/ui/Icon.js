@@ -8,7 +8,7 @@ export function Icon({ name, size = 16 }) {
 }
 
 function Search() { return <><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></> }
-function Spark() { return <path d="M12 3l1.6 5.2L19 10l-5.4 1.8L12 17l-1.6-5.2L5 10l5.4-1.8L12 3z" /> }
+function Spark() { return <path d="M12 5l1.6 5.2L19 12l-5.4 1.8L12 19l-1.6-5.2L5 12l5.4-1.8L12 5z" /> }
 function Bell() { return <><path d="M6 9a6 6 0 1 1 12 0c0 7 3 7 3 7H3s3 0 3-7" /><path d="M10 19a2 2 0 0 0 4 0" /></> }
 function Home() { return <><path d="M4 11.5 12 4l8 7.5" /><path d="M6 10.5V20h12v-9.5" /></> }
 function Chat() { return <path d="M5 6h14v9H8l-3 3V6z" /> }

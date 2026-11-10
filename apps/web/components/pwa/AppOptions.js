@@ -9,6 +9,19 @@ import { can } from "@synergifund/shared"
 import { CallCheck } from "../calls/CallCheck"
 import { SoundSettings } from "./SoundSettings"
 
+// In the phone app. An iPhone app from before calls came to iPhone (it does not say it rings) gets neither.
+function nativeNotificationsText(native) {
+  if (native.platform === "ios") {
+    if (!native.rings) return "Update the SynergiFund app from the App Store to get calls and notifications on this iPhone."
+    return native.pushReady
+      ? "This iPhone rings for calls and shows messages through the SynergiFund app. Turn message notifications on or off in the iPhone's Settings."
+      : "Calls and messages reach this iPhone through the SynergiFund app once you are signed in. Allow notifications in the iPhone's Settings to see messages."
+  }
+  return native.pushReady
+    ? "This phone rings for calls and shows messages through the SynergiFund app. Change them in the phone's settings."
+    : "Calls and messages reach this phone through the SynergiFund app once notifications are allowed in the phone's settings."
+}
+
 export function AppOptions() {
   const session = useSession()
   const admin = session?.user?.role === "admin"
@@ -97,7 +110,7 @@ export function AppOptions() {
         <div className="settings-row">
           <div>
             <h2>Notifications</h2>
-            <p>{window.SynergiFundNative?.pushReady ? "This phone rings for calls and shows messages through the SynergiFund app. Change them in the phone's settings." : "Calls and messages reach this phone through the SynergiFund app once notifications are allowed in the phone's settings."}</p>
+            <p>{nativeNotificationsText(window.SynergiFundNative || {})}</p>
           </div>
           <button type="button" className="tool" onClick={() => window.ReactNativeWebView?.postMessage(JSON.stringify({ type: "open-settings" }))}>Phone settings</button>
         </div>

@@ -14,7 +14,7 @@ import { drawsRouter } from "./routes/draws.js"
 import { documentsRouter } from "./routes/documents.js"
 import { workspaceRouter } from "./routes/workspace.js"
 import { tasksRouter } from "./routes/tasks.js"
-import { nativeDecline, pushRouter } from "./routes/push.js"
+import { nativeCallState, nativeDecline, pushRouter } from "./routes/push.js"
 import { agentRouter } from "./routes/agent.js"
 import { chatRouter } from "./routes/chat.js"
 import { allowedOrigins, attachChatSockets } from "./services/chatHub.js"
@@ -61,8 +61,10 @@ app.use((req, res, next) => {
   next()
 })
 app.use("/auth", authRouter)
-// The Android app declines a call from the lock screen with its own device key (no sign-in cookie there).
+// The phone app declines a call from the lock screen with its own device key (no sign-in cookie there), and a ringing
+// iPhone asks the same way whether it still should ring.
 app.post("/push/native/decline", nativeDecline)
+app.post("/push/native/call", nativeCallState)
 
 const api = express.Router()
 api.use(requireAuth)

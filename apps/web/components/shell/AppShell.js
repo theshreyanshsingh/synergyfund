@@ -72,16 +72,30 @@ export function AppShell({ children }) {
     if (!allowed) router.replace("/properties")
   }, [pathname, session, router])
 
-  // A notification tapped in the phone app opens its page here without reloading, so a call in progress carries on.
+  // A notification tapped in the phone app, or in this browser, opens its page here without reloading, so a call in
+  // progress carries on.
   useEffect(() => {
-    function onOpen(event) {
-      const path = String(event.detail || "")
-      if (!path.startsWith("/") || path.startsWith("//")) return
-      event.preventDefault()
+    const go = (path) => {
+      if (!path.startsWith("/") || path.startsWith("//")) return false
       router.push(path)
+      return true
+    }
+    function onOpen(event) {
+      if (go(String(event.detail || ""))) event.preventDefault()
+    }
+    function onWorker(event) {
+      if (event.data?.type !== "synergifund:open") return
+      event.ports?.[0]?.postMessage({ opened: go(String(event.data.path || "")) })
     }
     window.addEventListener("synergifund:open", onOpen)
-    return () => window.removeEventListener("synergifund:open", onOpen)
+    const worker = typeof navigator !== "undefined" ? navigator.serviceWorker : null
+    worker?.addEventListener("message", onWorker)
+    // Messages from the service worker wait until the page says it listens.
+    worker?.startMessages?.()
+    return () => {
+      window.removeEventListener("synergifund:open", onOpen)
+      worker?.removeEventListener("message", onWorker)
+    }
   }, [router])
 
   useEffect(() => {

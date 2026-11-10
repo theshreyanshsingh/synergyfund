@@ -61,10 +61,16 @@ async function readEndpoint() {
   }
 }
 
+// Inside the iPhone app: the phone's call address, so the server knows which page is that phone's.
+function nativeToken() {
+  const native = typeof window !== "undefined" ? window.SynergiFundNative : null
+  return native?.platform === "ios" && native.pushToken ? String(native.pushToken) : ""
+}
+
 function reportVisible() {
   if (!socket?.connected || typeof document === "undefined") return
   const visible = document.visibilityState === "visible"
-  socket.emit("presence:visible", { visible, endpoint: pushEndpoint, channelId: visible ? activeChannel : "" })
+  socket.emit("presence:visible", { visible, endpoint: pushEndpoint, channelId: visible ? activeChannel : "", nativeToken: nativeToken() })
   clearInterval(heartbeat)
   heartbeat = visible ? setInterval(reportVisible, 10000) : null
 }
@@ -154,6 +160,11 @@ async function start() {
       setStatus("connecting")
       if (blocked) setStatus("offline")
       else if (socket && !socket.active) retryLater(() => socket?.connect())
+    })
+    // A call is about to ring this person's iPhone: the server asks whether this page shows it on screen right now
+    // (then it rings here, and the phone does not ring as well).
+    socket.on("call:on-screen", (data, ack) => {
+      if (typeof ack === "function") ack({ onScreen: document.visibilityState === "visible" })
     })
     socket.onAny((event, payload) => dispatch(event, payload))
     starting = null

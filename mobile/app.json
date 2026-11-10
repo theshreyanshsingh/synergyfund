@@ -10,7 +10,7 @@
     "backgroundColor": "#111111",
     "ios": {
       "bundleIdentifier": "com.synergifund.app",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "appleTeamId": "8PJ65D3FXP",
       "supportsTablet": true,
       "infoPlist": {
@@ -19,7 +19,13 @@
         "NSSpeechRecognitionUsageDescription": "SynergiFund turns your voice into text when you speak a question to the Agent.",
         "NSPhotoLibraryUsageDescription": "SynergiFund lets you attach photos and files from your library.",
         "NSPhotoLibraryAddUsageDescription": "SynergiFund saves downloaded photos to your library when you ask it to.",
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": [
+          "voip"
+        ]
+      },
+      "entitlements": {
+        "aps-environment": "production"
       }
     },
     "android": {

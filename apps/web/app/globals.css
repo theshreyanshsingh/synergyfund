@@ -994,7 +994,11 @@ button.paycal-more { border: 0; background: transparent; text-align: left; curso
 .agent-replies { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .agent-reply-head { display: flex; align-items: flex-start; gap: 10px; min-height: 26px; }
 .agent-mark { display: grid; flex: none; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--ink); color: var(--on-ink); }
-.agent-thinking { margin: 0; padding-top: 1px; font-size: 15px; line-height: 24px; }
+.agent-thinking { display: flex; align-items: center; gap: 7px; margin: 0; padding-top: 1px; font-size: 15px; line-height: 24px; }
+.agent-thinking-dots { display: inline-flex; align-items: center; gap: 3px; height: 24px; }
+.agent-thinking-dots b { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); opacity: .35; animation: agent-thinking-dot 1.2s ease-in-out infinite; }
+.agent-thinking-dots b:nth-child(2) { animation-delay: .15s; }
+.agent-thinking-dots b:nth-child(3) { animation-delay: .3s; }
 .agent-thinking span { background: linear-gradient(90deg, var(--faint) 0%, var(--text) 45%, var(--faint) 90%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: agent-shimmer 1.6s linear infinite; }
 .agent-worked { flex: 1; min-width: 0; padding-top: 1px; }
 .agent-worked-toggle { display: inline-flex; align-items: center; gap: 4px; margin-left: -6px; padding: 1px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 13px; line-height: 22px; text-transform: none; }
@@ -1148,6 +1152,7 @@ a.agent-action { text-decoration: none; }
 @keyframes agent-pulse { 50% { opacity: 0.5; } }
 @keyframes agent-dot { 0%, 100% { opacity: 0.3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-3px); } }
 @keyframes agent-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@keyframes agent-thinking-dot { 0%, 60%, 100% { opacity: .35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
 @keyframes agent-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 /* Narrow screens: the panel opens over the chat from a button in the top bar. */
 @media (max-width: 900px) {

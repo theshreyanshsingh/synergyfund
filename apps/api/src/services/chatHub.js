@@ -77,12 +77,15 @@ export function attachChatSockets(server) {
     socket.data.visibleAt = 0
     socket.data.endpoint = ""
     socket.data.channelId = ""
+    // Inside the iPhone app: the phone's call address, so a call can skip ringing the phone while the app shows it.
+    socket.data.nativeToken = ""
     socket.on("presence:visible", (data) => {
       const info = data && typeof data === "object" ? data : {}
       socket.data.visible = Boolean(info.visible)
       socket.data.visibleAt = Date.now()
       socket.data.endpoint = typeof info.endpoint === "string" && info.endpoint.length < 1000 ? info.endpoint : ""
       socket.data.channelId = typeof info.channelId === "string" && /^[a-f0-9]{24}$/i.test(info.channelId) ? info.channelId : ""
+      socket.data.nativeToken = typeof info.nativeToken === "string" && /^[0-9a-fA-F]{32,200}$/.test(info.nativeToken) ? info.nativeToken : ""
     })
     registerCallHandlers(socket)
 
@@ -141,6 +144,21 @@ export async function screenEndpoints(userIds, channelId = "") {
     }
   }
   return endpoints
+}
+
+// iPhones (call addresses) of these people whose open app shows SynergiFund on screen right now. Each such page is
+// asked directly: a page iOS has frozen in the background cannot answer in time, so its phone still rings.
+export async function phonesShowing(userIds, callId, waitMs = 1500) {
+  const tokens = new Set()
+  if (!io || !userIds.length) return tokens
+  const sockets = (await io.in(userIds.map((id) => `user:${id}`)).fetchSockets()).filter((socket) => socket.data.nativeToken)
+  await Promise.all(sockets.map(async (socket) => {
+    try {
+      const reply = await socket.timeout(waitMs).emitWithAck("call:on-screen", { callId })
+      if (reply?.onScreen === true) tokens.add(socket.data.nativeToken)
+    } catch {}
+  }))
+  return tokens
 }
 
 export function chatIo() {

@@ -172,15 +172,37 @@ async function showCallOver(payload) {
   })
 }
 
-function openApp(path) {
-  const href = new URL(path || "/notifications", self.location.origin).href
-  return self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
-    for (const windowClient of windows) {
-      if (windowClient.url.startsWith(self.location.origin)) {
-        return windowClient.navigate(href).then((client) => (client || windowClient).focus()).catch(() => windowClient.focus())
-      }
+// Opens a page in the SynergiFund tab that is already open: it switches page itself, without reloading (so a call
+// there carries on). A tab that does not answer (an older version) is loaded on that page, and with no tab a new one opens.
+async function openApp(path) {
+  const target = path || "/notifications"
+  const href = new URL(target, self.location.origin).href
+  const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
+  const open = windows.find((client) => client.url.startsWith(self.location.origin))
+  if (!open) return self.clients.openWindow(href)
+  await open.focus().catch(() => {})
+  if (await askToOpen(open, target)) return
+  try {
+    await open.navigate(href)
+  } catch {
+    await self.clients.openWindow(href)
+  }
+}
+
+function askToOpen(client, path) {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel()
+    const timer = setTimeout(() => resolve(false), 1000)
+    channel.port1.onmessage = (event) => {
+      clearTimeout(timer)
+      resolve(Boolean(event.data?.opened))
     }
-    return self.clients.openWindow(href)
+    try {
+      client.postMessage({ type: "synergifund:open", path }, [channel.port2])
+    } catch {
+      clearTimeout(timer)
+      resolve(false)
+    }
   })
 }
 

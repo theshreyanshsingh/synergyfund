@@ -753,8 +753,10 @@ export const PushSubscription = register(
   ),
 )
 
-// A phone running the SynergiFund app (Android), reached through Firebase Cloud Messaging for calls and notifications.
+// A phone running the SynergiFund app. Android is reached through Firebase Cloud Messaging; an iPhone through Apple
+// push, where token is its call address (PushKit, rings through CallKit) and alertToken its notification address.
 // keyHash: the phone's own key (hashed), so Decline on a locked phone works without a sign-in cookie.
+// sandbox: an iPhone build for testing, reached through Apple's test service.
 export const NativeDevice = register(
   "NativeDevice",
   new Schema(
@@ -762,6 +764,8 @@ export const NativeDevice = register(
       userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
       token: { type: String, required: true, unique: true },
       platform: { type: String, default: "android" },
+      alertToken: { type: String, index: true },
+      sandbox: { type: Boolean, default: false },
       keyHash: { type: String, required: true },
       appVersion: String,
       lastSeenAt: Date,

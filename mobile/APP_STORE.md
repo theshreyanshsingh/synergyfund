@@ -88,8 +88,20 @@ Data is linked to the person's account and used for **App Functionality** only:
   documents, receipts).
 - Financial Info: Other Financial Info (purchase prices, loans, expenses).
 
-## On iPhone for now
+## Calls and notifications on iPhone
 
-- Calls work while the app is open; leaving the app ends a call (no CallKit yet).
-- No push notifications on iPhone yet (the native calls and notifications module is Android-only). Both need Apple
-  push (APNs) set up first.
+- **Calls** ring on the iPhone's own call screen (CallKit), also over the lock screen and with the app closed, through
+  Apple's call push (PushKit). Every call is shown as a video call: Apple only opens the app after a lock-screen
+  answer for video calls. Answer opens SynergiFund (after Face ID) straight into the call; Decline turns it down
+  without opening the app. While it rings the phone asks the server every 2 seconds whether it still should.
+- **Messages, mentions and missed calls** arrive as notifications; a tap opens that page. The app asks for permission
+  once, after sign-in.
+- **Leaving the app or locking the phone during a call still ends it**: the call runs in the app's page, and iOS stops
+  a page's microphone in the background.
+- **Setup**:
+  - an Apple push key (Certificates, IDs & Profiles › Keys, with Apple Push Notifications service) on the server as
+    `APNS_KEY_FILE` (or `APNS_KEY`) and `APNS_KEY_ID`;
+  - Push Notifications turned on for the App ID `com.synergifund.app`;
+  - `ios.entitlements` and `UIBackgroundModes: voip` are in `app.json`.
+- **App Store Connect**: China mainland is left out of availability (Apple does not allow CallKit apps there).
+- **Check after export**: `codesign -d --entitlements :- Payload/SynergiFund.app` must show `aps-environment`.

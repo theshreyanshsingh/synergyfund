@@ -1,6 +1,7 @@
 import webpush from "web-push"
 import { NativeDevice, PushSubscription } from "../models/index.js"
 import { nativePushConfigured, sendNative } from "./fcm.js"
+import { apnsConfigured, sendApns } from "./apns.js"
 
 export function configurePush() {
   const subject = process.env.VAPID_SUBJECT || "mailto:admin@synergifund.com"
@@ -82,25 +83,71 @@ function nativeData(message) {
     caller: message.caller,
     quiet: message.quiet ? "true" : "",
     ringFor: message.ringFor,
+    ringStartedAt: message.ringStartedAt,
     sentAt: message.sentAt || Date.now(),
   }
 }
 
-// The person's phones running the app. They decide for themselves when the app is open and already shows it.
-export async function pushToNative(userIds, message, options = {}) {
-  if (!userIds.length || !nativePushConfigured()) return { sent: 0, failed: 0 }
-  const devices = await NativeDevice.find({ userId: { $in: userIds } })
-  return sendNative(devices, nativeData(message), {
-    ttlMs: (Number(options.TTL) || 3600) * 1000,
-    high: options.urgency === "high" || message.kind === "call",
+const NONE = { sent: 0, failed: 0 }
+
+// iPhones: a call push rings through CallKit, once per ring (the phone keeps ringing by itself and asks the server
+// whether it still should, so no push stops it). A quiet "call over" sends nothing; a missed call and everything else
+// is a notification. skipPhones: call tokens of iPhones showing SynergiFund on screen right now (they ring in the app).
+async function toIphones(devices, message, options, skipPhones) {
+  if (message.kind === "call") {
+    const skip = skipPhones ? await skipPhones : null
+    const ringing = skip ? devices.filter((device) => !skip.has(device.token)) : devices
+    const started = Number(message.ringStartedAt) || Date.now()
+    const ringFor = Number(message.ringFor) || 45000
+    return sendApns(ringing, {
+      push: "voip",
+      payload: { type: "call", callId: message.callId, ringStartedAt: started, ringFor, sentAt: Number(message.sentAt) || Date.now(), caller: message.caller || "", title: message.title, body: message.body || "", media: message.media || "audio" },
+      expiresAt: started + ringFor,
+      priority: 10,
+    })
+  }
+  if (message.kind === "call-over" && message.quiet) return NONE
+  const tag = message.tag || ""
+  return sendApns(devices.filter((device) => device.alertToken), {
+    push: "alert",
+    payload: {
+      aps: { alert: { title: message.title, body: message.body || "" }, sound: "default", ...(tag ? { "thread-id": tag } : {}) },
+      href: message.href || "/notifications",
+      kind: message.kind || "",
+      tag,
+      ...(message.callId ? { callId: message.callId } : {}),
+    },
+    expiresAt: Date.now() + (Number(options.TTL) || 3600) * 1000,
+    collapseId: tag,
+    priority: options.urgency === "high" || ["message", "call-over"].includes(message.kind) ? 10 : 5,
   })
 }
 
-// skipEndpoints: browsers that already show this in the app right now.
-export async function pushToUsers(userIds, message, options = {}, skipEndpoints = null) {
+// Phones running the app: Android gets data messages (it decides what to show, and skips what the open app already
+// shows), iPhones get Apple pushes.
+export async function pushToDevices(devices, message, options = {}, skipPhones = null) {
+  const android = devices.filter((device) => device.platform !== "ios")
+  const iphones = devices.filter((device) => device.platform === "ios")
+  const [phones, apple] = await Promise.all([
+    android.length && nativePushConfigured()
+      ? sendNative(android, nativeData(message), { ttlMs: (Number(options.TTL) || 3600) * 1000, high: options.urgency === "high" || message.kind === "call" })
+      : NONE,
+    iphones.length && apnsConfigured() ? toIphones(iphones, message, options, skipPhones) : NONE,
+  ])
+  return { sent: phones.sent + apple.sent, failed: phones.failed + apple.failed }
+}
+
+export async function pushToNative(userIds, message, options = {}, skipPhones = null) {
+  if (!userIds.length || (!nativePushConfigured() && !apnsConfigured())) return NONE
+  const devices = await NativeDevice.find({ userId: { $in: userIds } })
+  return pushToDevices(devices, message, options, skipPhones)
+}
+
+// skipEndpoints: browsers that already show this in the app right now. skipPhones: a promise of iPhones that do.
+export async function pushToUsers(userIds, message, options = {}, skipEndpoints = null, skipPhones = null) {
   if (!userIds.length) return { sent: 0, failed: 0 }
-  const native = pushToNative(userIds, message, options).catch((error) => {
-    console.error("Android push failed", error)
+  const native = pushToNative(userIds, message, options, skipPhones).catch((error) => {
+    console.error("Phone push failed", error)
     return { sent: 0, failed: 0 }
   })
   let web = { sent: 0, failed: 0 }

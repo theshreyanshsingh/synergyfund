@@ -5,6 +5,7 @@ import { initials } from "@synergifund/shared"
 import { useChatEvents } from "../../lib/chatSocket"
 import { api } from "../../lib/api"
 import {
+  answerInstead,
   callEvents,
   callLink,
   dismissBlocked,
@@ -67,7 +68,7 @@ export function CallLayer({ user }) {
       {calls.incoming.length > 0 && (
         // On a phone, a call that comes in while you are not already in one fills the screen, like a phone call.
         <div className={calls.current ? "call-incoming-stack" : "call-incoming-stack is-full"} role="region" aria-label="Incoming calls" aria-live="assertive">
-          {calls.incoming.map((call) => <IncomingCall key={call.id} call={call} me={calls.me} />)}
+          {calls.incoming.map((call) => <IncomingCall key={call.id} call={call} me={calls.me} inCall={Boolean(calls.current)} />)}
           {calls.incoming.length > 1 && <p className="call-incoming-more">{calls.incoming.length - 1} more {calls.incoming.length === 2 ? "call" : "calls"} waiting</p>}
         </div>
       )}
@@ -82,7 +83,8 @@ export function CallLayer({ user }) {
   )
 }
 
-function IncomingCall({ call, me }) {
+// While already in a call, answering ends that one first (End & answer).
+function IncomingCall({ call, me, inCall }) {
   const [busy, setBusy] = useState(false)
   const card = useRef(null)
   useEffect(() => {
@@ -95,7 +97,7 @@ function IncomingCall({ call, me }) {
     : call.channel?.kind === "direct" ? (Object.keys(call.names || {}).length > 2 ? `Group call · ${callTitle(call, me)}` : "") : `${call.startedByName} · ${callTitle(call, me)}`
   async function accept(media) {
     setBusy(true)
-    await joinCall(call.id, media)
+    await (inCall ? answerInstead(call.id, media) : joinCall(call.id, media))
     setBusy(false)
   }
   return (
@@ -104,11 +106,12 @@ function IncomingCall({ call, me }) {
       <div className="call-incoming-copy">
         <strong>{title}</strong>
         <span>{call.media === "video" ? "Incoming video call" : "Incoming voice call"}{where ? ` · ${where}` : ""}</span>
+        {inCall && <span>Answering ends your current call.</span>}
       </div>
       <div className="call-incoming-actions">
         <span className="call-incoming-choice"><button type="button" className="call-round is-danger" disabled={busy} onClick={() => declineCall(call.id)} aria-label="Decline" title="Decline"><Icon name="phoneOff" size={18} /></button><em aria-hidden="true">Decline</em></span>
-        <span className="call-incoming-choice"><button type="button" className="call-round is-accept" disabled={busy} onClick={() => accept("audio")} aria-label="Answer with voice" title="Answer with voice"><Icon name="phone" size={18} /></button><em aria-hidden="true">Voice</em></span>
-        <span className="call-incoming-choice"><button type="button" className="call-round is-accept" disabled={busy} onClick={() => accept("video")} aria-label="Answer with video" title="Answer with video"><Icon name="video" size={18} /></button><em aria-hidden="true">Video</em></span>
+        <span className="call-incoming-choice"><button type="button" className="call-round is-accept" disabled={busy} onClick={() => accept("audio")} aria-label={inCall ? "End your call and answer with voice" : "Answer with voice"} title={inCall ? "End your call and answer" : "Answer with voice"}><Icon name="phone" size={18} /></button><em aria-hidden="true">{inCall ? "End & answer" : "Voice"}</em></span>
+        <span className="call-incoming-choice"><button type="button" className="call-round is-accept" disabled={busy} onClick={() => accept("video")} aria-label={inCall ? "End your call and answer with video" : "Answer with video"} title={inCall ? "End your call and answer with video" : "Answer with video"}><Icon name="video" size={18} /></button><em aria-hidden="true">Video</em></span>
       </div>
     </div>
   )

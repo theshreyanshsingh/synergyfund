@@ -44,7 +44,9 @@ export function setNativeTransport(fn) {
 const GONE = new Set(["messaging/registration-token-not-registered", "messaging/invalid-registration-token", "messaging/invalid-argument"])
 
 // Data-only messages (every value a string): the app decides how to show them, also when it is closed.
-export async function sendNative(devices, data, { ttlMs = 3600000, high = true } = {}) {
+// iPhones are never sent here (their tokens are Apple's, which Firebase would call gone).
+export async function sendNative(phones, data, { ttlMs = 3600000, high = true } = {}) {
+  const devices = phones.filter((device) => device.platform !== "ios")
   if (!devices.length) return { sent: 0, failed: 0 }
   const payload = Object.fromEntries(Object.entries(data).filter(([, value]) => value != null && value !== "").map(([key, value]) => [key, String(value)]))
   if (transport) return transport(devices, payload, { ttlMs, high })

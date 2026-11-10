@@ -2,7 +2,7 @@ import { Platform } from "react-native"
 import Constants from "expo-constants"
 import SynergiNative from "../modules/synergi-native"
 
-// The native calls and notifications module (Android builds). Null in Expo Go and on iPhone for now.
+// The native calls and notifications module (Android and iPhone builds). Null in Expo Go.
 export const phone = SynergiNative
 
 const VERSION = Constants.expoConfig?.version || "1.0.0"
@@ -35,10 +35,12 @@ export function openScript(origin, path) {
 }
 
 // Registers this phone's push address for whoever is signed in on the page; the page passes back the phone's key.
-export function registerScript(token) {
+// An iPhone also gives its notification address and whether it is a test build (extra).
+export function registerScript(token, extra = {}) {
+  const body = { ...extra, token, platform: Platform.OS, appVersion: VERSION }
   return `(function () {
     if (!window.ReactNativeWebView) return;
-    fetch("/api/push/native", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: ${JSON.stringify(token)}, platform: ${JSON.stringify(Platform.OS)}, appVersion: ${JSON.stringify(VERSION)} }) })
+    fetch("/api/push/native", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: ${JSON.stringify(JSON.stringify(body))} })
       .then(function (response) { return response.ok ? response.json() : null; })
       .then(function (data) {
         if (!data || !data.deviceKey) return;
@@ -51,6 +53,11 @@ export function registerScript(token) {
 
 // Android does not tell a web view when the app goes to the background, so the app does: the page then counts as
 // away (the server sends this phone pushes, and the page does not ring over the phone's own ringtone).
+// On iPhone only the background counts (Control Center or a Face ID prompt over the app is still the app on screen).
+export function pageHidden(appState) {
+  return Platform.OS === "ios" ? appState === "background" : appState !== "active"
+}
+
 export function visibilityScript(hidden) {
   return `(function () {
     try {

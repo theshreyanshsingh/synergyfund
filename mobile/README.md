@@ -24,7 +24,9 @@ the Wi-Fi: `EXPO_PUBLIC_APP_URL=http://192.168.1.18:3000 npx expo start` (with `
   (`POST /api/documents/download-link`, five minutes, one address, GET only) and hands it to the app, which
   downloads it and opens the share sheet. The website knows it is inside the app from `window.SynergiFundNative`.
 - `src/config.js`: which website the app shows.
-- `src/phone.js` and `modules/synergi-native/` (Android, Kotlin): calls and notifications. Server messages arrive
+- `src/phone.js` and `modules/synergi-native/`: calls and notifications. iPhone (`ios/`, Swift): Apple's call push
+  rings CallKit (`CallManager`), Answer opens the call in the page, notifications through Apple push (`PushCenter`);
+  see APP_STORE.md. Android (Kotlin): server messages arrive
   through Firebase (`SynergiMessagingService`); a call rings with a call-style notification and, on a locked phone,
   the incoming call screen (`IncomingCallActivity`, Answer and Decline); an ongoing call runs a foreground service
   (`CallService`) with Hang up; everything else is a notification that opens its page. The page inside the app tells
@@ -57,8 +59,6 @@ with `EXPO_PUBLIC_APP_URL=http://localhost:3000` (calls need a secure page, and 
 
 ## Next steps
 
-- **iPhone calls and notifications**: CallKit and Apple push (VoIP) for the same ringing over the lock screen. Needs a
-  real iPhone and the Apple Developer account.
 - **Builds**: `npx eas-cli@latest build` makes iPhone and Android builds in the cloud (no Xcode or Android Studio on
   the Mac); TestFlight and Google Play internal testing for the team.
 

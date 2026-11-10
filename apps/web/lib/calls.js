@@ -1,6 +1,7 @@
 "use client"
 
 import { useSyncExternalStore } from "react"
+import { api } from "./api"
 import { currentPushEndpoint, emitChat, requestChat } from "./chatSocket"
 import { audioContext, playLoop, soundsReady as soundsUnlocked, stopLoop, unlockSounds } from "./sounds"
 import { notesRecording, startNotesRecording, stopNotesRecording } from "./notesRecorder"
@@ -45,6 +46,19 @@ function inPhoneApp() {
   return typeof window !== "undefined" && Boolean(window.SynergiFundNative && window.ReactNativeWebView)
 }
 
+// Whether the phone app rings by itself while it is in the background: the Android app always has, an iPhone app
+// from the build that rings through CallKit says so.
+function phoneAppRings() {
+  return inPhoneApp() && (window.SynergiFundNative.platform === "android" || window.SynergiFundNative.rings === true)
+}
+
+// Opened from a notification's Answer (/calls?join=…&answer=1): that call is being answered, so it does not ring here.
+function answeringNow() {
+  if (typeof window === "undefined" || window.location.pathname !== "/calls") return ""
+  const params = new URLSearchParams(window.location.search)
+  return params.get("answer") === "1" ? params.get("join") || "" : ""
+}
+
 function tellPhoneApp() {
   if (!inPhoneApp()) return
   const current = state.current
@@ -73,6 +87,7 @@ function tellPhoneRings(before, after) {
     post({
       type: "call-ring",
       callId: call.id,
+      ringStartedAt: call.ringStartedAt || 0,
       media: call.media,
       caller: added ? call.invitedBy : call.startedByName,
       title: added ? `${call.invitedBy} is adding you to a ${kind} call` : `${call.startedByName} is calling you`,
@@ -174,7 +189,7 @@ export function soundsReady() {
 function refreshTone() {
   const current = state.current
   // The phone app in the background rings natively (lock screen, ringtone); the page stays quiet.
-  const phoneRings = inPhoneApp() && document.visibilityState === "hidden"
+  const phoneRings = phoneAppRings() && document.visibilityState === "hidden"
   if (state.incoming.length && !phoneRings) playTone("incoming")
   // Ringback only while the call is ringing someone: a big room that shows Join to people rings no one.
   else if (current && !(current.peers || []).length && !current.call?.answered && current.call?.ringing) playTone("outgoing")
@@ -666,11 +681,24 @@ function closeRingNotification(callId) {
     .catch(() => {})
 }
 
+// Declined over the live connection, or (while it reconnects) by a plain request, so the caller always hears it.
 export function declineCall(callId) {
   closeRingNotification(callId)
   set({ incoming: state.incoming.filter((item) => item.id !== callId) })
   refreshTone()
-  currentPushEndpoint().catch(() => "").then((endpoint) => emitChat("call:decline", { callId, endpoint }))
+  currentPushEndpoint().catch(() => "").then(async (endpoint) => {
+    try {
+      await requestChat("call:decline", { callId, endpoint }, 4000)
+    } catch {
+      await api(`/calls/${encodeURIComponent(callId)}/decline`, { method: "POST", body: { endpoint } }).catch(() => {})
+    }
+  })
+}
+
+// Ringing while already in a call: leave that call and answer this one.
+export async function answerInstead(callId, media = "audio") {
+  if (state.current && state.current.callId !== callId) leaveCall()
+  return joinCall(callId, media)
 }
 
 export function leaveCall() {
@@ -851,10 +879,10 @@ function hold(event, payload) {
 }
 
 export const callEvents = {
-  "call:ring": ({ call, invitedBy } = {}) => {
-    if (!call || state.current?.callId === call.id) return
+  "call:ring": ({ call, invitedBy, ringStartedAt } = {}) => {
+    if (!call || state.current?.callId === call.id || answeringNow() === call.id) return
     if (state.incoming.some((item) => item.id === call.id)) return
-    set({ incoming: [...state.incoming, { ...call, invitedBy: invitedBy || "" }] })
+    set({ incoming: [...state.incoming, { ...call, invitedBy: invitedBy || "", ringStartedAt: Number(ringStartedAt) || 0 }] })
     refreshTone()
     if (typeof document !== "undefined" && document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
       try {
@@ -945,6 +973,15 @@ export const callEvents = {
       ? `${who} turned on AI notes. What everyone says is transcribed until they are turned off.`
       : `${who} turned off AI notes. The notes will be posted in the conversation in a minute.`)
   },
+  // Someone this call is ringing is on another call: they see it ringing and can end theirs to answer.
+  "call:busy": (payload = {}) => {
+    if (hold("call:busy", payload)) return
+    const { callId, names } = payload
+    if (!state.current || state.current.callId !== callId) return
+    const list = (Array.isArray(names) ? names : []).filter(Boolean)
+    const who = list.length ? list.join(", ") : "Someone you called"
+    notice(`${who} ${list.length > 1 ? "are" : "is"} on another call. They can see you calling.`)
+  },
   "call:ended": ({ callId, reason } = {}) => {
     set({ incoming: state.incoming.filter((item) => item.id !== callId) })
     if (joining && (joining === callId)) {
@@ -964,7 +1001,8 @@ export const callEvents = {
       const live = {}
       for (const call of reply.calls || []) live[call.channelId] = call
       // Replace the ringing list: anything that stopped while we were offline disappears.
-      const ringing = (reply.ringing || []).filter((call) => call.id !== state.current?.callId)
+      const answering = answeringNow()
+      const ringing = (reply.ringing || []).filter((call) => call.id !== state.current?.callId && call.id !== answering)
       set({ live, liveLoaded: true, incoming: ringing })
       refreshTone()
     }).catch(() => {})

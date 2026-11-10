@@ -1070,9 +1070,14 @@ function groupTurns(rows) {
   return turns
 }
 
-// While the agent works: one shimmering "Thinking…" line where the answer will appear.
+// While the agent works: one shimmering "Thinking" line with three bouncing dots, where the answer will appear.
 function Thinking() {
-  return <p className="agent-thinking" role="status"><span>Thinking…</span></p>
+  return (
+    <p className="agent-thinking" role="status" aria-label="Thinking">
+      <span>Thinking</span>
+      <i className="agent-thinking-dots" aria-hidden="true"><b /><b /><b /></i>
+    </p>
+  )
 }
 
 // The conversation. `empty` is the new-chat screen. The rest act on a turn: onRetry(question), onEdit(question, text),

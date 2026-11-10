@@ -1,5 +1,9 @@
 {
-  "platforms": ["android"],
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["SynergiNativeModule"],
+    "appDelegateSubscribers": ["SynergiAppDelegateSubscriber"]
+  },
   "android": {
     "modules": ["com.synergifund.nativebridge.SynergiNativeModule"]
   }

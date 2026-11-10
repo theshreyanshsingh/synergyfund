@@ -7,18 +7,23 @@ import Constants from "expo-constants"
 import { WebView } from "react-native-webview"
 import { APP_ORIGIN, APP_URL, isAppPage } from "./src/config"
 import { downloadAndShare } from "./src/downloads"
-import { openScript, pathFromLink, phone, registerScript, signedOutPage, visibilityScript } from "./src/phone"
+import { openScript, pageHidden, pathFromLink, phone, registerScript, signedOutPage, visibilityScript } from "./src/phone"
 
 SplashScreen.preventAutoHideAsync()
 SplashScreen.setOptions({ duration: 250, fade: true })
 
 const VERSION = Constants.expoConfig?.version || "1.0.0"
 
-// Tells the website it is inside the app before any of its code runs (downloads come to the app, install prompts hide),
-// and tells the app a new page has started: the page before it, and any call it had, is gone.
-const BEFORE_LOAD = `window.SynergiFundNative = ${JSON.stringify({ platform: Platform.OS, version: VERSION })};
+// Tells the website it is inside the app before any of its code runs (downloads come to the app, install prompts hide,
+// and whether the phone rings for calls by itself), and tells the app a new page has started: the page before it, and
+// any call it had, is gone. A page loaded while the app is in the background starts out as away.
+function beforeLoad() {
+  const hidden = pageHidden(AppState.currentState)
+  return `window.SynergiFundNative = ${JSON.stringify({ platform: Platform.OS, version: VERSION, rings: Boolean(phone) })};
+${hidden ? visibilityScript(true) : ""}
 try { window.ReactNativeWebView.postMessage(JSON.stringify({ type: "page-start" })); } catch (e) {}
 true;`
+}
 
 // Reports the page's background color, so the area behind the phone's clock and home bar matches the light or dark theme.
 const AFTER_LOAD = `(function () {
@@ -65,44 +70,70 @@ function Shell() {
   // The phone registers for calls and messages once per page load, when someone is signed in.
   const needsRegister = useRef(true)
   const asked = useRef(false)
+  const started = useRef(false)
+
+  // Opens a page of the site: as the first page, or in the page already open (without reloading it).
+  const go = useCallback((path) => {
+    if (!started.current) {
+      started.current = true
+      setStart(path ? `${APP_ORIGIN}${path}` : APP_URL)
+    } else if (path) {
+      web.current?.injectJavaScript(openScript(APP_ORIGIN, path))
+    }
+  }, [])
 
   useEffect(() => {
-    let done = false
-    const open = (url) => {
-      if (done) return
-      done = true
-      const path = pathFromLink(url)
-      setStart(path ? `${APP_ORIGIN}${path}` : APP_URL)
-    }
-    Linking.getInitialURL().then(open).catch(() => open(""))
-    const timer = setTimeout(() => open(""), 1500)
+    // On iPhone, a call answered on the phone's call screen, or a tapped notification, may have opened the app.
+    const answered = Platform.OS === "ios" ? phone?.takeAnswer() : null
+    const tapped = Platform.OS === "ios" ? phone?.takeOpenPath() : null
+    if (answered) go(`/calls?join=${encodeURIComponent(answered)}&answer=1`)
+    else if (tapped) go(tapped)
+    Linking.getInitialURL().then((url) => go(pathFromLink(url))).catch(() => go(""))
+    const timer = setTimeout(() => go(""), 1500)
     // A notification or Answer while the app is already open: go to that page (without reloading the site).
     const subscription = Linking.addEventListener("url", ({ url }) => {
       const path = pathFromLink(url)
-      if (path) web.current?.injectJavaScript(openScript(APP_ORIGIN, path))
+      if (path) go(path)
     })
+    // iPhone: Answer on the phone's call screen joins the call in the page; a tapped notification opens its page.
+    const iphone = phone && Platform.OS === "ios"
+    const answer = iphone ? phone.addListener("onAnswer", ({ callId }) => {
+      if (callId) go(`/calls?join=${encodeURIComponent(callId)}&answer=1`)
+    }) : null
+    const open = iphone ? phone.addListener("onOpen", ({ path }) => {
+      if (path) go(path)
+    }) : null
     return () => {
       clearTimeout(timer)
       subscription.remove()
+      answer?.remove()
+      open?.remove()
     }
-  }, [])
+  }, [go])
 
   // Background and back: the page counts as away while the app is in the background.
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (next) => {
-      web.current?.injectJavaScript(visibilityScript(next !== "active"))
+      web.current?.injectJavaScript(visibilityScript(pageHidden(next)))
     })
     return () => subscription.remove()
   }, [])
 
-  // A new push address registers again. (Hang up and Decline reach the page from the native side directly.)
+  // A new push address registers again. (On Android, Hang up and Decline reach the page from the native side
+  // directly; on iPhone, Decline on the phone's call screen is passed to the page here.)
   useEffect(() => {
     if (!phone) return undefined
     const token = phone.addListener("onToken", () => {
       needsRegister.current = true
       register()
     })
-    return () => token.remove()
+    const decline = Platform.OS === "ios" ? phone.addListener("onDecline", ({ callId }) => {
+      if (callId) web.current?.injectJavaScript(`window.dispatchEvent(new CustomEvent("synergifund:decline", { detail: ${JSON.stringify(String(callId))} })); true;`)
+    }) : null
+    return () => {
+      token.remove()
+      decline?.remove()
+    }
     // register reads refs only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -111,14 +142,20 @@ function Shell() {
     if (!phone || !phone.isPushReady() || !needsRegister.current || signedOutPage(url)) return
     needsRegister.current = false
     const token = await phone.getPushToken().catch(() => null)
-    if (token) web.current?.injectJavaScript(registerScript(token))
+    const extra = Platform.OS === "ios" ? await phone.pushExtras().catch(() => ({})) : {}
+    if (token) web.current?.injectJavaScript(registerScript(token, extra))
     else needsRegister.current = true
   }
 
-  // After the first registration: notifications allowed (Android 13+), and calls allowed over the lock screen (14+).
+  // After the first registration: notifications allowed (Android 13+, and iPhone for messages: calls ring there
+  // without it), and calls allowed over the lock screen (Android 14+).
   async function askOnce() {
     if (asked.current || !phone) return
     asked.current = true
+    if (Platform.OS === "ios") {
+      await phone.requestNotifications().catch(() => {})
+      return
+    }
     if (Platform.OS === "android" && Platform.Version >= 33) {
       await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS).catch(() => {})
     }
@@ -187,7 +224,7 @@ function Shell() {
     }
     // The page heard a ring (or its end) over its open connection: ring the phone now, before the push arrives.
     if (data.type === "call-ring" && phone && data.callId) {
-      phone.showPush({ type: "call", callId: String(data.callId), title: String(data.title || "Incoming call"), body: String(data.body || ""), media: String(data.media || "audio"), caller: String(data.caller || ""), sentAt: String(Date.now()), ringFor: "45000" })
+      phone.showPush({ type: "call", callId: String(data.callId), title: String(data.title || "Incoming call"), body: String(data.body || ""), media: String(data.media || "audio"), caller: String(data.caller || ""), sentAt: String(Date.now()), ringFor: "45000", ringStartedAt: String(data.ringStartedAt || "") })
     }
     if (data.type === "call-ring-stop" && phone && data.callId) phone.showPush({ type: "call-over", callId: String(data.callId), quiet: "true" })
     if (data.type === "signed-out" && phone) {
@@ -225,7 +262,7 @@ function Shell() {
             source={{ uri: start }}
             style={{ backgroundColor: theme.background }}
             originWhitelist={["*"]}
-            injectedJavaScriptBeforeContentLoaded={BEFORE_LOAD}
+            injectedJavaScriptBeforeContentLoaded={beforeLoad()}
             injectedJavaScript={AFTER_LOAD}
             onMessage={onMessage}
             onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
