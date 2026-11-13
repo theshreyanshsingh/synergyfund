@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Icon } from "../ui/Icon"
 import { prepareFile } from "../photos/CameraCapture"
+import { AgentVoice } from "./AgentVoice"
 import { useSpeechInput } from "./useSpeechInput"
 import { VoiceWaves } from "./VoiceWaves"
 
@@ -29,7 +30,9 @@ async function ready(file) {
 // is not kept. `autoFocus` opens the keyboard at once (it
 // runs in the tap that opened it, which phones require). `fill` ({ text, key }) puts a prompt in the box to send or edit.
 // `blocked`: why the Agent can't answer now (this month's AI budget is used up), shown over the box.
-export function AgentComposer({ onSend, streaming, connected, temporary = false, autoFocus = false, fill = null, placeholder = "Ask Agent", blocked = "" }) {
+// `voice` (useAgentVoice) adds Talk beside the microphone: while Talk mode is on, its panel takes the box's place and
+// what was typed waits. The microphone still only writes what is said into the box.
+export function AgentComposer({ onSend, streaming, connected, temporary = false, autoFocus = false, fill = null, placeholder = "Ask Agent", blocked = "", voice = null }) {
   const [message, setMessage] = useState("")
   const [files, setFiles] = useState([])
   const [menu, setMenu] = useState(false)
@@ -43,6 +46,9 @@ export function AgentComposer({ onSend, streaming, connected, temporary = false,
   const filesRef = useRef(null)
   const live = useRef(files)
   live.current = files
+  const talking = Boolean(voice?.on)
+  const endTalk = useRef(null)
+  endTalk.current = voice?.end
   const speech = useSpeechInput((text) => setMessage((current) => `${current}${current && !/\s$/.test(current) ? " " : ""}${text}`.slice(0, MAX_PROMPT)))
 
   useEffect(() => setTouch(touchScreen()), [])
@@ -54,7 +60,10 @@ export function AgentComposer({ onSend, streaming, connected, temporary = false,
     element.style.height = `${element.scrollHeight}px`
   }
 
-  useEffect(grow, [message])
+  useEffect(grow, [message, talking])
+
+  // The box going away (another view, the sheet closing) ends Talk mode and lets the microphone go.
+  useEffect(() => () => endTalk.current?.(), [])
 
   useLayoutEffect(() => {
     if (autoFocus) textareaRef.current?.focus()
@@ -121,6 +130,14 @@ export function AgentComposer({ onSend, streaming, connected, temporary = false,
     setNote("")
   }
 
+  // Talk: dictation stops first (one use of the microphone at a time), then the Agent says hello and listens.
+  function talk() {
+    if (speech.listening) speech.stop()
+    setMenu(false)
+    setNote("")
+    voice.start()
+  }
+
   const pick = (ref) => () => {
     setMenu(false)
     ref.current?.click()
@@ -138,115 +155,124 @@ export function AgentComposer({ onSend, streaming, connected, temporary = false,
       {connected !== false && blocked && <p className="agent-composer-note is-blocked">{blocked}</p>}
       {speech.error && <p className="agent-composer-note">{speech.error}</p>}
       {note && <p className="agent-composer-note">{note}</p>}
-      <div
-        className={dragging ? "agent-box is-dropping" : "agent-box"}
-        onDragOver={(event) => {
-          if ([...(event.dataTransfer?.types || [])].includes("Files")) {
-            event.preventDefault()
-            setDragging(true)
-          }
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(event) => {
-          if (!event.dataTransfer?.files?.length) return
-          event.preventDefault()
-          setDragging(false)
-          add(event.dataTransfer.files)
-        }}
-      >
-        <VoiceWaves listening={speech.listening} />
-        {files.length > 0 && (
-          <div className="agent-files">
-            {files.map((item) => (
-              <span key={item.id} className="agent-file">
-                {item.url && item.file.type.startsWith("image/") ? <img src={item.url} alt="" /> : <span className="agent-file-icon"><Icon name="file" size={16} /></span>}
-                <span className="agent-file-name">{item.name}</span>
-                <button type="button" onClick={() => remove(item)} aria-label={`Remove ${item.name}`}>×</button>
-              </span>
-            ))}
-          </div>
-        )}
-        <textarea
-          ref={textareaRef}
-          maxLength={MAX_PROMPT}
-          rows={1}
-          value={message}
-          disabled={speech.listening}
-          placeholder={placeholder}
-          enterKeyHint={touch ? "enter" : "send"}
-          onChange={(event) => setMessage(event.target.value)}
-          onPaste={(event) => {
-            const pasted = [...(event.clipboardData?.files || [])]
-            if (!pasted.length) return
-            event.preventDefault()
-            add(pasted)
+      {voice?.error && !talking && !blocked && <p className="agent-composer-note">{voice.error}</p>}
+      {talking ? <AgentVoice voice={voice} /> : (
+        <div
+          className={dragging ? "agent-box is-dropping" : "agent-box"}
+          onDragOver={(event) => {
+            if ([...(event.dataTransfer?.types || [])].includes("Files")) {
+              event.preventDefault()
+              setDragging(true)
+            }
           }}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.nativeEvent.isComposing) return
-            if (event.metaKey || event.ctrlKey) {
+          onDragLeave={() => setDragging(false)}
+          onDrop={(event) => {
+            if (!event.dataTransfer?.files?.length) return
+            event.preventDefault()
+            setDragging(false)
+            add(event.dataTransfer.files)
+          }}
+        >
+          <VoiceWaves listening={speech.listening} />
+          {files.length > 0 && (
+            <div className="agent-files">
+              {files.map((item) => (
+                <span key={item.id} className="agent-file">
+                  {item.url && item.file.type.startsWith("image/") ? <img src={item.url} alt="" /> : <span className="agent-file-icon"><Icon name="file" size={16} /></span>}
+                  <span className="agent-file-name">{item.name}</span>
+                  <button type="button" onClick={() => remove(item)} aria-label={`Remove ${item.name}`}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+          <textarea
+            ref={textareaRef}
+            maxLength={MAX_PROMPT}
+            rows={1}
+            value={message}
+            disabled={speech.listening}
+            placeholder={placeholder}
+            enterKeyHint={touch ? "enter" : "send"}
+            onChange={(event) => setMessage(event.target.value)}
+            onPaste={(event) => {
+              const pasted = [...(event.clipboardData?.files || [])]
+              if (!pasted.length) return
+              event.preventDefault()
+              add(pasted)
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.nativeEvent.isComposing) return
+              if (event.metaKey || event.ctrlKey) {
+                event.preventDefault()
+                send()
+                return
+              }
+              if (touch || event.shiftKey) return
               event.preventDefault()
               send()
-              return
-            }
-            if (touch || event.shiftKey) return
-            event.preventDefault()
-            send()
-          }}
-        />
-        <div className="agent-box-foot">
-          <div className="agent-attach" ref={menuRef}>
-            <button
-              type="button"
-              className={menu ? "agent-icon-button agent-plus is-on" : "agent-icon-button agent-plus"}
-              aria-label="Add photos and files"
-              aria-haspopup="menu"
-              aria-expanded={menu}
-              title="Add photos and files"
-              disabled={files.length >= MAX_FILES}
-              onClick={() => setMenu((open) => !open)}
-            >
-              <Icon name="plus" size={18} />
-            </button>
-            {menu && (
-              <div className="agent-attach-menu" role="menu" aria-label="Add">
-                {touch && (
-                  <button type="button" role="menuitem" onClick={pick(cameraRef)}>
-                    <Icon name="camera" size={24} />
-                    <span>Camera</span>
-                  </button>
-                )}
-                <button type="button" role="menuitem" onClick={pick(photosRef)}>
-                  <Icon name="image" size={24} />
-                  <span>Photos</span>
-                </button>
-                <button type="button" role="menuitem" onClick={pick(filesRef)}>
-                  <Icon name="file" size={24} />
-                  <span>Files</span>
-                </button>
-              </div>
-            )}
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={chosen} />
-            <input ref={photosRef} type="file" accept="image/*" multiple hidden onChange={chosen} />
-            <input ref={filesRef} type="file" accept={DOCUMENTS} multiple hidden onChange={chosen} />
-          </div>
-          <div className="agent-box-actions">
-            {speech.supported && (
+            }}
+          />
+          <div className="agent-box-foot">
+            <div className="agent-attach" ref={menuRef}>
               <button
                 type="button"
-                className={speech.listening ? "agent-icon-button is-listening" : "agent-icon-button"}
-                title={speech.listening ? "Stop recording" : "Start voice input"}
-                aria-label={speech.listening ? "Stop recording" : "Start voice input"}
-                onClick={speech.listening ? speech.stop : speech.start}
+                className={menu ? "agent-icon-button agent-plus is-on" : "agent-icon-button agent-plus"}
+                aria-label="Add photos and files"
+                aria-haspopup="menu"
+                aria-expanded={menu}
+                title="Add photos and files"
+                disabled={files.length >= MAX_FILES}
+                onClick={() => setMenu((open) => !open)}
               >
-                <Icon name={speech.listening ? "stop" : "mic"} size={16} />
+                <Icon name="plus" size={18} />
               </button>
-            )}
-            <button type="submit" className="agent-send-button" disabled={streaming || (!message.trim() && !files.length)} aria-label="Send">
-              {streaming ? <span className="spinner spinner-md tw:animate-spin" /> : <Icon name="arrowUp" size={16} />}
-            </button>
+              {menu && (
+                <div className="agent-attach-menu" role="menu" aria-label="Add">
+                  {touch && (
+                    <button type="button" role="menuitem" onClick={pick(cameraRef)}>
+                      <Icon name="camera" size={24} />
+                      <span>Camera</span>
+                    </button>
+                  )}
+                  <button type="button" role="menuitem" onClick={pick(photosRef)}>
+                    <Icon name="image" size={24} />
+                    <span>Photos</span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={pick(filesRef)}>
+                    <Icon name="file" size={24} />
+                    <span>Files</span>
+                  </button>
+                </div>
+              )}
+              <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={chosen} />
+              <input ref={photosRef} type="file" accept="image/*" multiple hidden onChange={chosen} />
+              <input ref={filesRef} type="file" accept={DOCUMENTS} multiple hidden onChange={chosen} />
+            </div>
+            <div className="agent-box-actions">
+              {speech.supported && (
+                <button
+                  type="button"
+                  className={speech.listening ? "agent-icon-button is-listening" : "agent-icon-button"}
+                  title={speech.listening ? "Stop recording" : "Start voice input"}
+                  aria-label={speech.listening ? "Stop recording" : "Start voice input"}
+                  onClick={speech.listening ? speech.stop : speech.start}
+                >
+                  <Icon name={speech.listening ? "stop" : "mic"} size={16} />
+                </button>
+              )}
+              {voice?.ready && (
+                <button type="button" className="agent-talk-button" title="Talk with the Agent and hear its answers" disabled={streaming || connected === false || Boolean(blocked)} onClick={talk}>
+                  <Icon name="talk" size={16} />
+                  <span>Talk</span>
+                </button>
+              )}
+              <button type="submit" className="agent-send-button" disabled={streaming || (!message.trim() && !files.length)} aria-label="Send">
+                {streaming ? <span className="spinner spinner-md tw:animate-spin" /> : <Icon name="arrowUp" size={16} />}
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
       <p className={temporary ? "agent-composer-foot agent-temp-note" : "agent-composer-foot"}>
         {temporary ? "Temporary chats stay out of your history and are deleted within a day." : "AI-generated content may be inaccurate."}
       </p>

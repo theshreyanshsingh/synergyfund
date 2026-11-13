@@ -1400,6 +1400,38 @@ export const AGENT_DEFAULTS = {
   decisionModel: "anthropic/claude-sonnet-5.5",
 }
 
+// Talking with the Agent (apps/api/src/services/agent/voice.js): the speech model's voices, and the accents it can be
+// asked to speak with. The voices have no accents of their own to pick from (nearly all sound American), so "none"
+// leaves the voice as it is. Whether a voice is a man's or a woman's is how listening models judged real samples.
+export const AGENT_VOICES = {
+  cedar: "Cedar (male)",
+  alloy: "Alloy (male)",
+  ash: "Ash (male)",
+  ballad: "Ballad (male)",
+  echo: "Echo (male)",
+  fable: "Fable (male)",
+  onyx: "Onyx (male)",
+  verse: "Verse (male)",
+  marin: "Marin (female)",
+  coral: "Coral (female)",
+  nova: "Nova (female)",
+  sage: "Sage (female)",
+  shimmer: "Shimmer (female)",
+}
+
+export const AGENT_ACCENTS = {
+  indian: "Indian",
+  australian: "Australian",
+  british: "British",
+  american: "American",
+  none: "The voice's own",
+}
+
+export const VOICE_DEFAULTS = {
+  voice: "cedar",
+  accent: "indian",
+}
+
 // The AI teammate that works in property chats.
 export const TEAMMATE_DEFAULTS = {
   name: "Sam Rivera",

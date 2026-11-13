@@ -821,6 +821,10 @@ export const AgentThread = register(
           memoryNotes: [String],
           // The person's thumbs on an answer: "up", "down" or "".
           feedback: { type: String, default: "" },
+          // A turn of a spoken conversation (services/agent/voice.js). `spoken`: what the Agent said aloud for an
+          // answer, which is shorter than what it wrote; later spoken turns go by it.
+          voice: Boolean,
+          spoken: String,
           at: { type: Date, default: Date.now },
         },
       ],
@@ -924,6 +928,10 @@ export const AgentSetting = register(
       docsReadAll: { type: Boolean, default: false },
       // The team's AI budget for a month, in US dollars (null: no limit). Reached, new AI work waits for the next month.
       monthlyLimit: { type: Number, default: null },
+      // How the Agent sounds when it is talked with: one of the speech model's voices and the accent it is asked for
+      // (AGENT_VOICES and AGENT_ACCENTS in the shared package; unset: VOICE_DEFAULTS).
+      voiceName: String,
+      voiceAccent: String,
       updatedBy: String,
     },
     { timestamps: true },

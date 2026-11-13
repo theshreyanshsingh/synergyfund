@@ -16,6 +16,7 @@ import { workspaceRouter } from "./routes/workspace.js"
 import { tasksRouter } from "./routes/tasks.js"
 import { nativeCallState, nativeDecline, pushRouter } from "./routes/push.js"
 import { agentRouter } from "./routes/agent.js"
+import { voiceRouter } from "./routes/voice.js"
 import { chatRouter } from "./routes/chat.js"
 import { allowedOrigins, attachChatSockets } from "./services/chatHub.js"
 import { closeStaleCalls } from "./services/calls.js"
@@ -75,6 +76,8 @@ api.use("/expenses", expensesRouter)
 api.use("/draws", drawsRouter)
 api.use("/documents", documentsRouter)
 api.use("/push", pushRouter)
+// Before the Agent's own routes, which would otherwise take every /agent address.
+api.use("/agent/voice", voiceRouter)
 api.use("/agent", agentRouter)
 api.use("/chat", chatRouter)
 api.use("/calls", callsRouter)

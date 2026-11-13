@@ -8,7 +8,8 @@ import { useApi } from "../../lib/useApi"
 
 // One Agent conversation: the chats (rename, pin, delete), the open chat's messages, sending and streaming the reply,
 // Retry and Edit, thumbs, saved prompts, and temporary chats. The Agent page and the phone's Agent sheet both run on it
-// (the open chat is remembered for this tab).
+// (the open chat is remembered for this tab). Talk mode (useAgentVoice) saves what is said into the open chat through
+// adoptThread and refreshThread.
 const THREAD_KEY = "synergifund-agent-thread"
 
 function rowId() {
@@ -181,6 +182,23 @@ export function useAgentChat({ openId = "" } = {}) {
     } catch {}
   }
 
+  // A chat the server has just started, for a typed question or a spoken one, becomes the open chat.
+  function adoptThread(id) {
+    threadRef.current = id
+    setThreadId(id)
+    if (temporary) temporaryIdRef.current = id
+    else storeThread(id)
+  }
+
+  // After an answer, typed or spoken: the open chat as the server saved it, what is left of the AI budget, and the
+  // list of chats (a new chat gets its name a few seconds later).
+  function refreshThread(id) {
+    if (id) sync(id)
+    settingsApi.reload()
+    threadsApi.reload()
+    for (const delay of [3000, 8000, 15000]) setTimeout(() => threadsApi.reload(), delay)
+  }
+
   // `replaceFrom`: the question this one replaces, with everything after it (Retry, Edit); its files come along.
   async function send(prompt, files = [], { replaceFrom = null } = {}) {
     if (streamingRef.current) return
@@ -202,9 +220,7 @@ export function useAgentChat({ openId = "" } = {}) {
         {
           onChatId: (id) => {
             chatId = id
-            setThreadId(id)
-            if (temporary) temporaryIdRef.current = id
-            else storeThread(id)
+            adoptThread(id)
           },
           onPacket: (parsed) => {
             const parts = streamPayloadToAssistantParts(parsed)
@@ -230,10 +246,7 @@ export function useAgentChat({ openId = "" } = {}) {
       })
       streamingRef.current = false
       setStreaming(false)
-      if (chatId) sync(chatId)
-      settingsApi.reload()
-      threadsApi.reload()
-      for (const delay of [3000, 8000, 15000]) setTimeout(() => threadsApi.reload(), delay)
+      refreshThread(chatId)
     }
   }
 
@@ -321,6 +334,8 @@ export function useAgentChat({ openId = "" } = {}) {
     temporary,
     chatTitle,
     openThread,
+    adoptThread,
+    refreshThread,
     newChat,
     toggleTemporary,
     deleteThread,

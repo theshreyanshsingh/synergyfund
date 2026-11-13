@@ -5,6 +5,7 @@ import { api } from "../../lib/api"
 
 const FEATURES = {
   agent: "Agent questions",
+  voice: "Talking with the Agent",
   memory: "Agent memory",
   knowledge: "House summaries",
   receipts: "Receipt reading",
@@ -85,7 +86,7 @@ export function AgentSpending({ settings, onSaved }) {
     <section className="panel settings-card agent-spend">
       <div>
         <h2>AI spending</h2>
-        <p>What the AI models cost the team: Agent questions and memory, house summaries, reading receipts and documents, call notes and the AI teammate. The figures are what OpenRouter charged.</p>
+        <p>What the AI models cost the team: Agent questions (typed and spoken) and memory, house summaries, reading receipts and documents, call notes and the AI teammate. The figures are what OpenRouter charged.</p>
       </div>
       {error && <div className="banner">{error}</div>}
       <div className="agent-spend-now">

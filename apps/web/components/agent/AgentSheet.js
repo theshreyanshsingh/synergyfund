@@ -6,6 +6,7 @@ import { AgentMessages } from "./AgentMessages"
 import { AgentWelcome } from "./AgentWelcome"
 import { KnowledgePanel } from "./KnowledgePanel"
 import { chatWhen, hasStoredThread, useAgentChat } from "./useAgentChat"
+import { useAgentVoice } from "./useAgentVoice"
 import { Icon } from "../ui/Icon"
 import { PageSpinner } from "../ui/Spinner"
 
@@ -14,8 +15,10 @@ const DELETE_WIDTH = 88
 
 // Phones: the Agent slides up over the page you are on, to full height. X, a swipe down on its top bar, or the phone's
 // Back closes it and leaves you where you were. ⋮ has New chat, Chats, Prompts, Knowledge and Temporary chat.
+// Talk (in the box) is Talk mode, as on the Agent page; closing the sheet ends it.
 export function AgentSheet({ onClose }) {
   const chat = useAgentChat()
+  const voice = useAgentVoice({ threadId: chat.threadId, temporary: chat.temporary, streaming: chat.streaming, onThread: chat.adoptThread, onRefresh: chat.refreshThread })
   const [view, setView] = useState("chat")
   // Knowledge's tab: "team", or "you" (what the Agent remembers about this person).
   const [knowing, setKnowing] = useState("team")
@@ -161,8 +164,8 @@ export function AgentSheet({ onClose }) {
                 threadId={chat.threadId}
                 title={chat.chatTitle}
                 empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} />}
-                onRetry={chat.retry}
-                onEdit={chat.edit}
+                onRetry={voice.on ? null : chat.retry}
+                onEdit={voice.on ? null : chat.edit}
                 onMemory={() => { setKnowing("you"); setView("knowledge") }}
                 onRate={chat.rate}
                 onStar={star}
@@ -170,7 +173,7 @@ export function AgentSheet({ onClose }) {
               />
             )}
           </div>
-          <AgentComposer onSend={chat.send} streaming={chat.streaming} connected={chat.connected} temporary={chat.temporary} autoFocus={typeAway} fill={fill} placeholder="Ask Agent anything…" blocked={chat.budgetMessage} />
+          <AgentComposer onSend={chat.send} streaming={chat.streaming} connected={chat.connected} temporary={chat.temporary} autoFocus={typeAway} fill={fill} placeholder="Ask Agent anything…" blocked={chat.budgetMessage} voice={voice} />
         </>
       )}
       {view === "knowledge" && <div className="agent-sheet-memory"><KnowledgePanel tab={knowing} onOpen={(id) => { chat.openThread(id); setView("chat") }} /></div>}

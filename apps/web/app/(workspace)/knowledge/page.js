@@ -7,6 +7,7 @@ import { AgentMessages } from "../../../components/agent/AgentMessages"
 import { AgentWelcome } from "../../../components/agent/AgentWelcome"
 import { KnowledgePanel } from "../../../components/agent/KnowledgePanel"
 import { chatWhen, useAgentChat } from "../../../components/agent/useAgentChat"
+import { useAgentVoice } from "../../../components/agent/useAgentVoice"
 import { Icon } from "../../../components/ui/Icon"
 import { RowMenu } from "../../../components/ui/RowMenu"
 import { PageSpinner } from "../../../components/ui/Spinner"
@@ -29,11 +30,13 @@ export default function AgentPage() {
 
 // The Agent: a panel of chats and prompts on the left (it folds away; on narrow screens it opens over the chat), and
 // the chat in one centered column. A new chat is a big greeting with the box under it. ?chat= (a notification's link)
-// opens that chat.
+// opens that chat. Talk (in the box) is Talk mode: what is said is saved in the open chat, and while it is on a
+// question can't be asked again or edited (one answer at a time).
 function Agent() {
   const router = useRouter()
   const linked = useSearchParams().get("chat") || ""
   const chat = useAgentChat({ openId: linked })
+  const voice = useAgentVoice({ threadId: chat.threadId, temporary: chat.temporary, streaming: chat.streaming, onThread: chat.adoptThread, onRefresh: chat.refreshThread })
   const [view, setView] = useState("chat")
   // Knowledge's tab: "team", or "you" (what the Agent remembers about this person).
   const [knowing, setKnowing] = useState("team")
@@ -156,8 +159,8 @@ function Agent() {
                     threadId={chat.threadId}
                     title={chat.chatTitle}
                     empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} />}
-                    onRetry={chat.retry}
-                    onEdit={chat.edit}
+                    onRetry={voice.on ? null : chat.retry}
+                    onEdit={voice.on ? null : chat.edit}
                     onMemory={() => go("knowledge", "you")}
                     onRate={chat.rate}
                     onStar={star}
@@ -167,7 +170,7 @@ function Agent() {
               </div>
             </div>
             <div className="agent-column agent-dock-box">
-              <AgentComposer onSend={chat.send} streaming={chat.streaming} connected={chat.connected} temporary={chat.temporary} fill={fill} blocked={chat.budgetMessage} />
+              <AgentComposer onSend={chat.send} streaming={chat.streaming} connected={chat.connected} temporary={chat.temporary} fill={fill} blocked={chat.budgetMessage} voice={voice} />
             </div>
           </div>
         )}

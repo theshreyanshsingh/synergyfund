@@ -128,3 +128,50 @@ export async function streamAgent({ prompt, threadId, temporary = false, files =
   }
   if (!state.done) throw new Error("The connection to the agent dropped. Open the chat again to see the saved answer.")
 }
+
+// Talk mode's events come one to a block: a line "data: <json>" and then a blank line. Lines that start with ":" only
+// keep the connection open. Hands each whole event to onEvent and gives back what is still incomplete.
+export function drainVoiceEvents(carry, onEvent) {
+  let rest = carry.replace(/\r/g, "")
+  while (true) {
+    const end = rest.indexOf("\n\n")
+    if (end === -1) return rest
+    const data = rest.slice(0, end).split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("")
+    rest = rest.slice(end + 2)
+    let event = null
+    try {
+      event = JSON.parse(data)
+    } catch {}
+    if (event && typeof event === "object") onEvent(event)
+  }
+}
+
+// One exchange in Talk mode: `path` is "greet" (the Agent's hello, with {} as the body) or "turn" (a form with what
+// the person said, as a sound file). onEvent gets each event as it arrives and onChatId the chat it is saved in.
+// `signal` cancels it. A refusal before the answer starts is thrown with the server's words and its `status`.
+export async function streamVoice(path, body, { signal, onEvent, onChatId }) {
+  const form = typeof FormData !== "undefined" && body instanceof FormData
+  const response = await fetch(`/api/agent/voice/${path}`, {
+    method: "POST",
+    credentials: "include",
+    headers: form ? {} : { "Content-Type": "application/json" },
+    body: form ? body : JSON.stringify(body || {}),
+    signal,
+  })
+  if (!response.ok || !response.body) {
+    const error = await failure(response)
+    error.status = response.status
+    throw error
+  }
+  const chatId = response.headers.get("x-chat-id")
+  if (chatId) onChatId?.(chatId)
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let carry = ""
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    carry = drainVoiceEvents(carry + decoder.decode(value, { stream: true }), onEvent)
+  }
+  drainVoiceEvents(`${carry}\n\n`, onEvent)
+}

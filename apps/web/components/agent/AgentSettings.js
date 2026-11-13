@@ -73,10 +73,78 @@ export function AgentSettings() {
         <div className="settings-actions"><button className="primary" type="submit" disabled={pending || !changed}>{pending ? "Saving…" : "Save models"}</button></div>
       </form>
     </section>
+    <VoiceSettings />
     <AgentSpending settings={settings} onSaved={(next) => setSettings((current) => ({ ...current, ...next }))} />
     {settings.documents && <DocumentReading initial={settings.documents} />}
     {settings.summaries && <HouseSummaries initial={settings.summaries} />}
     </>
+  )
+}
+
+// Talk mode's voice for everyone: which voice the Agent speaks in, and the accent it is asked to speak with.
+function VoiceSettings() {
+  const [voice, setVoice] = useState(null)
+  const [form, setForm] = useState({ voice: "", accent: "" })
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState("")
+  const [message, setMessage] = useState("")
+
+  const show = (data) => {
+    setVoice(data)
+    setForm({ voice: data.voice || "", accent: data.accent || "" })
+  }
+
+  // A server without Talk mode has no voice to choose: the block stays away.
+  useEffect(() => {
+    api("/agent/voice").then(show).catch(() => {})
+  }, [])
+
+  if (!voice?.canEdit) return null
+
+  const changed = form.voice !== voice.voice || form.accent !== voice.accent
+
+  async function save(event) {
+    event.preventDefault()
+    setPending(true)
+    setError("")
+    setMessage("")
+    try {
+      show(await api("/agent/voice", { method: "PATCH", body: form }))
+      setMessage("Saved. The Agent speaks this way for everyone from its next answer.")
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  const pick = (key) => (event) => {
+    setMessage("")
+    setForm((current) => ({ ...current, [key]: event.target.value }))
+  }
+  const options = (choices) => Object.entries(choices || {}).map(([id, label]) => <option key={id} value={id}>{label}</option>)
+
+  return (
+    <section className="panel settings-card">
+      <form className="settings-send" onSubmit={save}>
+        <div>
+          <h2>Voice</h2>
+          <p>How the Agent sounds when someone talks with it. The accent is asked of the model, so it can vary. Cedar with the Indian accent is the default.</p>
+        </div>
+        {error && <div className="banner settings-wide">{error}</div>}
+        {message && <p className="settings-note settings-wide">{message}</p>}
+        {!voice.available && <p className="settings-wide">Connect OpenRouter (above) and people can talk with the Agent.</p>}
+        <label className="field">
+          <span>Voice</span>
+          <select value={form.voice} onChange={pick("voice")}>{options(voice.voices)}</select>
+        </label>
+        <label className="field">
+          <span>Accent</span>
+          <select value={form.accent} onChange={pick("accent")}>{options(voice.accents)}</select>
+        </label>
+        <div className="settings-actions"><button className="primary" type="submit" disabled={pending || !changed}>{pending ? "Saving…" : "Save voice"}</button></div>
+      </form>
+    </section>
   )
 }
 

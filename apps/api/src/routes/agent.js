@@ -28,7 +28,7 @@ export const agentRouter = Router()
 
 const MAX_PROMPT = 10000
 const MODEL_ID = /^[a-z0-9][\w.-]*\/[\w.:-]+$/i
-const TEMPORARY_CHAT_TTL_MS = 24 * 60 * 60 * 1000
+export const TEMPORARY_CHAT_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_TITLE = 80
 const MAX_PROMPTS = 200
 const FEEDBACK = ["up", "down", ""]
@@ -94,6 +94,8 @@ function presentMessage(message) {
     memoryNotes: (message.memoryNotes || []).map(String),
     role: message.role === "user" ? "user" : "assistant",
     content: message.content || "",
+    // Said or heard in a spoken conversation (services/agent/voice.js).
+    voice: Boolean(message.voice),
     toolCalls: (message.toolCalls || []).map((call) => ({ tool: call.tool, args: call.args || {}, result: call.result || {} })),
     todos: (message.todos || []).map((todo) => ({ id: todo.id, content: todo.content, status: todo.status })),
     agentRunDurationMs: message.agentRunDurationMs ?? null,
@@ -220,7 +222,7 @@ agentRouter.patch(
 // What the AI cost in a month (Settings → Agent → AI spending; admins only): the total and the budget, each day, and
 // by what it was for, by person and by model. ?month=YYYY-MM, this month when left out. `months`: the months with
 // spending, newest first, for the month picker.
-const FEATURES = ["agent", "memory", "knowledge", "receipts", "documents", "calls", "teammate", "other"]
+const FEATURES = ["agent", "voice", "memory", "knowledge", "receipts", "documents", "calls", "teammate", "other"]
 
 // The days of `month` for the chart: every one, or this month's up to today.
 function monthDays(month) {

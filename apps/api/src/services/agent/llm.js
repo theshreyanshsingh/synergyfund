@@ -38,7 +38,7 @@ function trackUsage(tracker, usage, cost) {
 
 /* ---------- what the AI costs, and the team's monthly budget ---------- */
 
-// What a job's model calls are for and who they are for: `feature` (agent, memory, receipts, documents, calls,
+// What a job's model calls are for and who they are for: `feature` (agent, voice, memory, receipts, documents, calls,
 // teammate) and `userId` (none for background work). One per job: it is checked against the budget at its first call
 // only (`cleared` after), so a question already being answered finishes.
 export function createMeter(feature, userId = null) {
@@ -108,7 +108,8 @@ function chargedCost(usage) {
 }
 
 // Saves one call and adds it to the month. Returns its cost. A failure to save is logged and never fails the answer.
-async function recordUsage({ meter, model, usage }) {
+// (chat() does this for its own calls; the Agent's voice calls it for the speech it streams, see voice.js.)
+export async function recordUsage({ meter, model, usage }) {
   const promptTokens = Number(usage?.prompt_tokens ?? usage?.input_tokens ?? 0) || 0
   const completionTokens = Number(usage?.completion_tokens ?? usage?.output_tokens ?? 0) || 0
   const cachedTokens = Number(usage?.prompt_tokens_details?.cached_tokens ?? usage?.input_tokens_details?.cached_tokens ?? 0) || 0
