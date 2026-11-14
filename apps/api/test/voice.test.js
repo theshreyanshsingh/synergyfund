@@ -277,8 +277,11 @@ test("the deciding model's reply is a request for the records, or nothing", () =
   assert.deepEqual(voice.parseVerdict("ASK\nWho is the lender on 876 Fields Rd?"), { question: "Who is the lender on 876 Fields Rd?" })
   assert.deepEqual(voice.parseVerdict("ask\n<What do we owe Kiavi?>\n"), { question: "What do we owe Kiavi?" })
   assert.deepEqual(voice.parseVerdict("ASK\nList the houses\nin Jacksonville"), { question: "List the houses in Jacksonville" })
-  for (const about of ["ABOUT", "about.", " ABOUT \n"]) assert.deepEqual(voice.parseVerdict(about), { about: true })
-  for (const none of ["NO", "", null, "ASK", "SEARCH\nsomething", "Sure, here you go.", "ABOUT\nthe houses", "WAIT"]) assert.equal(voice.parseVerdict(none), null)
+  // The request on the ASK line itself, or the word in bold.
+  assert.deepEqual(voice.parseVerdict("ASK: Who is the lender on Maple Street?"), { question: "Who is the lender on Maple Street?" })
+  assert.deepEqual(voice.parseVerdict("**ASK**\nWhat is due this week?"), { question: "What is due this week?" })
+  for (const about of ["ABOUT", "about.", " ABOUT \n", "**ABOUT**"]) assert.deepEqual(voice.parseVerdict(about), { about: true })
+  for (const none of ["NO", "", null, "ASK", "ASK:", "SEARCH\nsomething", "Sure, here you go.", "ABOUT\nthe houses", "About the houses", "Asking around", "WAIT"]) assert.equal(voice.parseVerdict(none), null)
   const told = voice.routerInstructions({ user: sam })
   assert.match(told, /You never answer Sam yourself\./)
   assert.match(told, /^ASK$/m)
@@ -673,11 +676,11 @@ test("the page is told the voice in use, and only an admin changes it", async ()
 
   const changed = await (await patch({ voice: "marin", accent: "british" })).json()
   assert.deepEqual([changed.voice, changed.accent], ["marin", "british"])
-  assert.deepEqual(await voice.voiceSettings(), { voice: "marin", accent: "british" })
+  assert.deepEqual(await voice.voiceSettings(), { on: true, voice: "marin", accent: "british" })
   // One at a time, and nothing that is not on the lists.
   assert.deepEqual((await (await patch({ accent: "none" })).json()).voice, "marin")
   for (const bad of [{ voice: "robot" }, { accent: "martian" }]) assert.equal((await patch(bad)).status, 400)
-  assert.deepEqual(await voice.voiceSettings(), { voice: "marin", accent: "none" })
+  assert.deepEqual(await voice.voiceSettings(), { on: true, voice: "marin", accent: "none" })
 
   const asMember = await fetch(`${base}/agent/voice`, { headers: { "x-role": "member" } })
   assert.equal((await asMember.json()).canEdit, false)

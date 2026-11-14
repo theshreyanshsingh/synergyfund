@@ -12,7 +12,8 @@
 // - and if what stopped the Agent falls silent the moment the Agent does, it was the Agent's own voice after all,
 //   and what was recorded of it is thrown away.
 // Each mistake teaches it that the echo can be that loud. While none of the Agent's voice is playing (it is working
-// on an answer), there is no echo: someone speaking stops it straight away.
+// on an answer), there is no echo: someone speaking stops it straight away, once they have spoken for as long as a
+// turn must last (a cough or a door is shorter, and would stop the Agent with nothing to say in its place).
 
 // How far the Agent's voice is turned down while it is checked (voicePlayer.js uses it). A person's voice then shows
 // 1 / DUCKED times as much of the Agent's level as before, an echo as much as before; the check takes the middle.
@@ -28,6 +29,8 @@ const VOICE_MIN = 0.01
 
 // `frameMs`: how long one frame of sound is. `margin`: how far above the learned echo a sound must be to count as
 // someone speaking. `sure`: how many times louder still it must be for the Agent to stop without checking.
+// `speakMs`: how long sound must last to stop the Agent when none of its voice can be heard (the turn detector's
+// shortest turn).
 //
 // push(near, far, allow, quiet) takes one frame: how loud the microphone was, how loud the Agent's voice is, whether
 // the Agent may be interrupted now, and the level above which the microphone's sound is speech in a quiet moment
@@ -37,11 +40,13 @@ const VOICE_MIN = 0.01
 //   checked was the Agent's own voice: turn it up again, and forget what was recorded meanwhile), "interrupt"
 //   (someone is speaking: stop the Agent), "mistaken" (the last interruption was the Agent's own voice: forget what
 //   was recorded).
-export function createBargeIn({ frameMs, margin = 1.7, sure = 4, learnMs = 900, holdMs = 340, triggerMs = 170, measureMs = 260, afterMs = 340, steadyMs = 500, restMs = 1500, tailMs = 600 } = {}) {
+export function createBargeIn({ frameMs, margin = 1.7, sure = 4, learnMs = 900, holdMs = 340, triggerMs = 170, speakMs = 300, measureMs = 260, afterMs = 340, steadyMs = 500, restMs = 1500, tailMs = 600 } = {}) {
   const frames = (ms) => Math.max(1, Math.round(ms / frameMs))
   const HOLD = frames(holdMs)
   const LEARN = frames(learnMs)
   const TRIGGER = Math.max(2, frames(triggerMs))
+  // (At least `speakMs`, so that what stops the Agent is long enough to be sent as a turn.)
+  const SPEAK = Math.max(TRIGGER, Math.ceil(speakMs / frameMs))
   const MEASURE = Math.max(2, frames(measureMs))
   const AFTER = Math.max(3, frames(afterMs))
   const STEADY = frames(steadyMs)
@@ -73,8 +78,10 @@ export function createBargeIn({ frameMs, margin = 1.7, sure = 4, learnMs = 900, 
   // The Agent's voice ended while it was being checked: frames since (0: not waiting). Someone still speaking once it
   // has died away was a person; quiet means it was the echo.
   let pending = 0
-  // Frames in a row loud enough to be speech once none of the Agent's voice, or its echo, can be heard.
+  // Frames in a row loud enough to be speech once none of the Agent's voice, or its echo, can be heard, and frames in
+  // a row too quiet to be.
   let loud = 0
+  let hush = 0
   // After an interruption: frames since, and whether anyone was heard once the Agent's voice had died away.
   let after = 0
   let someone = false
@@ -102,6 +109,7 @@ export function createBargeIn({ frameMs, margin = 1.7, sure = 4, learnMs = 900, 
     const gone = Math.max(...fars) < VOICE_MIN
     const speech = Math.max(SPEECH_MIN, quiet)
     loud = gone && near > speech ? loud + 1 : 0
+    hush = gone && near <= speech ? hush + 1 : 0
 
     if (after) {
       // The Agent has just been stopped. What is left of its voice dies away; a person who spoke over it goes on
@@ -135,14 +143,15 @@ export function createBargeIn({ frameMs, margin = 1.7, sure = 4, learnMs = 900, 
       // Its echo may still be arriving: nothing is decided yet, and sound up to where its voice was is not speech.
       if (!gone) return { floor: margin * coupling * Math.max(...fars), action }
       // None of it can be heard now: what is heard is the room, or a person.
-      if (loud >= TRIGGER && allow) {
+      if (loud >= SPEAK && allow) {
         calm()
         loud = 0
         return { floor: 0, action: "interrupt" }
       }
       if (pending) {
         pending += 1
-        if (!loud && pending > MEASURE) {
+        // (Quiet for a moment, not only between two words.)
+        if (hush >= TRIGGER && pending > MEASURE) {
           // Quiet as soon as the Agent was: it was the Agent's own voice.
           learn()
           calm()
@@ -238,6 +247,10 @@ export function createBargeIn({ frameMs, margin = 1.7, sure = 4, learnMs = 900, 
     },
     get learning() {
       return learnt < LEARN
+    },
+    // It is still taking its second look at the last stop: a turn that ends now waits for "mistaken" or not.
+    get looking() {
+      return after > 0
     },
   }
 }

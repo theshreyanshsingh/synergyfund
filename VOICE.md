@@ -101,9 +101,10 @@ Measured on a test database with four made-up houses:
 
 The microphone stays open all the time, as on a call. Speaking over the Agent stops it, and what is said is the next
 turn: during its hello, during a reply of its own, and during a looked-up answer from 0.8 seconds after the question
-was handed over (the server keeps the question from 0.6 seconds on, so it is still answered in writing), also while
-it works on that answer in silence (there it stops within about a fifth of a second). Mute shuts the microphone for a
-while.
+was handed over, once the server has said it kept the question in the chat (it keeps it from 0.6 seconds on, so it is
+still answered in writing, and the page knows which chat it is in), also while it works on that answer in silence. There it stops once someone has spoken for as
+long as a turn must last (0.3 seconds), so a cough, a door or typing does not cost the answer. Mute shuts the
+microphone for a while.
 
 On loudspeakers the Agent's own voice comes back in through the microphone. The browser's echo canceller takes most
 of it out, but how much is left differs from device to device, so the page does not rely on it
@@ -119,7 +120,8 @@ of it out, but how much is left differs from device to device, so the page does 
 - It stops the Agent without that check only once the echo has looked steady for half a second of the Agent's
   speech, so turning the volume up between answers costs a check, not a wrong stop.
 - If what stopped the Agent falls silent the moment the Agent does, it was the Agent's own voice: the recording is
-  thrown away, and it has learned that the echo can be that loud.
+  thrown away, and it has learned that the echo can be that loud. A turn that ends during that second look (it takes
+  about a second, longer than the pause that ends a turn) waits for it, so the Agent's own words are never sent.
 - Sound that starts while the Agent's voice can be heard is never sent as a turn unless a person is confirmed (it
   stopped the Agent, or went on in a quiet moment).
 

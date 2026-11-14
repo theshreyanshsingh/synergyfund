@@ -19,9 +19,9 @@ const turnUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize:
 
 // `available`: people can talk with the Agent now (a model is connected and an admin has not turned Talk off).
 async function presentVoice(req) {
-  const [on, settings] = await Promise.all([voiceOn(), voiceSettings()])
+  const settings = await voiceSettings()
   const connected = voiceAvailable()
-  return { available: connected && on, connected, on, ...settings, voices: AGENT_VOICES, accents: AGENT_ACCENTS, canEdit: req.user.role === "admin" }
+  return { available: connected && settings.on, connected, ...settings, voices: AGENT_VOICES, accents: AGENT_ACCENTS, canEdit: req.user.role === "admin" }
 }
 
 voiceRouter.get(

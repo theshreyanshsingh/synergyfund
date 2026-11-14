@@ -27,9 +27,10 @@ import { createVoicePlayer } from "../../lib/voicePlayer"
 const MICROPHONE = { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }
 // The server takes a turn of up to 60 seconds; someone still talking is cut a little before that.
 const MAX_TURN_MS = 58000
-// The server keeps a question 0.6 seconds after it is handed to the records Agent (its PATIENCE.takeBack); cancelled
-// before that, the whole question is thrown away. So speaking over a looked-up answer only stops it from a little
-// after that.
+// The server keeps a question 0.6 seconds after it is handed to the records Agent (its PATIENCE.takeBack), and then
+// says so (the `thread` event); cancelled before that, the whole question is thrown away. So speaking over a
+// looked-up answer only stops it once the page has heard that, and not before this long after `route` (the echo
+// guard's checks were measured from then).
 const INTERRUPT_AFTER_MS = 800
 // This much speech before the Agent has started on an answer means the person had not finished.
 const RESUME_MS = 200
@@ -99,6 +100,7 @@ export function useAgentVoice({ threadId = "", temporary = false, streaming = fa
 
   function release(run) {
     run.kept = null
+    run.waiting = null
     run.turn?.abort.abort()
     run.turn = null
     run.player?.close()
@@ -166,8 +168,12 @@ export function useAgentVoice({ threadId = "", temporary = false, streaming = fa
   }
 
   function handle(run, turn, event) {
-    if (event.t === "thread") adopt(run, event.id)
-    else if (event.t === "heard") {
+    if (event.t === "thread") {
+      // The server has kept the turn in the chat: a question for the records is answered in writing from here, also
+      // if the person talks over it.
+      adopt(run, event.id)
+      turn.inChat = true
+    } else if (event.t === "heard") {
       // (A question for the records shows as the server will save it, which the route event carries.)
       if (!turn.asked) turn.heard = String(event.text || "") || turn.heard
       show(turn)
@@ -239,7 +245,7 @@ export function useAgentVoice({ threadId = "", temporary = false, streaming = fa
   // sound in `samples`). Its voice plays as it arrives, and once it has been heard the Agent listens again.
   async function exchange(run, path, body, { samples = NO_SOUND, takeBacks = 0 } = {}) {
     run.turns += 1
-    const turn = { abort: new AbortController(), spoken: path === "turn", key: run.turns, samples, takeBacks, heard: "", reply: "", asked: false, routed: false, routedAt: 0, saved: false, shown: null, done: false, failed: "", status: 0 }
+    const turn = { abort: new AbortController(), spoken: path === "turn", key: run.turns, samples, takeBacks, heard: "", reply: "", asked: false, routed: false, routedAt: 0, inChat: false, saved: false, shown: null, done: false, failed: "", status: 0 }
     drop(run)
     run.turn = turn
     setState(turn.spoken ? "thinking" : "starting")
@@ -303,19 +309,26 @@ export function useAgentVoice({ threadId = "", temporary = false, streaming = fa
   }
 
   // Each moment of sound from the microphone. Speaking over the Agent stops it once it has started on an answer (a
-  // looked-up one a moment later, see INTERRUPT_AFTER_MS), also while it works on it in silence, and during its
-  // hello; its own voice coming back in does not (bargeIn.js). The sound is dropped while muted, and while a turn
-  // that can no longer be taken back is still being decided.
+  // looked-up one once the server has kept the question in the chat, see INTERRUPT_AFTER_MS), also while it works on
+  // it in silence, and during its hello; its own voice coming back in does not (bargeIn.js). The sound is dropped
+  // while muted, and while a turn that can no longer be taken back is still being decided.
   function hear(run, frame) {
     if (runRef.current !== run) return
     const turn = run.turn
     const undecided = Boolean(turn?.spoken && !turn.routed)
     const unanswered = undecided && turn.takeBacks < MAX_TAKE_BACKS
     const shut = run.muted || (undecided && !unanswered)
-    const stoppable = Boolean(turn) && !shut && !undecided && (turn.spoken ? !turn.asked || performance.now() - turn.routedAt >= INTERRUPT_AFTER_MS : run.player.playing)
+    const stoppable = Boolean(turn) && !shut && !undecided && (turn.spoken ? !turn.asked || (turn.inChat && performance.now() - turn.routedAt >= INTERRUPT_AFTER_MS) : run.player.playing)
     const echo = run.guard.push(loudness(frame), run.player.far(), stoppable, run.detector.threshold)
     if (echo.action === "duck") run.player.duck(true)
     else if (echo.action === "restore" || echo.action === "echo") run.player.duck(false)
+    // A turn that ended while the echo guard was taking its second look at a stop goes once that is over, unless the
+    // stop turned out to be the Agent's own voice.
+    if (run.waiting && !run.guard.looking) {
+      const samples = run.waiting
+      run.waiting = null
+      if (echo.action !== "mistaken" && !run.turn) send(run, samples)
+    }
     if (shut || echo.action === "mistaken" || echo.action === "echo") {
       // (Mistaken or echo: what was heard was the Agent's own voice, so nothing was said.)
       if (run.hearing || echo.action) run.detector.reset()
@@ -336,7 +349,10 @@ export function useAgentVoice({ threadId = "", temporary = false, streaming = fa
     } else if (unanswered && run.turn && run.detector.speaking && run.detector.speechMs >= RESUME_MS) resume(run)
     if (ended) {
       // Not a turn: sound heard while the Agent went on answering, or the Agent's own voice.
-      if (!run.turn && !run.echoTurn) send(run, ended.samples)
+      if (!run.turn && !run.echoTurn) {
+        if (run.guard.looking) run.waiting = ended.samples
+        else send(run, ended.samples)
+      }
       run.echoTurn = false
     }
     // A sound too short to be a turn (a cough) took the turn back: it goes again as it was.
@@ -380,7 +396,7 @@ export function useAgentVoice({ threadId = "", temporary = false, streaming = fa
       setError("This browser cannot use the microphone here.")
       return
     }
-    const run = { context, chatId: live.current.threadId, temporary: live.current.temporary, muted: false, hearing: false, echoTurn: false, failures: 0, turns: 0, turn: null, kept: null }
+    const run = { context, chatId: live.current.threadId, temporary: live.current.temporary, muted: false, hearing: false, echoTurn: false, failures: 0, turns: 0, turn: null, kept: null, waiting: null }
     runRef.current = run
     setError("")
     setCaption("")

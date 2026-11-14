@@ -103,10 +103,11 @@ export async function voiceOn() {
   return !stored?.voiceOff
 }
 
-// The voice and accent the team chose in Settings → Agent.
+// The voice and accent the team chose in Settings → Agent, and whether talking with the Agent is on.
 export async function voiceSettings() {
-  const stored = await AgentSetting.findOne({ key: "org" }).select("voiceName voiceAccent").lean()
+  const stored = await AgentSetting.findOne({ key: "org" }).select("voiceName voiceAccent voiceOff").lean()
   return {
+    on: !stored?.voiceOff,
     voice: AGENT_VOICES[stored?.voiceName] ? stored.voiceName : VOICE_DEFAULTS.voice,
     accent: AGENT_ACCENTS[stored?.voiceAccent] ? stored.voiceAccent : VOICE_DEFAULTS.accent,
   }
@@ -190,12 +191,16 @@ Today's date is ${today()}.`
 }
 
 // The deciding model's reply: { question } to hand to the records Agent, { about: true } for a question about the
-// Agent itself, or null for "the Agent answers by itself".
+// Agent itself, or null for "the Agent answers by itself". (It sometimes puts the request on the ASK line itself,
+// "ASK: …", or the word in bold.)
 export function parseVerdict(text) {
-  const lines = String(text || "").split("\n").map((line) => line.trim().replace(/^<|>$/g, "").trim()).filter(Boolean)
-  if (lines.length === 1 && lines[0].toUpperCase().replace(/\.$/, "") === "ABOUT") return { about: true }
-  if (lines.length < 2 || lines[0].toUpperCase() !== "ASK") return null
-  return { question: lines.slice(1).join(" ").slice(0, 2000) }
+  const bare = (line) => line.trim().replace(/^<|>$/g, "").trim()
+  const lines = String(text || "").replace(/\*\*/g, "").split("\n").map(bare).filter(Boolean)
+  const head = /^(ASK|ABOUT)\b[.:]?\s*(.*)$/i.exec(lines[0] || "")
+  if (!head) return null
+  const rest = [bare(head[2]), ...lines.slice(1)].filter(Boolean)
+  if (head[1].toUpperCase() === "ABOUT") return rest.length ? null : { about: true }
+  return rest.length ? { question: rest.join(" ").slice(0, 2000) } : null
 }
 
 function spokenInstructions(user) {
@@ -618,6 +623,14 @@ function keepChat(thread, firstWords, temporaryFor) {
   if (thread.temporary) thread.expiresAt = new Date(Date.now() + temporaryFor)
 }
 
+// An exchange the Agent answered by itself goes into the chat: what the person said and what it said back.
+async function keepExchange({ thread, words, said, temporaryFor, out }) {
+  keepChat(thread, words, temporaryFor)
+  thread.messages.push({ role: "user", content: words, voice: true }, { role: "assistant", content: said, spoken: said, voice: true })
+  await thread.save()
+  out.send({ t: "thread", id: String(thread._id) })
+}
+
 // One spoken turn: `wav` is what the person said (readTurn). Events go to `out` as they happen; the chat is saved
 // as it would be for typed turns. `temporaryFor`: how long a temporary chat is kept after its last message.
 export async function voiceTurn({ user, permissions, thread, wav, out, signal, temporaryFor }) {
@@ -681,12 +694,7 @@ export async function voiceTurn({ user, permissions, thread, wav, out, signal, t
     const words = (await within(heard, PATIENCE.heard, "")) || ""
     const said = reply.text.trim()
     // An exchange in which nothing was made out is not worth keeping, nor one the person took back.
-    if (words && said && (await stayed(signal, routedAt))) {
-      keepChat(thread, words, temporaryFor)
-      thread.messages.push({ role: "user", content: words, voice: true }, { role: "assistant", content: said, spoken: said, voice: true })
-      await thread.save()
-      out.send({ t: "thread", id: String(thread._id) })
-    }
+    if (words && said && (await stayed(signal, routedAt))) await keepExchange({ thread, words, said, temporaryFor, out })
     if (reply.problem) out.send({ t: "error", message: `The Agent was cut off: ${reply.problem}` })
     out.send({ t: "done", threadId: thread.isNew ? "" : String(thread._id), asked: false, spoken: said })
     return
@@ -703,12 +711,7 @@ export async function voiceTurn({ user, permissions, thread, wav, out, signal, t
       await sayLine({ line: ABOUT_LINE, soFar: history, settings, meter, signal, out, say })
     }
     const words = (await within(heard, PATIENCE.heard, "")) || ""
-    if (words && (await stayed(signal, routedAt))) {
-      keepChat(thread, words, temporaryFor)
-      thread.messages.push({ role: "user", content: words, voice: true }, { role: "assistant", content: ABOUT_LINE, spoken: ABOUT_LINE, voice: true })
-      await thread.save()
-      out.send({ t: "thread", id: String(thread._id) })
-    }
+    if (words && (await stayed(signal, routedAt))) await keepExchange({ thread, words, said: ABOUT_LINE, temporaryFor, out })
     out.send({ t: "done", threadId: thread.isNew ? "" : String(thread._id), asked: false, spoken: ABOUT_LINE })
     return
   }

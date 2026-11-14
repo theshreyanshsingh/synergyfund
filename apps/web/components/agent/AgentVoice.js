@@ -5,7 +5,7 @@ import { Icon } from "../ui/Icon"
 
 const SAYS = { starting: "Starting", listening: "Listening", thinking: "Thinking", speaking: "Speaking" }
 const HINT = "Say what you need, then pause."
-const MUTED_HINT = "The microphone is off. Unmute to go on."
+const MUTED_HINT = "The microphone is off. Tap Mute again to go on."
 
 // The Agent as a circle of light. It swells with whoever is speaking (the person while it listens, the Agent while it
 // answers), its colours drift slowly while it listens and fast, with an arc running round it, while it works, and it
@@ -73,7 +73,8 @@ export function AgentVoice({ voice }) {
         <p className={voice.error ? "agent-voice-line is-error" : "agent-voice-line"}><span>{line}</span></p>
       </div>
       <div className="agent-voice-controls">
-        <Control icon={voice.muted ? "micOff" : "mic"} label={voice.muted ? "Unmute" : "Mute"} role="switch" aria-checked={voice.muted} title={voice.muted ? "Turn the microphone on again" : "Turn the microphone off for a moment"} onClick={() => voice.setMuted(!voice.muted)} />
+        {/* A switch named Mute, on while muted, as on a phone call: its name stays the same, its state says which. */}
+        <Control icon={voice.muted ? "micOff" : "mic"} label="Mute" role="switch" aria-checked={voice.muted} title={voice.muted ? "Turn the microphone on again" : "Turn the microphone off for a moment"} onClick={() => voice.setMuted(!voice.muted)} />
         <Control icon="stop" label="Stop" disabled={!answering} title="Stop the answer" onClick={voice.stop} />
         <Control icon="phoneOff" label="End" className="is-end" title="End Talk" onClick={voice.end} />
       </div>
