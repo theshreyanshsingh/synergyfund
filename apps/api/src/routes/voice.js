@@ -6,7 +6,7 @@ import { AgentSetting, AgentThread } from "../models/index.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { budgetMessage, budgetState } from "../services/agent/llm.js"
 import { SSE_HEADERS } from "../services/agent/stream.js"
-import { MAX_TURN_BYTES, greet, problemText, readTurn, voiceAvailable, voiceSettings, voiceStream, voiceTurn } from "../services/agent/voice.js"
+import { MAX_TURN_BYTES, greet, problemText, readTurn, voiceAvailable, voiceOn, voiceSettings, voiceStream, voiceTurn } from "../services/agent/voice.js"
 import { TEMPORARY_CHAT_TTL_MS } from "./agent.js"
 
 // Talking with the Agent (services/agent/voice.js). The page sends each spoken turn as a recording and plays the
@@ -17,8 +17,11 @@ voiceRouter.use(requirePermission("agent.ask"))
 
 const turnUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_TURN_BYTES, files: 1 } })
 
+// `available`: people can talk with the Agent now (a model is connected and an admin has not turned Talk off).
 async function presentVoice(req) {
-  return { available: voiceAvailable(), ...(await voiceSettings()), voices: AGENT_VOICES, accents: AGENT_ACCENTS, canEdit: req.user.role === "admin" }
+  const [on, settings] = await Promise.all([voiceOn(), voiceSettings()])
+  const connected = voiceAvailable()
+  return { available: connected && on, connected, on, ...settings, voices: AGENT_VOICES, accents: AGENT_ACCENTS, canEdit: req.user.role === "admin" }
 }
 
 voiceRouter.get(
@@ -28,7 +31,7 @@ voiceRouter.get(
   }),
 )
 
-// The voice and accent are the team's, chosen by an admin (Settings → Agent).
+// The voice and accent are the team's, chosen by an admin (Settings → Agent), who can also turn Talk off for everyone.
 voiceRouter.patch(
   "/",
   asyncHandler(async (req, res) => {
@@ -37,6 +40,13 @@ voiceRouter.patch(
       return
     }
     const changes = {}
+    if (req.body.on !== undefined) {
+      if (typeof req.body.on !== "boolean") {
+        sendError(res, 400, "Say whether talking with the Agent is on or off.")
+        return
+      }
+      changes.voiceOff = !req.body.on
+    }
     if (req.body.voice !== undefined) {
       if (!AGENT_VOICES[req.body.voice]) {
         sendError(res, 400, "Choose one of the listed voices.")
@@ -60,6 +70,10 @@ voiceRouter.patch(
 async function ready(res) {
   if (!voiceAvailable()) {
     sendError(res, 503, "The Agent is not connected to a model yet.")
+    return false
+  }
+  if (!(await voiceOn())) {
+    sendError(res, 403, "Talking with the Agent is turned off.")
     return false
   }
   const budget = await budgetState()

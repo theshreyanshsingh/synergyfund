@@ -36,7 +36,7 @@ function Agent() {
   const router = useRouter()
   const linked = useSearchParams().get("chat") || ""
   const chat = useAgentChat({ openId: linked })
-  const voice = useAgentVoice({ threadId: chat.threadId, temporary: chat.temporary, streaming: chat.streaming, onThread: chat.adoptThread, onRefresh: chat.refreshThread })
+  const voice = useAgentVoice({ threadId: chat.threadId, temporary: chat.temporary, streaming: chat.streaming, onThread: chat.adoptThread, onRefresh: chat.refreshThread, onSpoken: chat.showSpoken })
   const [view, setView] = useState("chat")
   // Knowledge's tab: "team", or "you" (what the Agent remembers about this person).
   const [knowing, setKnowing] = useState("team")
@@ -155,7 +155,7 @@ function Agent() {
                 ) : (
                   <AgentMessages
                     rows={chat.rows}
-                    streaming={chat.streaming}
+                    streaming={chat.streaming || voice.working}
                     threadId={chat.threadId}
                     title={chat.chatTitle}
                     empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} />}

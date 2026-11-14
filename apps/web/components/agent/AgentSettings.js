@@ -81,17 +81,18 @@ export function AgentSettings() {
   )
 }
 
-// Talk mode's voice for everyone: which voice the Agent speaks in, and the accent it is asked to speak with.
+// Talk mode for everyone: whether people can talk with the Agent at all, which voice it speaks in, and the accent it
+// is asked to speak with.
 function VoiceSettings() {
   const [voice, setVoice] = useState(null)
-  const [form, setForm] = useState({ voice: "", accent: "" })
+  const [form, setForm] = useState({ on: true, voice: "", accent: "" })
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
 
   const show = (data) => {
     setVoice(data)
-    setForm({ voice: data.voice || "", accent: data.accent || "" })
+    setForm({ on: data.on !== false, voice: data.voice || "", accent: data.accent || "" })
   }
 
   // A server without Talk mode has no voice to choose: the block stays away.
@@ -101,7 +102,7 @@ function VoiceSettings() {
 
   if (!voice?.canEdit) return null
 
-  const changed = form.voice !== voice.voice || form.accent !== voice.accent
+  const changed = form.on !== (voice.on !== false) || form.voice !== voice.voice || form.accent !== voice.accent
 
   async function save(event) {
     event.preventDefault()
@@ -109,8 +110,9 @@ function VoiceSettings() {
     setError("")
     setMessage("")
     try {
-      show(await api("/agent/voice", { method: "PATCH", body: form }))
-      setMessage("Saved. The Agent speaks this way for everyone from its next answer.")
+      const saved = await api("/agent/voice", { method: "PATCH", body: form })
+      show(saved)
+      setMessage(saved.on === false ? "Saved. Talk is off for everyone: the button is gone from the Agent." : "Saved. The Agent speaks this way for everyone from its next answer.")
     } catch (err) {
       setError(err.message)
     } finally {
@@ -129,18 +131,23 @@ function VoiceSettings() {
       <form className="settings-send" onSubmit={save}>
         <div>
           <h2>Voice</h2>
-          <p>How the Agent sounds when someone talks with it. The accent is asked of the model, so it can vary. Cedar with the Indian accent is the default.</p>
+          <p>Whether people can talk with the Agent, and how it sounds when they do. The accent is asked of the model, so it can vary. Cedar with the Australian accent is the default.</p>
         </div>
         {error && <div className="banner settings-wide">{error}</div>}
         {message && <p className="settings-note settings-wide">{message}</p>}
-        {!voice.available && <p className="settings-wide">Connect OpenRouter (above) and people can talk with the Agent.</p>}
+        {voice.connected === false && <p className="settings-wide">Connect OpenRouter (above) and people can talk with the Agent.</p>}
+        <label className="field-check keep-case settings-wide">
+          <input type="checkbox" checked={form.on} onChange={(event) => { setMessage(""); setForm((current) => ({ ...current, on: event.target.checked })) }} />
+          People can talk with the Agent
+        </label>
+        {!form.on && <p className="settings-wide">While this is off, Talk is hidden for everyone and the Agent only answers typed questions.</p>}
         <label className="field">
           <span>Voice</span>
-          <select value={form.voice} onChange={pick("voice")}>{options(voice.voices)}</select>
+          <select value={form.voice} disabled={!form.on} onChange={pick("voice")}>{options(voice.voices)}</select>
         </label>
         <label className="field">
           <span>Accent</span>
-          <select value={form.accent} onChange={pick("accent")}>{options(voice.accents)}</select>
+          <select value={form.accent} disabled={!form.on} onChange={pick("accent")}>{options(voice.accents)}</select>
         </label>
         <div className="settings-actions"><button className="primary" type="submit" disabled={pending || !changed}>{pending ? "Saving…" : "Save voice"}</button></div>
       </form>

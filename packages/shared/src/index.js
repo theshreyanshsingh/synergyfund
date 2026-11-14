@@ -1420,8 +1420,8 @@ export const AGENT_VOICES = {
 }
 
 export const AGENT_ACCENTS = {
-  indian: "Indian",
   australian: "Australian",
+  indian: "Indian",
   british: "British",
   american: "American",
   none: "The voice's own",
@@ -1429,7 +1429,7 @@ export const AGENT_ACCENTS = {
 
 export const VOICE_DEFAULTS = {
   voice: "cedar",
-  accent: "indian",
+  accent: "australian",
 }
 
 // The AI teammate that works in property chats.

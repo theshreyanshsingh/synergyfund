@@ -54,6 +54,9 @@ export const PATIENCE = {
   heard: 3000,
   // A question for the records can take a minute. The person is told once that it is still being worked on.
   stillWorking: 14000,
+  // After the page is told where a turn goes, before anything of it is kept or looked up: time for the page's word
+  // that the person took the turn back to get here (it sends none once it has seen where the turn went).
+  takeBack: 600,
 }
 // A request for speech that fails before any of it was said is made once more (the provider refused one on a real
 // call, and the caller heard nothing after "One moment").
@@ -92,6 +95,12 @@ class NotAnswered extends Error {
 
 export function voiceAvailable() {
   return Boolean(modelKey())
+}
+
+// Whether talking with the Agent is on for the team (an admin can turn it off in Settings → Agent).
+export async function voiceOn() {
+  const stored = await AgentSetting.findOne({ key: "org" }).select("voiceOff").lean()
+  return !stored?.voiceOff
 }
 
 // The voice and accent the team chose in Settings → Agent.
@@ -504,7 +513,7 @@ export function forgetRecordedLines() {
 /* ---------- the stream to the page ---------- */
 
 // One event a line ("data: {…}"), as the page's voice mode reads them: thread, heard, route, status, say, audio,
-// error and done.
+// saved (the written answer is in the chat), error and done.
 export function voiceStream(res) {
   let open = true
   const write = (text) => {
@@ -596,6 +605,13 @@ export async function greet({ user, out, signal }) {
   out.send({ t: "done", threadId: "", asked: false, spoken })
 }
 
+// Whether the person is still there once the page has had time to say they took the turn back (PATIENCE.takeBack
+// after `since`, when the page was told where the turn went).
+async function stayed(signal, since) {
+  await wait(Math.max(0, PATIENCE.takeBack - (Date.now() - since)))
+  return !signal?.aborted
+}
+
 function keepChat(thread, firstWords, temporaryFor) {
   if (!thread.title) thread.title = chatTitleFromPrompt(firstWords)
   // A temporary chat lives for a day after its last message.
@@ -649,7 +665,14 @@ export async function voiceTurn({ user, permissions, thread, wav, out, signal, t
     dropReply.abort()
     throw error
   }
+  // The person took the turn back before anything was said (they went on talking, or pressed Stop): nothing of it
+  // is kept, and nothing is looked up.
+  if (signal?.aborted) {
+    dropReply.abort()
+    return
+  }
 
+  const routedAt = Date.now()
   if (!verdict) {
     out.send({ t: "route", ask: false })
     for (const event of held) event.audio ? out.audio(event.audio) : say(event.say)
@@ -657,8 +680,8 @@ export async function voiceTurn({ user, permissions, thread, wav, out, signal, t
     const reply = await replying
     const words = (await within(heard, PATIENCE.heard, "")) || ""
     const said = reply.text.trim()
-    // An exchange in which nothing was made out is not worth keeping.
-    if (words && said) {
+    // An exchange in which nothing was made out is not worth keeping, nor one the person took back.
+    if (words && said && (await stayed(signal, routedAt))) {
       keepChat(thread, words, temporaryFor)
       thread.messages.push({ role: "user", content: words, voice: true }, { role: "assistant", content: said, spoken: said, voice: true })
       await thread.save()
@@ -680,7 +703,7 @@ export async function voiceTurn({ user, permissions, thread, wav, out, signal, t
       await sayLine({ line: ABOUT_LINE, soFar: history, settings, meter, signal, out, say })
     }
     const words = (await within(heard, PATIENCE.heard, "")) || ""
-    if (words) {
+    if (words && (await stayed(signal, routedAt))) {
       keepChat(thread, words, temporaryFor)
       thread.messages.push({ role: "user", content: words, voice: true }, { role: "assistant", content: ABOUT_LINE, spoken: ABOUT_LINE, voice: true })
       await thread.save()
@@ -689,13 +712,8 @@ export async function voiceTurn({ user, permissions, thread, wav, out, signal, t
     out.send({ t: "done", threadId: thread.isNew ? "" : String(thread._id), asked: false, spoken: ABOUT_LINE })
     return
   }
-  out.send({ t: "route", ask: true })
   const question = verdict.question
-  keepChat(thread, question, temporaryFor)
-  thread.messages.push({ role: "user", content: question, voice: true })
-  await thread.save()
-  out.send({ t: "thread", id: String(thread._id) })
-  if (!thread.temporary) await recordActivity({ user, title: "Asked the agent", detail: `${chatTitleFromPrompt(question)} (by voice)` })
+  out.send({ t: "route", ask: true, question })
 
   // What the person hears while the Agent works, one line at a time.
   const soFar = [...history, { role: "user", content: question }]
@@ -715,6 +733,17 @@ export async function voiceTurn({ user, permissions, thread, wav, out, signal, t
     })
   }
   tell(HOLD_LINE)
+  // The hold line starts at once, but nothing is kept or looked up until the person is known not to have taken the
+  // turn back. After that the question is the Agent's, also if they leave.
+  if (!(await stayed(signal, routedAt))) {
+    await telling
+    return
+  }
+  keepChat(thread, question, temporaryFor)
+  thread.messages.push({ role: "user", content: question, voice: true })
+  await thread.save()
+  out.send({ t: "thread", id: String(thread._id) })
+  if (!thread.temporary) await recordActivity({ user, title: "Asked the agent", detail: `${chatTitleFromPrompt(question)} (by voice)` })
   const nudge = setTimeout(() => tell(STILL_LINE), PATIENCE.stillWorking)
   nudge.unref?.()
   try {
@@ -724,6 +753,8 @@ export async function voiceTurn({ user, permissions, thread, wav, out, signal, t
     clearTimeout(nudge)
   }
   await telling
+  // The written answer is in the chat: the page shows it while the Agent says its short version.
+  out.send({ t: "saved" })
   const answer = thread.messages[thread.messages.length - 1]
   const answered = answer?.role === "assistant" && !answer.error
   let spoken = ""

@@ -9,7 +9,8 @@ const WAV_RATE = 16000
 // How much of the pause that ends a turn stays on its end, so the last word is not clipped.
 const TAIL_MS = 250
 
-function loudness(frame) {
+// How loud a frame of sound is (0 to 1).
+export function loudness(frame) {
   let sum = 0
   for (let index = 0; index < frame.length; index += 1) sum += frame[index] * frame[index]
   return frame.length ? Math.sqrt(sum / frame.length) : 0
@@ -31,8 +32,9 @@ function join(frames, count) {
 // `pauseMs`: the silence after speech that ends a turn. `minSpeechMs`: less speech than this (a click, a cough) is
 // dropped. `preRollMs`: how much sound from just before the first syllable a turn keeps. `maxTurnMs`: a turn is cut
 // here even if the person is still talking.
-// push(frame) takes the next frame of sound (numbers from -1 to 1) and gives null, or the turn that has just ended:
-// { samples, ms }, the sound from just before the first syllable to a moment after the last, at `sampleRate`.
+// push(frame, floor) takes the next frame of sound (numbers from -1 to 1) and gives null, or the turn that has just
+// ended: { samples, ms }, the sound from just before the first syllable to a moment after the last, at `sampleRate`.
+// `floor`: sound up to this level is not speech now (the Agent's own voice coming back in, see bargeIn.js).
 // reset() forgets a turn that is under way (the room's background level is kept). `speaking` says whether a turn is
 // under way, `speechMs` how much speech it holds so far, and `level` how loud the last frame was.
 export function createTurnDetector({ sampleRate, pauseMs = 800, minSpeechMs = 300, preRollMs = 400, maxTurnMs = 60000 }) {
@@ -87,13 +89,14 @@ export function createTurnDetector({ sampleRate, pauseMs = 800, minSpeechMs = 30
     return { samples, ms: msOf(samples.length) }
   }
 
-  function push(input) {
+  function push(input, floor = 0) {
     // The browser reuses the frame it hands over, so it is copied.
     const frame = new Float32Array(input)
     level = loudness(frame)
-    const speech = level > Math.max(0.012, noise * 3.2)
+    const speech = level > Math.max(0.012, noise * 3.2, floor)
     if (level < noise) noise = noise * 0.7 + level * 0.3
-    else noise = noise * 0.997 + level * 0.003
+    // (The Agent's own voice is not the room's background level.)
+    else if (!floor) noise = noise * 0.997 + level * 0.003
     if (!speaking) return speech ? begin(frame) : remember(frame)
     frames.push(frame)
     length += frame.length
@@ -117,6 +120,10 @@ export function createTurnDetector({ sampleRate, pauseMs = 800, minSpeechMs = 30
     },
     get level() {
       return level
+    },
+    // Sound above this is speech, apart from any floor given with it.
+    get threshold() {
+      return Math.max(0.012, noise * 3.2)
     },
   }
 }

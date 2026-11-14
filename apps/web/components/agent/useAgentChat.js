@@ -9,7 +9,7 @@ import { useApi } from "../../lib/useApi"
 // One Agent conversation: the chats (rename, pin, delete), the open chat's messages, sending and streaming the reply,
 // Retry and Edit, thumbs, saved prompts, and temporary chats. The Agent page and the phone's Agent sheet both run on it
 // (the open chat is remembered for this tab). Talk mode (useAgentVoice) saves what is said into the open chat through
-// adoptThread and refreshThread.
+// adoptThread and refreshThread, and shows a spoken turn while it is under way through showSpoken.
 const THREAD_KEY = "synergifund-agent-thread"
 
 function rowId() {
@@ -166,20 +166,25 @@ export function useAgentChat({ openId = "" } = {}) {
   }
 
   // After an answer: the chat as the server saved it, so its messages carry their ids (Retry, Edit, thumbs). An answer
-  // still appearing word by word carries on from where it was.
+  // still appearing word by word carries on from where it was. Its promise gives whether the saved chat is now on
+  // screen (false when it could not be fetched).
   async function sync(id) {
     try {
       const data = await api(`/agent/threads/${id}`)
-      if (threadRef.current !== id || streamingRef.current) return
+      if (threadRef.current !== id || streamingRef.current) return true
       setRows((current) => {
         const next = threadRows(data.thread.messages)
         const revealing = [...current].reverse().find((row) => row.role === "assistant" && !row.toolResult && row.revealFrom)
         const last = [...next].reverse().find((row) => row.role === "assistant" && !row.toolResult)
         if (revealing && last) last.revealFrom = revealing.revealFrom
-        return next
+        // A spoken turn that started after this was asked for stays under what the server had saved by then.
+        return [...next, ...current.filter((row) => row.spoken && !row.settled)]
       })
       setTitle(data.thread.title)
-    } catch {}
+      return true
+    } catch {
+      return false
+    }
   }
 
   // A chat the server has just started, for a typed question or a spoken one, becomes the open chat.
@@ -190,13 +195,34 @@ export function useAgentChat({ openId = "" } = {}) {
     else storeThread(id)
   }
 
+  // A spoken turn under way (Talk mode): what the person said shows as their message at once, with the Agent's own
+  // reply under it as it is said, until the chat as the server saved it takes their place. `turn` is
+  // { key, heard, reply }, or null to take the turn away again (the person went on talking).
+  function showSpoken(turn) {
+    // (A new chat is named after its first words, and loses the name again if they are taken away.)
+    if (!threadRef.current) setTitle(turn?.heard ? chatTitleFromPrompt(turn.heard) : "")
+    setRows((current) => {
+      const rest = current.filter((row) => !row.spoken || row.settled)
+      if (!turn?.heard) return rest.length === current.length ? current : rest
+      const shown = [{ id: `spoken-${turn.key}`, role: "user", content: turn.heard, attachments: [], spoken: true }]
+      if (turn.reply) shown.push({ id: `spoken-${turn.key}-reply`, role: "assistant", content: turn.reply, spoken: true })
+      return [...rest, ...shown]
+    })
+  }
+
   // After an answer, typed or spoken: the open chat as the server saved it, what is left of the AI budget, and the
-  // list of chats (a new chat gets its name a few seconds later).
+  // list of chats (a new chat gets its name a few seconds later). A spoken turn on screen is settled: it stays until
+  // the saved chat replaces it. Gives a promise for whether the open chat is on screen as saved.
   function refreshThread(id) {
-    if (id) sync(id)
+    let shown = Promise.resolve(true)
+    if (id) {
+      setRows((current) => (current.some((row) => row.spoken && !row.settled) ? current.map((row) => (row.spoken ? { ...row, settled: true } : row)) : current))
+      shown = sync(id)
+    }
     settingsApi.reload()
     threadsApi.reload()
     for (const delay of [3000, 8000, 15000]) setTimeout(() => threadsApi.reload(), delay)
+    return shown
   }
 
   // `replaceFrom`: the question this one replaces, with everything after it (Retry, Edit); its files come along.
@@ -336,6 +362,7 @@ export function useAgentChat({ openId = "" } = {}) {
     openThread,
     adoptThread,
     refreshThread,
+    showSpoken,
     newChat,
     toggleTemporary,
     deleteThread,

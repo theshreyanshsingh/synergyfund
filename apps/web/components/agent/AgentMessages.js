@@ -1109,7 +1109,8 @@ export function AgentMessages({ rows, streaming, empty = null, threadId = "", ti
         return (
           <div key={question?.id || `lead-${turnIndex}`} className={last ? "agent-turn is-last" : "agent-turn"}>
             {question && <UserPrompt row={question} onEdit={acts && onEdit ? (text) => onEdit(question, text) : null} />}
-            <div className="agent-replies">
+            {/* A spoken turn the person is still adding to has no reply yet. */}
+            {(turn.replies.length > 0 || live || !question?.spoken) && <div className="agent-replies">
               <div className="agent-reply-head">
                 <span className="agent-mark" aria-label={AGENT_NAME}><Icon name="spark" size={14} /></span>
                 {live ? <Thinking /> : <WorkedFor durationMs={finalRow?.agentRun?.durationMs ?? null} steps={steps.map((row) => row.toolResult)} todos={todos} />}
@@ -1134,7 +1135,7 @@ export function AgentMessages({ rows, streaming, empty = null, threadId = "", ti
                   starred={Boolean(question?.content && starred(question.content))}
                 />
               )}
-            </div>
+            </div>}
           </div>
         )
       })}

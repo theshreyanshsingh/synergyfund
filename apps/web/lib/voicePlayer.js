@@ -1,5 +1,6 @@
 "use client"
 
+import { DUCKED } from "./bargeIn"
 import { audioContext } from "./sounds"
 
 // The Agent's voice in Talk mode. Its speech arrives in small pieces while the rest is still on its way. Each piece is
@@ -29,15 +30,20 @@ function samplesOf(base64) {
 
 // `onPlaying(true | false)`: the voice has started, or has fallen silent.
 // push(base64) plays the next piece after the ones before it. drained() waits until everything handed over so far
-// has been heard. stop() silences the voice at once. level() is how loud it is now (0 to 1). close() is for when
-// Talk mode ends. Gives null when this browser cannot play sound.
+// has been heard. stop() silences the voice at once. level() is how loud it is now (0 to 1, for the circle) and
+// far() the same as the plain loudness of the last tenth of a second (for telling its echo from someone speaking).
+// duck(true | false) turns it down for a moment, and up again (to DUCKED, while bargeIn.js checks whether someone
+// is speaking over it). close() is for when Talk mode ends. Gives null when
+// this browser cannot play sound.
 export function createVoicePlayer({ onPlaying } = {}) {
   const context = audioContext()
   if (!context) return null
   const output = context.createAnalyser()
-  output.fftSize = 256
+  output.fftSize = 4096
   output.connect(context.destination)
-  const wave = new Uint8Array(output.fftSize)
+  const volume = context.createGain()
+  volume.connect(output)
+  const wave = new Float32Array(output.fftSize)
   const sources = new Set()
   let next = 0
   let playing = false
@@ -72,7 +78,7 @@ export function createVoicePlayer({ onPlaying } = {}) {
     buffer.getChannelData(0).set(samples)
     const source = context.createBufferSource()
     source.buffer = buffer
-    source.connect(output)
+    source.connect(volume)
     source.onended = () => ended(source)
     const at = next > context.currentTime ? next : context.currentTime + LEAD
     source.start(at)
@@ -91,8 +97,16 @@ export function createVoicePlayer({ onPlaying } = {}) {
     }
     sources.clear()
     next = 0
+    duck(false)
     release()
     tell(false)
+  }
+
+  function duck(down) {
+    volume.gain.cancelScheduledValues(context.currentTime)
+    // (With nothing playing it is put back at once, so the next answer starts at full volume.)
+    if (!down && !sources.size) volume.gain.value = 1
+    else volume.gain.setTargetAtTime(down ? DUCKED : 1, context.currentTime, 0.012)
   }
 
   function drained() {
@@ -106,16 +120,21 @@ export function createVoicePlayer({ onPlaying } = {}) {
     })
   }
 
-  function level() {
+  function far() {
     if (!sources.size) return 0
-    output.getByteTimeDomainData(wave)
+    output.getFloatTimeDomainData(wave)
     let sum = 0
-    for (const value of wave) sum += (value - 128) * (value - 128)
-    return Math.min(1, (Math.sqrt(sum / wave.length) / 128) * 4)
+    for (const value of wave) sum += value * value
+    return Math.sqrt(sum / wave.length)
+  }
+
+  function level() {
+    return Math.min(1, far() * 4)
   }
 
   function close() {
     stop()
+    volume.disconnect()
     output.disconnect()
   }
 
@@ -124,6 +143,8 @@ export function createVoicePlayer({ onPlaying } = {}) {
     drained,
     stop,
     level,
+    far,
+    duck,
     close,
     get playing() {
       return playing

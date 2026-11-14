@@ -25,7 +25,7 @@ const { voiceRouter } = await import("../src/routes/voice.js")
 const { ABOUT_LINE, GREETING_LINE, HOLD_LINE, STILL_LINE, ON_SCREEN_LINE, FAILED_LINE, PATIENCE } = voice
 
 const sam = { _id: new mongoose.Types.ObjectId(), name: "Sam Taylor", role: "admin" }
-const SETTINGS = { voice: "cedar", accent: "indian" }
+const SETTINGS = { voice: "cedar", accent: "australian" }
 const TURN = voice.wavFile(Buffer.alloc(16000 * 2, 1), 16000) // one second
 
 let server
@@ -59,7 +59,7 @@ after(async () => {
 beforeEach(async () => {
   model.reset()
   voice.forgetRecordedLines()
-  Object.assign(PATIENCE, { decision: 2000, heard: 3000, stillWorking: 14000 })
+  Object.assign(PATIENCE, { decision: 2000, heard: 3000, stillWorking: 14000, takeBack: 20 })
   await Promise.all([AgentThread.deleteMany({}), AgentSetting.deleteMany({}), AiUsage.deleteMany({}), AiMonth.deleteMany({})])
 })
 
@@ -87,6 +87,7 @@ async function startFakeModelService() {
     written: WRITTEN,
     spoken: SPOKEN,
     decideAfter: 0,
+    heardAfter: 0,
     replyAfter: 0,
     planAfter: 0,
     speechFailures: [], // for the next spoken answers, in order: a status code, "early" or "cut"
@@ -117,6 +118,7 @@ async function startFakeModelService() {
       return
     }
     if (path.endsWith("/audio/transcriptions")) {
+      await wait(state.heardAfter)
       res.writeHead(200, { "Content-Type": "application/json" })
       res.end(JSON.stringify({ text: state.heard, usage: { seconds: 1, cost: 0.0001 } }))
       return
@@ -243,8 +245,8 @@ test("the speech model is told who it is, how it sounds and that it looks nothin
   const parts = told.split("\n\n")
   // The shape the accent was measured under: name, accent, how to speak, what it does not know, the date, look-ups.
   assert.equal(parts[0], "Your name is the SynergiFund Agent.")
-  assert.equal(parts[1], voice.accentNote("indian"))
-  assert.match(parts[1], /^You speak English with a clear, natural Indian accent, like someone who grew up there\./)
+  assert.equal(parts[1], voice.accentNote("australian"))
+  assert.match(parts[1], /^You speak English with a clear, natural Australian accent, like someone who grew up there\./)
   assert.match(parts[2], /^You are a friendly and helpful voice assistant on a live call\./)
   assert.match(parts[3], /^Apart from anything said above, you know nothing about the company's houses, loans, payments, documents or people\./)
   assert.match(parts[4], /^Today's date is \w+ \d+ \w+ \d{4}\.$/)
@@ -276,7 +278,7 @@ test("the deciding model's reply is a request for the records, or nothing", () =
   assert.deepEqual(voice.parseVerdict("ask\n<What do we owe Kiavi?>\n"), { question: "What do we owe Kiavi?" })
   assert.deepEqual(voice.parseVerdict("ASK\nList the houses\nin Jacksonville"), { question: "List the houses in Jacksonville" })
   for (const about of ["ABOUT", "about.", " ABOUT \n"]) assert.deepEqual(voice.parseVerdict(about), { about: true })
-  for (const none of ["NO", "", null, "ASK", "SEARCH\nsomething", "Sure, here you go.", "ABOUT\nthe houses"]) assert.equal(voice.parseVerdict(none), null)
+  for (const none of ["NO", "", null, "ASK", "SEARCH\nsomething", "Sure, here you go.", "ABOUT\nthe houses", "WAIT"]) assert.equal(voice.parseVerdict(none), null)
   const told = voice.routerInstructions({ user: sam })
   assert.match(told, /You never answer Sam yourself\./)
   assert.match(told, /^ASK$/m)
@@ -395,7 +397,7 @@ test("a line said while the Agent works is recorded once and kept", async () => 
   const [asked] = model.spoken()
   assert.deepEqual(asked.messages, [
     { role: "system", content: voice.lineInstructions(SETTINGS) },
-    { role: "system", content: "(You are speaking in your Indian accent.)" },
+    { role: "system", content: "(You are speaking in your Australian accent.)" },
     { role: "user", content: voice.sayRequest(HOLD_LINE) },
   ])
   // Another voice is another recording.
@@ -436,7 +438,7 @@ test("small talk is answered aloud in one go and kept in the chat", async () => 
   const [reply] = model.spoken()
   assert.deepEqual(reply.messages.slice(0, -1), [
     { role: "system", content: voice.voiceInstructions({ settings: SETTINGS }) },
-    { role: "system", content: "(You are speaking in your Indian accent.)" },
+    { role: "system", content: "(You are speaking in your Australian accent.)" },
   ])
   const heardAs = reply.messages[reply.messages.length - 1]
   assert.equal(heardAs.role, "user")
@@ -461,7 +463,7 @@ test("a later turn is answered knowing the chat so far", async () => {
   assert.deepEqual(reply.messages.slice(1, 4), [
     { role: "user", content: "How many houses?" },
     { role: "assistant", content: SPOKEN },
-    { role: "system", content: "(You are speaking in your Indian accent.)" },
+    { role: "system", content: "(You are speaking in your Australian accent.)" },
   ])
   assert.deepEqual(model.decisions()[0].messages.slice(1, 3), reply.messages.slice(1, 3))
   // The written answer, with its table, never went to the speech model.
@@ -508,8 +510,13 @@ test("a question for the records is asked of the Agent, and its answer is said i
   const { out, thread } = await takeTurn()
 
   // The person hears the hold line at once, then what the writer made of the written answer.
-  assert.deepEqual(out.of("route"), [{ t: "route", ask: true }])
+  assert.deepEqual(out.of("route"), [{ t: "route", ask: true, question: "How many houses do we have?" }])
   assert.equal(out.said(), `${HOLD_LINE} ${SPOKEN}`)
+  // The page is told the written answer is in the chat once the Agent is done, before it is said in short.
+  const saved = out.kinds().indexOf("saved")
+  assert.equal(out.of("saved").length, 1)
+  assert.ok(saved > out.kinds().lastIndexOf("status"))
+  assert.equal(out.events.slice(saved).filter((event) => event.t === "say").map((event) => event.text).join("").trim(), SPOKEN)
   assert.equal(out.audioBytes(), 9600 * 2)
   assert.ok(out.of("status").some((event) => event.title === "Understanding the question"))
   assert.deepEqual(out.events[out.events.length - 1], { t: "done", threadId: String(thread._id), asked: true, spoken: SPOKEN })
@@ -538,7 +545,7 @@ test("a question for the records is asked of the Agent, and its answer is said i
     { role: "system", content: voice.lineInstructions(SETTINGS) },
     { role: "user", content: "How many houses do we have?" },
     { role: "assistant", content: HOLD_LINE },
-    { role: "system", content: "(You are speaking in your Indian accent.)" },
+    { role: "system", content: "(You are speaking in your Australian accent.)" },
     { role: "user", content: voice.sayRequest(SPOKEN) },
   ])
   for (const body of model.spoken()) {
@@ -594,6 +601,55 @@ test("a person who leaves while the Agent works still gets the answer in the cha
   assert.equal(model.written().filter((body) => body.messages[0].content.startsWith("You write what the SynergiFund Agent says aloud")).length, 0)
 })
 
+test("a turn taken back before the Agent has decided leaves nothing behind", async () => {
+  // The person went on talking (or pressed Stop) while the turn was still being decided.
+  Object.assign(model.state, { verdict: "ASK\nHow many houses do we have?", decideAfter: 150 })
+  const gone = new AbortController()
+  setTimeout(() => gone.abort(), 40)
+  const { out, thread } = await takeTurn(newChat(), { signal: gone.signal })
+  assert.equal(thread, null)
+  assert.equal(await AgentThread.countDocuments(), 0)
+  assert.deepEqual(out.of("route"), [])
+  assert.equal(out.audioBytes(), 0)
+  // Nothing was looked up, and nothing was handed to the speech model to say.
+  assert.equal(model.written().filter((body) => body.messages[0].content.startsWith("You are the SynergiFund agent")).length, 0)
+  assert.equal(model.spoken().filter((body) => lineAsked(body) != null).length, 0)
+})
+
+test("a turn taken back just as the Agent starts on it is not kept or looked up", async () => {
+  // The page's word that the person went on talking crossed with the hand-over to the records Agent.
+  PATIENCE.takeBack = 150
+  Object.assign(model.state, { verdict: "ASK\nHow many houses do we have?" })
+  const gone = new AbortController()
+  setTimeout(() => gone.abort(), 60)
+  const { out, thread } = await takeTurn(newChat(), { signal: gone.signal })
+  assert.deepEqual(out.of("route"), [{ t: "route", ask: true, question: "How many houses do we have?" }])
+  assert.equal(thread, null)
+  assert.deepEqual(out.of("thread"), [])
+  assert.deepEqual(out.of("saved"), [])
+  assert.equal(model.written().filter((body) => body.messages[0].content.startsWith("You are the SynergiFund agent")).length, 0)
+
+  // Still there once that moment has passed: the question is the Agent's, and the chat is named to the page then.
+  const stayed = await takeTurn()
+  assert.equal(stayed.thread.messages[1].content, WRITTEN)
+  assert.ok(stayed.out.kinds().indexOf("route") < stayed.out.kinds().indexOf("thread"))
+})
+
+test("a turn the Agent answers by itself, taken back just as it starts, is not kept either", async () => {
+  // The words were written down and the answer was on its way before the page's word arrived.
+  for (const [verdict, said] of [["ABOUT", ABOUT_LINE], ["NO", "Hello! What can I do for you?"]]) {
+    PATIENCE.takeBack = 150
+    Object.assign(model.state, { verdict, heard: "what can you" })
+    const gone = new AbortController()
+    setTimeout(() => gone.abort(), 70)
+    const { out, thread } = await takeTurn(newChat(), { signal: gone.signal })
+    assert.deepEqual(out.of("route"), [{ t: "route", ask: false }])
+    assert.equal(out.said(), said)
+    assert.equal(thread, null)
+    assert.equal(await AgentThread.countDocuments(), 0)
+  }
+})
+
 /* ---------- the routes ---------- */
 
 function form(fields = {}, audio = TURN) {
@@ -610,7 +666,7 @@ async function eventsOf(response) {
 
 test("the page is told the voice in use, and only an admin changes it", async () => {
   const asAdmin = await (await fetch(`${base}/agent/voice`)).json()
-  assert.deepEqual([asAdmin.available, asAdmin.voice, asAdmin.accent, asAdmin.canEdit], [true, "cedar", "indian", true])
+  assert.deepEqual([asAdmin.available, asAdmin.voice, asAdmin.accent, asAdmin.canEdit], [true, "cedar", "australian", true])
   assert.equal(asAdmin.voices.cedar, "Cedar (male)")
   assert.equal(asAdmin.accents.none, "The voice's own")
   const patch = (body, headers = {}) => fetch(`${base}/agent/voice`, { method: "PATCH", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) })
@@ -629,6 +685,25 @@ test("the page is told the voice in use, and only an admin changes it", async ()
   assert.deepEqual([refused.status, (await refused.json()).error], [403, "Only an admin can change the Agent's voice."])
   // Without the right to ask the Agent there is no talking to it either.
   assert.equal((await fetch(`${base}/agent/voice`, { headers: { "x-no-agent": "1" } })).status, 403)
+
+  // An admin can turn talking with the Agent off for everyone, and on again; the voice and accent are kept.
+  assert.deepEqual([asAdmin.on, asAdmin.connected], [true, true])
+  const off = await (await patch({ on: false })).json()
+  assert.deepEqual([off.available, off.on, off.connected, off.voice, off.accent], [false, false, true, "marin", "none"])
+  assert.equal((await (await fetch(`${base}/agent/voice`, { headers: { "x-role": "member" } })).json()).available, false)
+  for (const [path, body] of [["greet", undefined], ["turn", form()]]) {
+    const response = await fetch(`${base}/agent/voice/${path}`, { method: "POST", body })
+    assert.deepEqual([response.status, (await response.json()).error], [403, "Talking with the Agent is turned off."])
+  }
+  assert.equal(model.state.requests.length, 0)
+  assert.equal(await AgentThread.countDocuments(), 0)
+  assert.equal((await patch({ on: "no" })).status, 400)
+  assert.equal((await patch({ on: false }, { "x-role": "member" })).status, 403)
+  const on = await (await patch({ on: true })).json()
+  assert.deepEqual([on.available, on.on], [true, true])
+  const hello = await fetch(`${base}/agent/voice/greet`, { method: "POST" })
+  assert.equal(hello.status, 200)
+  await hello.text()
   assert.equal((await fetch(`${base}/agent/voice/turn`, { method: "POST", headers: { "x-no-agent": "1" }, body: form() })).status, 403)
 })
 
@@ -644,7 +719,7 @@ test("starting to talk is answered with a spoken hello, recorded once for everyo
   // It is a line the speech model was handed to say, under the instructions for lines.
   assert.deepEqual(model.spoken()[0].messages, [
     { role: "system", content: voice.lineInstructions(SETTINGS) },
-    { role: "system", content: "(You are speaking in your Indian accent.)" },
+    { role: "system", content: "(You are speaking in your Australian accent.)" },
     { role: "user", content: voice.sayRequest(GREETING_LINE) },
   ])
   assert.deepEqual(await eventsOf(await hello()), events)

@@ -932,6 +932,8 @@ export const AgentSetting = register(
       // (AGENT_VOICES and AGENT_ACCENTS in the shared package; unset: VOICE_DEFAULTS).
       voiceName: String,
       voiceAccent: String,
+      // An admin has turned talking with the Agent off for everyone (Settings → Agent → Voice).
+      voiceOff: { type: Boolean, default: false },
       updatedBy: String,
     },
     { timestamps: true },

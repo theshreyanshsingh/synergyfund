@@ -3,11 +3,13 @@
 import { useEffect, useRef } from "react"
 import { Icon } from "../ui/Icon"
 
-const SAYS = { starting: "Starting…", listening: "Listening…", thinking: "Thinking…", speaking: "Speaking…" }
+const SAYS = { starting: "Starting", listening: "Listening", thinking: "Thinking", speaking: "Speaking" }
+const HINT = "Say what you need, then pause."
+const MUTED_HINT = "The microphone is off. Unmute to go on."
 
 // The Agent as a circle of light. It swells with whoever is speaking (the person while it listens, the Agent while it
-// answers), turns slowly while it listens, faster with an arc running round it while it works, and sends out rings
-// while it speaks. While an answer is under way, tapping it stops the answer.
+// answers), its colours drift slowly while it listens and fast, with an arc running round it, while it works, and it
+// sends out rings while it speaks. While an answer is under way, tapping it stops the answer.
 function Orb({ voice, answering }) {
   const orb = useRef(null)
   const level = voice.level
@@ -39,40 +41,42 @@ function Orb({ voice, answering }) {
       <span className="agent-orb-ring" />
       <span className="agent-orb-ring" />
       <span className="agent-orb-arc" />
-      <span className="agent-orb-core" />
+      <span className="agent-orb-core"><i /><i /><i /></span>
     </button>
   )
 }
 
-// Talk mode, where the box was: the Agent's circle, what is happening now (listening, thinking or the step the Agent
-// is on, speaking), the last thing the person was heard to say, the words the Agent is saying, the headphones switch,
-// Stop for the answer under way and End to go back to typing. `voice` is useAgentVoice.
+// A call's round control with its word under it.
+function Control({ icon, label, className = "", ...rest }) {
+  return (
+    <button type="button" className={`agent-voice-control ${className}`.trim()} {...rest}>
+      <span className="agent-voice-round"><Icon name={icon} size={18} /></span>
+      <em>{label}</em>
+    </button>
+  )
+}
+
+// Talk mode, in the box's place (`voice` is useAgentVoice): the circle, a line for what the Agent is doing and one
+// for what it is saying, and the controls: Mute, Stop for the answer under way, and End. Speaking over the Agent
+// stops it too. What the person says, and the answers, show in the chat above as they happen. In a new chat the
+// circle has the page to itself.
 export function AgentVoice({ voice }) {
   const answering = voice.state === "thinking" || voice.state === "speaking"
-  const line = voice.state === "thinking" ? voice.status || (voice.asking ? "Looking it up…" : SAYS.thinking) : SAYS[voice.state]
+  const listening = voice.state === "listening"
+  const state = voice.state === "thinking" ? voice.status || (voice.asking ? "Looking it up" : SAYS.thinking) : listening && voice.muted ? "Muted" : SAYS[voice.state]
+  const line = voice.error || voice.caption || (listening ? (voice.muted ? MUTED_HINT : HINT) : "")
   return (
-    <div className={`agent-box agent-voice is-${voice.state}`} role="group" aria-label="Talk with the Agent">
+    <div className={`agent-box agent-voice is-${voice.state}${voice.muted ? " is-muted" : ""}`} role="group" aria-label="Talk with the Agent">
       <Orb voice={voice} answering={answering} />
-      <p className="agent-voice-state" role="status">{line}</p>
-      {voice.error && <p className="agent-voice-error">{voice.error}</p>}
-      {voice.heard && <p className="agent-voice-heard">“{voice.heard}”</p>}
-      {voice.caption && <p className="agent-voice-caption"><span>{voice.caption}</span></p>}
-      {!voice.caption && !voice.heard && !voice.error && <p className="agent-voice-hint">Say what you need, then pause. The Agent answers aloud.</p>}
-      <div className="agent-voice-foot">
-        <button type="button" role="switch" aria-checked={voice.headphones} className="agent-voice-pill" onClick={() => voice.setHeadphones(!voice.headphones)}>
-          <Icon name="headphones" size={15} />
-          <span>Headphones</span>
-          <i aria-hidden="true" />
-        </button>
-        {answering && (
-          <button type="button" className="agent-voice-control" onClick={voice.stop}>
-            <Icon name="stop" size={13} />
-            Stop
-          </button>
-        )}
-        <button type="button" className="agent-voice-control is-end" onClick={voice.end}>End</button>
+      <div className="agent-voice-words">
+        <p className="agent-voice-state" role="status"><span>{state}</span></p>
+        <p className={voice.error ? "agent-voice-line is-error" : "agent-voice-line"}><span>{line}</span></p>
       </div>
-      <p className="agent-voice-note">{voice.headphones ? "On headphones: talk over the Agent to interrupt it." : "On speakers: the Agent finishes speaking before it listens."}</p>
+      <div className="agent-voice-controls">
+        <Control icon={voice.muted ? "micOff" : "mic"} label={voice.muted ? "Unmute" : "Mute"} role="switch" aria-checked={voice.muted} title={voice.muted ? "Turn the microphone on again" : "Turn the microphone off for a moment"} onClick={() => voice.setMuted(!voice.muted)} />
+        <Control icon="stop" label="Stop" disabled={!answering} title="Stop the answer" onClick={voice.stop} />
+        <Control icon="phoneOff" label="End" className="is-end" title="End Talk" onClick={voice.end} />
+      </div>
     </div>
   )
 }

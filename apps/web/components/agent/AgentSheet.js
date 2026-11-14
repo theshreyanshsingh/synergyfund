@@ -18,7 +18,7 @@ const DELETE_WIDTH = 88
 // Talk (in the box) is Talk mode, as on the Agent page; closing the sheet ends it.
 export function AgentSheet({ onClose }) {
   const chat = useAgentChat()
-  const voice = useAgentVoice({ threadId: chat.threadId, temporary: chat.temporary, streaming: chat.streaming, onThread: chat.adoptThread, onRefresh: chat.refreshThread })
+  const voice = useAgentVoice({ threadId: chat.threadId, temporary: chat.temporary, streaming: chat.streaming, onThread: chat.adoptThread, onRefresh: chat.refreshThread, onSpoken: chat.showSpoken })
   const [view, setView] = useState("chat")
   // Knowledge's tab: "team", or "you" (what the Agent remembers about this person).
   const [knowing, setKnowing] = useState("team")
@@ -160,7 +160,7 @@ export function AgentSheet({ onClose }) {
             {chat.opening ? <PageSpinner /> : (
               <AgentMessages
                 rows={chat.rows}
-                streaming={chat.streaming}
+                streaming={chat.streaming || voice.working}
                 threadId={chat.threadId}
                 title={chat.chatTitle}
                 empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} />}
