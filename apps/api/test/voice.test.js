@@ -21,6 +21,9 @@ const { default: express } = await import("express")
 const { permissionsFor } = await import("@synergifund/shared")
 const { AgentSetting, AgentThread, AiMonth, AiUsage } = await import("../src/models/index.js")
 const voice = await import("../src/services/agent/voice.js")
+const llm = await import("../src/services/agent/llm.js")
+const catalog = await import("../src/services/agent/catalog.js")
+const { runAgent } = await import("../src/services/agent/run.js")
 const { voiceRouter } = await import("../src/routes/voice.js")
 const { ABOUT_LINE, GREETING_LINE, HOLD_LINE, STILL_LINE, ON_SCREEN_LINE, FAILED_LINE, PATIENCE } = voice
 
@@ -67,6 +70,12 @@ beforeEach(async () => {
 
 /* ---------- a stand-in for the model service ---------- */
 
+// A request's instructions as text (an Anthropic model's are marked to be cached, so they come in parts).
+function instructionsOf(body) {
+  const content = body.messages?.[0]?.content
+  return typeof content === "string" ? content : Array.isArray(content) ? content.map((part) => part.text || "").join("") : ""
+}
+
 function sse(delta, extra = {}) {
   return `data: ${JSON.stringify({ choices: [{ index: 0, delta }], ...extra })}\n\n`
 }
@@ -107,16 +116,22 @@ async function startFakeModelService() {
   const whole = (res, content, calls = []) => {
     const tool_calls = calls.map(([name, args], index) => ({ id: `call_${index}`, type: "function", function: { name, arguments: JSON.stringify(args) } }))
     res.writeHead(200, { "Content-Type": "application/json" })
-    res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content, ...(tool_calls.length ? { tool_calls } : {}) } }], usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 } }))
+    res.end(JSON.stringify({ provider: "Io Net", choices: [{ message: { role: "assistant", content, ...(tool_calls.length ? { tool_calls } : {}) } }], usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 } }))
   }
   const plan = (status) => ["todo_write", { todos: [{ id: "1", content: "Find the loans", status }] }]
   const server = http.createServer(async (req, res) => {
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
     const path = new URL(req.url, "http://localhost").pathname
+    // The model list (which settings each takes) and one model's providers, as OpenRouter lists them.
     if (path.endsWith("/models")) {
       res.writeHead(200, { "Content-Type": "application/json" })
-      res.end(JSON.stringify({ data: [] }))
+      res.end(JSON.stringify({ data: ["moonshotai/kimi-k3", "anthropic/claude-sonnet-5.5"].map((id) => ({ id, supported_parameters: ["tools", "reasoning", "max_tokens"] })) }))
+      return
+    }
+    if (path.endsWith("/endpoints")) {
+      res.writeHead(200, { "Content-Type": "application/json" })
+      res.end(JSON.stringify({ data: { endpoints: [{ provider_name: "Io Net", tag: "io-net/fp8" }, { provider_name: "Wafer", tag: "wafer/fast" }] } }))
       return
     }
     const body = JSON.parse(Buffer.concat(chunks).toString() || "{}")
@@ -132,7 +147,7 @@ async function startFakeModelService() {
       res.end(JSON.stringify({ text: state.heard, usage: { seconds: 1, cost: 0.0001 } }))
       return
     }
-    const system = typeof body.messages[0].content === "string" ? body.messages[0].content : ""
+    const system = instructionsOf(body)
     if (!body.stream) {
       if (body.modalities?.length === 1 && body.modalities[0] === "text") {
         await wait(state.decideAfter)
@@ -240,7 +255,7 @@ async function until(check, ms = 3000) {
 }
 
 const named = (id) => until(async () => (await AgentThread.findById(id))?.title === "Counting the houses")
-const writerAsked = () => model.written().filter((body) => body.messages[0].content.startsWith("You write what the SynergiFund Agent says aloud"))
+const writerAsked = () => model.written().filter((body) => instructionsOf(body).startsWith("You write what the SynergiFund Agent says aloud"))
 
 async function takeTurn(thread = newChat(), { signal } = {}) {
   const out = listener()
@@ -370,6 +385,7 @@ test("speech arrives in whole samples with its words, and is counted as voice sp
   assert.deepEqual(pieces, [4800, 4800]) // 4801 + 4799 bytes came: the odd byte waited for its other half
   const [asked] = model.spoken()
   assert.deepEqual({ ...asked, messages: undefined }, { model: "openai/gpt-audio", stream: true, modalities: ["text", "audio"], audio: { voice: "cedar", format: "pcm16" }, usage: { include: true }, messages: undefined })
+  await llm.usageSettled()
   const [usage] = await AiUsage.find().lean()
   assert.deepEqual([usage.feature, String(usage.userId), usage.model, usage.cost, usage.promptTokens], ["voice", String(sam._id), "openai/gpt-audio", 0.02, 100])
   assert.equal((await AiMonth.findOne().lean()).cost, 0.02)
@@ -491,6 +507,7 @@ test("small talk is answered aloud in one go and kept in the chat", async () => 
   assert.deepEqual([transcription.model, transcription.language, transcription.input_audio.format], ["deepgram/nova-3", "multi", "wav"])
   // The records Agent was never asked, and everything was counted as voice.
   assert.deepEqual(model.written(), [])
+  await llm.usageSettled()
   assert.deepEqual([...new Set((await AiUsage.find().lean()).map((usage) => usage.feature))], ["voice"])
 })
 
@@ -569,10 +586,10 @@ test("a question for the records is asked of the Agent, and its answer is said i
   await named(thread._id) // named by the Agent, as a typed chat is
 
   // The Agent's own steps ran as for a typed question (its plan step answered).
-  const plan = model.written().find((body) => body.messages[0].content.startsWith("You are the SynergiFund agent"))
+  const plan = model.written().find((body) => instructionsOf(body).startsWith("You are the SynergiFund agent"))
   assert.deepEqual(plan.messages[plan.messages.length - 1], { role: "user", content: "How many houses do we have?" })
   // The writer was shown the question and the written answer.
-  const writer = model.written().find((body) => body.messages[0].content.startsWith("You write what the SynergiFund Agent says aloud"))
+  const writer = model.written().find((body) => instructionsOf(body).startsWith("You write what the SynergiFund Agent says aloud"))
   assert.deepEqual([writer.model, writer.reasoning], ["anthropic/claude-haiku-5.5", { enabled: false }])
   assert.equal(writer.messages[1].content, `What Sam asked:\nHow many houses do we have?\n\nThe written answer on their screen:\n${WRITTEN}`)
 
@@ -594,6 +611,7 @@ test("a question for the records is asked of the Agent, and its answer is said i
   // Its own reply to the turn was dropped, never played.
   assert.doesNotMatch(out.said(), /What can I do for you/)
   // The Agent's work is counted as the Agent's, the speaking as voice.
+  await llm.usageSettled()
   const features = new Set((await AiUsage.find().lean()).map((usage) => usage.feature))
   assert.ok(features.has("agent") && features.has("voice"))
 })
@@ -643,9 +661,9 @@ test("after its first lookup the Agent says what it is looking at, once its line
   assert.equal(first.out.said(), `${HOLD_LINE} ${SPOKEN}`)
   assert.ok(first.out.of("status").some((event) => event.title === "Reading loans"))
   // The data step looked the loans up and marked its plan done, and that ended it: no turn more just to say so.
-  const dataSteps = () => model.written().filter((body) => body.messages[0].content.startsWith("You are the data step"))
+  const dataSteps = () => model.written().filter((body) => instructionsOf(body).startsWith("You are the data step"))
   assert.equal(dataSteps().length, 2)
-  const answering = model.written().find((body) => body.messages[0].content.includes("Write the answer to the person's question"))
+  const answering = model.written().find((body) => instructionsOf(body).includes("Write the answer to the person's question"))
   assert.match(answering.messages[answering.messages.length - 1].content, /Notes from the data step - Found the loans\.[\s\S]*### list_loans/)
   await until(() => model.spoken().some((body) => lineAsked(body) === line))
   await named(first.thread._id)
@@ -657,6 +675,61 @@ test("after its first lookup the Agent says what it is looking at, once its line
   const saying = model.spoken().filter((body) => lineAsked(body) === SPOKEN).pop()
   assert.deepEqual(saying.messages[2], { role: "assistant", content: `${HOLD_LINE} ${line}` })
   await named(second.thread._id)
+})
+
+/* ---------- how quickly the Agent works ---------- */
+
+// The model list and the providers' names are fetched in the background; these tests wait for them first.
+async function modelsKnown() {
+  await catalog.openRouterModels()
+  await until(() => catalog.providerSlug("moonshotai/kimi-k3", "Io Net") === "io-net")
+}
+const step = (text) => model.written().filter((body) => instructionsOf(body).includes(text))
+const silent = { headersSent: true, writableEnded: false, on() {}, write() {}, end() {} }
+
+test("the Agent thinks briefly where that is enough, caches its instructions, and keeps its data step with one provider", async () => {
+  await modelsKnown()
+  Object.assign(model.state, { verdict: "ASK\nWhich loans mature soon?", lookup: "list_loans" })
+  const { out } = await takeTurn()
+  assert.equal(out.said(), `${HOLD_LINE} ${SPOKEN}`)
+  const [plan] = step("Your job in this step")
+  const data = step("You are the data step")
+  const [answer] = step("Write the answer to the person's question")
+  // The instructions are marked to be cached for the Anthropic model; the data step's model caches by itself.
+  for (const body of [plan, answer]) assert.deepEqual(body.messages[0].content[0].cache_control, { type: "ephemeral" })
+  assert.equal(typeof data[0].messages[0].content, "string")
+  // The data step and a spoken question's answer think briefly; the plan as it always did.
+  assert.deepEqual(data.map((body) => body.reasoning), [{ effort: "low" }, { effort: "low" }])
+  assert.deepEqual(answer.reasoning, { effort: "low" })
+  assert.equal(plan.reasoning, undefined)
+  // The data step's second turn goes to the provider that served its first.
+  assert.equal(data[0].provider, undefined)
+  assert.deepEqual(data[1].provider, { order: ["io-net"], allow_fallbacks: true })
+})
+
+test("a typed question that weighs things up is answered with full thought, a plain lookup briefly", async () => {
+  await modelsKnown()
+  const ask = async (lookup) => {
+    model.reset()
+    Object.assign(model.state, { lookup })
+    const thread = newChat([{ role: "user", content: "Which loans mature soon?" }])
+    await runAgent({ user: sam, permissions: permissionsFor(sam), thread, prompt: "Which loans mature soon?", res: silent, settings: await llm.agentSettings() })
+    return step("Write the answer to the person's question")[0]
+  }
+  assert.deepEqual((await ask("list_loans")).reasoning, { effort: "low" })
+  for (const lookup of ["check_records", "portfolio_summary"]) assert.equal((await ask(lookup)).reasoning, undefined, lookup)
+})
+
+test("a model not known to take a setting is not sent it", async () => {
+  await modelsKnown()
+  await AgentSetting.create({ key: "org", taskModel: "acme/plain-tools", decisionModel: "acme/plain-answers" })
+  Object.assign(model.state, { verdict: "ASK\nWhich loans mature soon?", lookup: "list_loans" })
+  await takeTurn()
+  for (const body of model.written().filter((item) => item.model.startsWith("acme/"))) {
+    assert.equal(body.reasoning, undefined)
+    assert.equal(typeof body.messages[0].content, "string")
+  }
+  assert.ok(step("You are the data step").length >= 2)
 })
 
 test("when the short answer cannot be written, the person is pointed to the screen", async () => {
@@ -674,7 +747,7 @@ test("an answer the Agent could not finish is said to have failed", async () => 
   const answer = thread.messages[1]
   assert.deepEqual([answer.role, answer.error, answer.spoken], ["assistant", true, undefined])
   // No short version is written of an answer that is not there.
-  assert.equal(model.written().filter((body) => body.messages[0].content.startsWith("You write what the SynergiFund Agent says aloud")).length, 0)
+  assert.equal(model.written().filter((body) => instructionsOf(body).startsWith("You write what the SynergiFund Agent says aloud")).length, 0)
   assert.equal(out.events[out.events.length - 1].asked, true)
 })
 
@@ -688,7 +761,7 @@ test("a person who leaves while the Agent works still gets the answer in the cha
   assert.doesNotMatch(out.said(), /three houses/)
   assert.equal(model.spoken().filter((body) => lineAsked(body) === SPOKEN).length, 0)
   // Nor is a short version written for nobody to hear.
-  assert.equal(model.written().filter((body) => body.messages[0].content.startsWith("You write what the SynergiFund Agent says aloud")).length, 0)
+  assert.equal(model.written().filter((body) => instructionsOf(body).startsWith("You write what the SynergiFund Agent says aloud")).length, 0)
 })
 
 test("a turn taken back before the Agent has decided leaves nothing behind", async () => {
@@ -702,7 +775,7 @@ test("a turn taken back before the Agent has decided leaves nothing behind", asy
   assert.deepEqual(out.of("route"), [])
   assert.equal(out.audioBytes(), 0)
   // Nothing was looked up, and nothing was handed to the speech model to say.
-  assert.equal(model.written().filter((body) => body.messages[0].content.startsWith("You are the SynergiFund agent")).length, 0)
+  assert.equal(model.written().filter((body) => instructionsOf(body).startsWith("You are the SynergiFund agent")).length, 0)
   assert.equal(model.spoken().filter((body) => lineAsked(body) != null).length, 0)
 })
 
@@ -717,7 +790,7 @@ test("a turn taken back just as the Agent starts on it is not kept or looked up"
   assert.equal(thread, null)
   assert.deepEqual(out.of("thread"), [])
   assert.deepEqual(out.of("saved"), [])
-  assert.equal(model.written().filter((body) => body.messages[0].content.startsWith("You are the SynergiFund agent")).length, 0)
+  assert.equal(model.written().filter((body) => instructionsOf(body).startsWith("You are the SynergiFund agent")).length, 0)
 
   // Still there once that moment has passed: the question is the Agent's, and the chat is named to the page then.
   const stayed = await takeTurn()

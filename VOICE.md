@@ -103,6 +103,15 @@ Measured on a test database with four made-up houses:
   spoken answer also waited for the chat to be named (2 to 4 seconds) and for what the Agent learned (up to 3), and
   the data step took one more turn (1 to 1.5) after marking its plan done; a short, plain answer now also skips the
   writer (about 1.5 seconds).
+- Later that day the Agent's models were set to think less where that is enough (run.js, `QUICK`): its data step
+  always, and its answer for a spoken question or a plain lookup of one or two steps. Replayed on the Agent's own
+  requests, a data-step turn went from 2.7 to 5.1 seconds to about 2, and the answer from 7.1 to 4.3, with the same
+  lookups and the same answer; Sonnet's thinking cannot be turned off, only down. The same two spoken questions then
+  had their written answer in the chat after 12.2 and 12.8 seconds (18.6 and 13.5 before). The plan's and the
+  answer's instructions are cached (a tenth of the price when asked again within minutes; no faster), the data step
+  keeps to the provider that served its first turn, and what each model call cost is saved without the answer
+  waiting for the database. Not helping: OpenRouter's "fastest" providers (slower, 4.3 to 5.8 seconds a turn), and
+  Haiku writing the answer (5.6 seconds: it thought longer).
 - A question someone talked over while the Agent worked on it is answered all the same. The answer goes under its
   question in the chat, also when other things were said meanwhile; once the page is free it asks
   `GET /api/agent/voice/answer` whether it is ready, shows it, and has it said (`POST` the same address: "Your

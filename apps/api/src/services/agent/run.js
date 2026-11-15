@@ -1,6 +1,7 @@
 import { PERMISSIONS, chatTitleFromPrompt } from "@synergifund/shared"
 import { AgentThread } from "../../models/index.js"
 import { chat, createMeter, createUsageTracker } from "./llm.js"
+import { modelTakes, providerSlug, providerSlugs } from "./catalog.js"
 import { StreamProcessor, createRun } from "./stream.js"
 import { clientResult, executeTool, toolContent, toolSpecs, toolsFor } from "./tools.js"
 import { readAttachments } from "./attachments.js"
@@ -21,6 +22,13 @@ const KEEP_FULL_RESULTS = 6
 const COMPACT_RESULT_CHARS = 1200
 // How long a finished answer waits for what the Agent learned from the question (it is read alongside the answer).
 const LEARN_GRACE_MS = 3000
+// What the models think before they write, for speed (measured on 15 November 2026, the same lookups and the same
+// answer either way). The data step only carries out a plan that is already made: low effort took a turn from 2.7 to
+// 5.1 seconds down to about 2. The answer: low effort took it from 7 seconds to about 4, for a spoken question or a
+// plain lookup of one or two steps; anything weighed up (an ARV, a stress test, the records checked, a business
+// review, the web, attached files) is answered with the model's full thought.
+const QUICK = { reasoning: { effort: "low" } }
+const WEIGHED = new Set(["arv_analysis", "stress_test", "check_records", "portfolio_summary", "web_search", "read_webpage"])
 
 const FOLLOW_UP_TOOL = {
   type: "function",
@@ -299,8 +307,9 @@ async function chatTitle({ prompts, model, tracker, meter }) {
 // `learn`: what the person wrote may be remembered (memory.js); a prompt asked on a schedule has nothing new to learn.
 // `learnGraceMs`: how long the answer waits for what was learned (a spoken answer waits for none: the notes join it
 // once ready). `onAnswer(message)`: called once the answer is saved in the chat, before the chat is named (a spoken
-// answer is said from then on; the run itself ends once the name is saved too).
-export async function runAgent({ user, permissions, thread, prompt, attachments = [], res, settings, learn = true, learnGraceMs = LEARN_GRACE_MS, onAnswer = null }) {
+// answer is said from then on; the run itself ends once the name is saved too). `spoken`: asked aloud (Talk), so it
+// is answered quickly (QUICK).
+export async function runAgent({ user, permissions, thread, prompt, attachments = [], res, settings, learn = true, learnGraceMs = LEARN_GRACE_MS, onAnswer = null, spoken = false }) {
   const run = createRun({ ownerId: user._id })
   const stream = new StreamProcessor(res, run.runId)
   stream.start()
@@ -332,6 +341,14 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
   const evidence = []
   const results = new Map()
   let statusCount = 0
+  // The data step's turns go to the provider that served its first (it has their shared start cached), when OpenRouter
+  // says who that was; and the names it takes for providers are fetched meanwhile.
+  providerSlugs(settings.taskModel)
+  let stayWith = null
+  const gatherExtra = () => {
+    const extra = { ...(modelTakes(settings.taskModel, "reasoning") ? QUICK : {}), ...(stayWith ? { provider: { order: [stayWith], allow_fallbacks: true } } : {}) }
+    return Object.keys(extra).length ? extra : null
+  }
 
   const status = (title) => {
     statusCount += 1
@@ -372,7 +389,9 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
         messages: gatherMessages.map(({ compacted, ...message }) => message),
         tools: toolSpecs(tools),
         maxTokens: 3000,
+        extra: gatherExtra(),
       })
+      stayWith ||= providerSlug(settings.taskModel, response.provider)
       if (!response.toolCalls.length) {
         const pending = context.todos.filter((todo) => todo.status === "pending" || todo.status === "in_progress")
         if (pending.length && nudges < MAX_TODO_NUDGES) {
@@ -429,6 +448,7 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
       model: settings.decisionModel,
       tracker,
       meter,
+      cache: true,
       maxTokens: 1500,
       messages: [{ role: "system", content: planPrompt(user, tools, webAllowed, memory, knowledge) }, ...history, { role: "user", content: question }],
       tools: toolSpecs(plannerTools),
@@ -443,10 +463,13 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
       for (let round = 0; round <= MAX_FOLLOW_UPS; round += 1) {
         const canFollowUp = round < MAX_FOLLOW_UPS && Date.now() < deadline
         status(round === 0 ? "Writing the answer" : "Writing the answer with the new findings")
+        const quick = (spoken || (context.todos.length <= 2 && !attachments.length && !evidence.some((item) => WEIGHED.has(item.tool)))) && modelTakes(settings.decisionModel, "reasoning")
         const final = await chat({
           model: settings.decisionModel,
           tracker,
           meter,
+          cache: true,
+          extra: quick ? QUICK : null,
           temperature: 0.3,
           maxTokens: 5000,
           tools: canFollowUp ? [FOLLOW_UP_TOOL] : undefined,

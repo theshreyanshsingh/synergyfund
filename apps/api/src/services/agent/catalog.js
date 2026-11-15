@@ -21,6 +21,55 @@ export async function openRouterModels() {
   }
 }
 
+// The list as last fetched, without waiting: an old one is fetched again in the background, and before the first
+// fetch there is none (null). An answer never waits for the list.
+let refreshing = null
+
+export function modelsNow() {
+  if (!catalog.models || Date.now() - catalog.at >= CATALOG_TTL_MS) refreshing ||= openRouterModels().finally(() => { refreshing = null })
+  return catalog.models
+}
+
+// Whether OpenRouter lists `parameter` (such as "reasoning") among the settings `model` takes; false while that is
+// not known, so a setting is only sent to a model known to take it.
+export function modelTakes(model, parameter) {
+  return Boolean(modelsNow()?.get(model)?.supported_parameters?.includes(parameter))
+}
+
+// The short names OpenRouter takes for a model's providers (in a request's `provider.order`), by the name an answer
+// reports ("Io Net" → "io-net"). Fetched in the background (providerSlugs) and kept for an hour.
+const providerNames = new Map()
+
+export function providerSlugs(model) {
+  const known = providerNames.get(model)
+  if (!model || (known && (known.loading || Date.now() - known.at < CATALOG_TTL_MS))) return
+  const next = { at: Date.now(), names: known?.names || new Map(), loading: true }
+  providerNames.set(model, next)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 5000)
+  fetch(`${(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/+$/, "")}/models/${model}/endpoints`, { signal: controller.signal })
+    .then((response) => response.json())
+    .then((data) => {
+      const names = new Map()
+      for (const endpoint of data?.data?.endpoints || []) {
+        const slug = String(endpoint.tag || "").split("/")[0]
+        if (endpoint.provider_name && slug) names.set(endpoint.provider_name, slug)
+      }
+      next.names = names
+    })
+    // (Not known: requests go wherever OpenRouter sends them, and it is asked again in an hour.)
+    .catch(() => {})
+    .finally(() => {
+      clearTimeout(timer)
+      next.loading = false
+    })
+}
+
+export function providerSlug(model, name) {
+  providerSlugs(model)
+  return (name && providerNames.get(model)?.names.get(name)) || null
+}
+
 // What a call to `model` cost by its listed price (US dollars), or null when the model or its price is not listed.
 export async function listedCost(model, { promptTokens = 0, completionTokens = 0, cachedTokens = 0 } = {}) {
   const pricing = (await openRouterModels())?.get(model)?.pricing

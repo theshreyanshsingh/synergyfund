@@ -107,8 +107,23 @@ function chargedCost(usage) {
   return charged + upstream
 }
 
+// Saves a call and adds it to the month without the caller waiting for the database (three writes each call), and
+// gives its cost as charged (0 when the answer came without one: what is saved is then priced from the list).
+const recording = new Set()
+
+export function noteUsage({ meter, model, usage }) {
+  const saving = recordUsage({ meter, model, usage }).finally(() => recording.delete(saving))
+  recording.add(saving)
+  return chargedCost(usage) ?? 0
+}
+
+// Once every call noted so far is saved (the tests read them).
+export async function usageSettled() {
+  while (recording.size) await Promise.allSettled([...recording])
+}
+
 // Saves one call and adds it to the month. Returns its cost. A failure to save is logged and never fails the answer.
-// (chat() does this for its own calls; the Agent's voice calls it for the speech it streams, see voice.js.)
+// (noteUsage does this for chat()'s calls and the Agent's voice, see voice.js, without waiting.)
 export async function recordUsage({ meter, model, usage }) {
   const promptTokens = Number(usage?.prompt_tokens ?? usage?.input_tokens ?? 0) || 0
   const completionTokens = Number(usage?.completion_tokens ?? usage?.output_tokens ?? 0) || 0
@@ -161,14 +176,23 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// The instructions (the first message) marked to be cached by an Anthropic model, which caches only what is marked:
+// asked again within a few minutes (the next question, the next step), they are read for a tenth of the price.
+function cachedInstructions(model, messages) {
+  const [first, ...rest] = messages || []
+  if (!String(model).startsWith("anthropic/") || first?.role !== "system" || typeof first.content !== "string") return messages
+  return [{ ...first, content: [{ type: "text", text: first.content, cache_control: { type: "ephemeral" } }] }, ...rest]
+}
+
 // `extra`: more request settings for this call only, such as { reasoning: { effort: "low" } }. `meter`: what the call
 // is for and who for (createMeter); every call is counted against the team's monthly budget. `attempts`: how many
-// times a busy or failing model service is tried.
-export async function chat({ model, messages, tools, toolChoice, temperature = 0.2, maxTokens = 4000, tracker, extra = null, timeoutMs = TIMEOUT_MS, meter = null, attempts = MAX_ATTEMPTS }) {
+// times a busy or failing model service is tried. `cache`: the instructions are cached (cachedInstructions).
+// Gives { content, toolCalls, provider }, `provider` being who served it ("Io Net").
+export async function chat({ model, messages, tools, toolChoice, temperature = 0.2, maxTokens = 4000, tracker, extra = null, timeoutMs = TIMEOUT_MS, meter = null, attempts = MAX_ATTEMPTS, cache = false }) {
   const key = modelKey()
   if (!key) throw new Error("The agent is not connected to a model yet. Add OPENROUTER_API_KEY to the server .env file.")
   await checkBudget(meter)
-  const body = { model, messages, temperature, max_tokens: maxTokens, ...(extra || {}) }
+  const body = { model, messages: cache ? cachedInstructions(model, messages) : messages, temperature, max_tokens: maxTokens, ...(extra || {}) }
   if (tools?.length) {
     body.tools = tools
     if (toolChoice) body.tool_choice = toolChoice
@@ -197,7 +221,7 @@ export async function chat({ model, messages, tools, toolChoice, temperature = 0
         lastError.fatal = !retryable
         if (!retryable || attempt === attempts) throw lastError
       } else {
-        trackUsage(tracker, data.usage, await recordUsage({ meter, model, usage: data.usage }))
+        trackUsage(tracker, data.usage, noteUsage({ meter, model, usage: data.usage }))
         const message = data.choices?.[0]?.message || {}
         return {
           content: typeof message.content === "string" ? message.content : "",
@@ -206,6 +230,7 @@ export async function chat({ model, messages, tools, toolChoice, temperature = 0
             name: call.function?.name || "",
             arguments: call.function?.arguments || "{}",
           })),
+          provider: typeof data.provider === "string" ? data.provider : "",
         }
       }
     } catch (error) {

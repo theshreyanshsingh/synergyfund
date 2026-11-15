@@ -2,7 +2,7 @@ import { AGENT_ACCENTS, AGENT_VOICES, VOICE_DEFAULTS, chatTitleFromPrompt } from
 import { AgentSetting, AgentThread } from "../../models/index.js"
 import { appOrigin } from "../appUrl.js"
 import { recordActivity } from "../notify.js"
-import { agentSettings, chat, checkBudget, createMeter, modelKey, recordUsage } from "./llm.js"
+import { agentSettings, chat, checkBudget, createMeter, modelKey, noteUsage } from "./llm.js"
 import { runAgent } from "./run.js"
 import { TOOLS } from "./tools.js"
 
@@ -425,7 +425,7 @@ async function speakOnce({ messages, voice, meter, signal, onAudio, onText }) {
     if (signal?.aborted) throw error
     problem = error.message || "The speech stopped."
   } finally {
-    await recordUsage({ meter, model: VOICE_MODEL, usage: usage || {} })
+    noteUsage({ meter, model: VOICE_MODEL, usage: usage || {} })
   }
   if (problem && !spoke) throw new NotAnswered(problem)
   return { text: spoke ? text : "", spoke, problem }
@@ -460,7 +460,7 @@ export async function transcribe(wav, { meter = null, signal } = {}) {
       console.error("Agent voice: the turn could not be written down:", data.error?.message || response.status)
       return ""
     }
-    await recordUsage({ meter, model: TRANSCRIPT_MODEL, usage: data.usage || {} })
+    noteUsage({ meter, model: TRANSCRIPT_MODEL, usage: data.usage || {} })
     return typeof data.text === "string" ? data.text.trim() : ""
   } catch (error) {
     if (!signal?.aborted) console.error("Agent voice: the turn could not be written down:", error.message)
@@ -809,7 +809,7 @@ export async function voiceTurn({ user, permissions, thread, wav, out, signal, t
   // answer is said as soon as it is saved: the chat's name (and what was learned) are saved while it is said.
   let saved
   const answering = new Promise((resolve) => { saved = resolve })
-  const asking = runAgent({ user, permissions, thread, prompt: question, res: progressTo(out, lookedUp), settings: await agentSettings(), learnGraceMs: 0, onAnswer: saved })
+  const asking = runAgent({ user, permissions, thread, prompt: question, res: progressTo(out, lookedUp), settings: await agentSettings(), learnGraceMs: 0, onAnswer: saved, spoken: true })
   let answer
   try {
     answer = await Promise.race([answering, asking.then(() => thread.messages[thread.messages.length - 1])])
