@@ -297,7 +297,10 @@ async function chatTitle({ prompts, model, tracker, meter }) {
 }
 
 // `learn`: what the person wrote may be remembered (memory.js); a prompt asked on a schedule has nothing new to learn.
-export async function runAgent({ user, permissions, thread, prompt, attachments = [], res, settings, learn = true }) {
+// `learnGraceMs`: how long the answer waits for what was learned (a spoken answer waits for none: the notes join it
+// once ready). `onAnswer(message)`: called once the answer is saved in the chat, before the chat is named (a spoken
+// answer is said from then on; the run itself ends once the name is saved too).
+export async function runAgent({ user, permissions, thread, prompt, attachments = [], res, settings, learn = true, learnGraceMs = LEARN_GRACE_MS, onAnswer = null }) {
   const run = createRun({ ownerId: user._id })
   const stream = new StreamProcessor(res, run.runId)
   stream.start()
@@ -397,6 +400,13 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
         const content = toolContent(call.name, item.outcome.result)
         gatherMessages.push({ role: "tool", tool_call_id: call.id, content: item.repeated ? `Same lookup as before. ${content}` : content })
       }
+      // A turn that only marks the whole plan done ends the data step: the facts are in, and another turn just to say
+      // so took a second and a half.
+      const open = context.todos.some((todo) => todo.status === "pending" || todo.status === "in_progress")
+      if (!lookups.length && context.todos.length && !open) {
+        notes = String(response.content || "").trim()
+        break
+      }
     }
     return notes
   }
@@ -482,7 +492,7 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
 
   const durationMs = Date.now() - startedAt
   // What it learned, when that is ready in time; otherwise the answer is saved now and the notes join it once ready.
-  const memoryNotes = await within(learning, LEARN_GRACE_MS)
+  const memoryNotes = await within(learning, learnGraceMs)
   if (tracker.totalTokens > 0) stream.send({ tokenUsage: { totalTokens: tracker.totalTokens } })
   thread.messages.push({
     role: "assistant",
@@ -503,6 +513,7 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
     console.error("Agent thread save failed", error)
   }
   stream.end()
+  onAnswer?.(answered)
   if (memoryNotes === null) {
     learning
       .then((notes) => notes.length && AgentThread.updateOne({ _id: thread._id, "messages._id": answered._id }, { $set: { "messages.$.memoryNotes": notes } }))

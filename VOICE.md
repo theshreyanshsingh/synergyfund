@@ -24,10 +24,13 @@ It is a port of Oscar, a voice agent built and measured separately (`~/Desktop/O
    - **Small talk, thanks:** the speech model's own reply plays. About two seconds.
    - **"What can you do?":** a prepared line is said.
    - **Anything the records, the documents or the web would answer or do:** you hear "One moment, let me look that
-     up", and the question is asked of the Agent exactly as a typed one is, with your permissions. A text model
-     writes two or three sentences of its written answer, and the speech model says those word for word. The written
-     answer is saved to the chat as usual, and shows there (the page is sent `saved`) while the short version is
-     still being said.
+     up", and the question is asked of the Agent exactly as a typed one is, with your permissions. After its first
+     lookup it says what it is looking at ("Checking the loans now.", `PROGRESS_LINES` in voice.js), once, and after
+     14 seconds that it is still working. Its answer is said as soon as it is saved: a short, plain one (60 words,
+     three figures, no table, list or link) as written, a longer one as a text model puts it in two or three
+     sentences, which the speech model says word for word. The written answer is saved to the chat as usual, and
+     shows there (the page is sent `saved`) while the short version is still being said; the chat is named, and
+     what the Agent learned is saved, while it is said.
 
 The speech model is `openai/gpt-audio` through OpenRouter, the turn is written down by `deepgram/nova-3`, and the
 short spoken version is written by `anthropic/claude-haiku-5.5` (`VOICE_WRITER_MODEL` changes that). The Agent's own
@@ -93,9 +96,17 @@ Measured on a test database with four made-up houses:
 
 - The hello: at once (it is recorded once and kept).
 - Small talk: speech starts about 1.5 seconds after the turn is sent.
-- A question for the records: "One moment" starts after 1.5 to 3.5 seconds; the answer came after about 50 seconds,
-  nearly all of it the Agent's own plan, look-up and answer steps. After 14 seconds the person is told once that it
-  is still being worked on.
+- A question for the records: "One moment" starts after 1.5 to 3.5 seconds. On 15 November 2026 (real models, two
+  spoken questions): the written answer was in the chat after 13.5 and 18.6 seconds and its spoken version started
+  2 to 3 seconds later; what it was looking at was said after about 9 seconds. The rest is the Agent's own steps:
+  its plan (2 to 4 seconds), each turn of its data step (1 to 5), and its answer (3 to 6). Before that day the
+  spoken answer also waited for the chat to be named (2 to 4 seconds) and for what the Agent learned (up to 3), and
+  the data step took one more turn (1 to 1.5) after marking its plan done; a short, plain answer now also skips the
+  writer (about 1.5 seconds).
+- A question someone talked over while the Agent worked on it is answered all the same. The answer goes under its
+  question in the chat, also when other things were said meanwhile; once the page is free it asks
+  `GET /api/agent/voice/answer` whether it is ready, shows it, and has it said (`POST` the same address: "Your
+  earlier answer is ready.", then its short version). After Stop it is only shown.
 
 ## Talking over the Agent
 

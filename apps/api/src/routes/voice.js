@@ -6,7 +6,7 @@ import { AgentSetting, AgentThread } from "../models/index.js"
 import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { budgetMessage, budgetState } from "../services/agent/llm.js"
 import { SSE_HEADERS } from "../services/agent/stream.js"
-import { MAX_TURN_BYTES, greet, problemText, readTurn, voiceAvailable, voiceOn, voiceSettings, voiceStream, voiceTurn } from "../services/agent/voice.js"
+import { MAX_TURN_BYTES, greet, lateAnswer, problemText, readTurn, sayLateAnswer, voiceAvailable, voiceOn, voiceSettings, voiceStream, voiceTurn } from "../services/agent/voice.js"
 import { TEMPORARY_CHAT_TTL_MS } from "./agent.js"
 
 // Talking with the Agent (services/agent/voice.js). The page sends each spoken turn as a recording and plays the
@@ -111,6 +111,42 @@ voiceRouter.post(
   asyncHandler(async (req, res) => {
     if (!(await ready(res))) return
     await streamed(req, res, (out, signal) => greet({ user: req.user, out, signal }))
+  }),
+)
+
+// An answer to a spoken question the person talked over while the Agent worked on it (see voice.js): whether it is
+// ready yet (GET, ?threadId=&question=), and saying it (POST, { threadId, question }). `question`: the question's id in
+// the chat, as the turn's `thread` event gave it.
+async function askedIn(req, res, { threadId, question }) {
+  const thread = mongoose.isValidObjectId(threadId) && mongoose.isValidObjectId(question) ? await AgentThread.findOne({ _id: threadId, userId: req.user._id }) : null
+  const state = thread && lateAnswer(thread, question)
+  if (!thread || !thread.messages.some((message) => String(message._id) === String(question) && message.role === "user")) {
+    sendError(res, 404, "That question was not found.")
+    return null
+  }
+  return { thread, state }
+}
+
+voiceRouter.get(
+  "/answer",
+  asyncHandler(async (req, res) => {
+    const found = await askedIn(req, res, { threadId: String(req.query.threadId || ""), question: String(req.query.question || "") })
+    if (found) res.json(found.state)
+  }),
+)
+
+voiceRouter.post(
+  "/answer",
+  asyncHandler(async (req, res) => {
+    const question = String(req.body?.question || "")
+    const found = await askedIn(req, res, { threadId: String(req.body?.threadId || ""), question })
+    if (!found) return
+    if (!found.state.ready || found.state.failed) {
+      sendError(res, 409, "That answer is not ready to be said.")
+      return
+    }
+    if (!(await ready(res))) return
+    await streamed(req, res, (out, signal) => sayLateAnswer({ user: req.user, thread: found.thread, questionId: question, out, signal }))
   }),
 )
 

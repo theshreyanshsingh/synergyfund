@@ -57,6 +57,8 @@ after(async () => {
 })
 
 beforeEach(async () => {
+  // (What the last test's Agent saves after its answer, such as the chat's name, is saved before the chats go.)
+  await new Promise((resolve) => setTimeout(resolve, 50))
   model.reset()
   voice.forgetRecordedLines()
   Object.assign(PATIENCE, { decision: 2000, heard: 3000, stillWorking: 14000, takeBack: 20 })
@@ -94,13 +96,20 @@ async function startFakeModelService() {
     saysInstead: null, // (line) => what the model says when handed a line
     writerFails: false,
     planFails: false,
+    // A lookup the Agent makes for a question (a tool's name): it plans one step, its data step looks it up and then
+    // marks the plan done, and it answers. Unset: its plan step answers at once.
+    lookup: null,
+    titleAfter: 0,
+    memoryAfter: 0,
   })
   reset()
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-  const whole = (res, content) => {
+  const whole = (res, content, calls = []) => {
+    const tool_calls = calls.map(([name, args], index) => ({ id: `call_${index}`, type: "function", function: { name, arguments: JSON.stringify(args) } }))
     res.writeHead(200, { "Content-Type": "application/json" })
-    res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content } }], usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 } }))
+    res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content, ...(tool_calls.length ? { tool_calls } : {}) } }], usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 } }))
   }
+  const plan = (status) => ["todo_write", { todos: [{ id: "1", content: "Find the loans", status }] }]
   const server = http.createServer(async (req, res) => {
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
@@ -137,8 +146,24 @@ async function startFakeModelService() {
         }
         return whole(res, state.spoken)
       }
-      if (system.startsWith("You keep the SynergiFund Agent's memory")) return whole(res, '{"add": [], "update": [], "remove": []}')
-      if (system.includes("creates descriptive chat names")) return whole(res, "Counting the houses")
+      if (system.startsWith("You keep the SynergiFund Agent's memory")) {
+        await wait(state.memoryAfter)
+        return whole(res, '{"add": [], "update": [], "remove": []}')
+      }
+      if (system.includes("creates descriptive chat names")) {
+        await wait(state.titleAfter)
+        return whole(res, "Counting the houses")
+      }
+      if (state.lookup && system.includes("Your job in this step is to decide how to answer")) {
+        state.dataTurns = 0
+        return whole(res, "", [plan("pending")])
+      }
+      if (state.lookup && system.startsWith("You are the data step")) {
+        const turn = (state.dataTurns = (state.dataTurns || 0) + 1)
+        if (turn === 1) return whole(res, "", [plan("in_progress"), [state.lookup, {}]])
+        if (turn === 2) return whole(res, "Found the loans.", [plan("completed")])
+        return whole(res, "Still the loans.")
+      }
       // The Agent's plan step: answering without a tool call is its answer.
       await wait(state.planAfter)
       if (state.planFails) {
@@ -205,6 +230,17 @@ function listener() {
 function newChat(messages = []) {
   return new AgentThread({ userId: sam._id, messages })
 }
+
+// Waits for `check` to come true (the Agent names a chat, records a line, after a turn's answer is said).
+async function until(check, ms = 3000) {
+  for (const end = Date.now() + ms; !(await check()); ) {
+    if (Date.now() > end) throw new Error("It did not happen in time.")
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+const named = (id) => until(async () => (await AgentThread.findById(id))?.title === "Counting the houses")
+const writerAsked = () => model.written().filter((body) => body.messages[0].content.startsWith("You write what the SynergiFund Agent says aloud"))
 
 async function takeTurn(thread = newChat(), { signal } = {}) {
   const out = listener()
@@ -530,7 +566,7 @@ test("a question for the records is asked of the Agent, and its answer is said i
   assert.deepEqual([question.role, question.content, question.voice], ["user", "How many houses do we have?", true])
   assert.deepEqual([answer.role, answer.content, answer.spoken, answer.voice, answer.error], ["assistant", WRITTEN, SPOKEN, true, false])
   assert.equal(thread.messages.length, 2)
-  assert.equal(thread.title, "Counting the houses") // named by the Agent, as a typed chat is
+  await named(thread._id) // named by the Agent, as a typed chat is
 
   // The Agent's own steps ran as for a typed question (its plan step answered).
   const plan = model.written().find((body) => body.messages[0].content.startsWith("You are the SynergiFund agent"))
@@ -570,6 +606,57 @@ test("a long look-up is said to be still going, once", async () => {
   // The answer is asked for as if both lines had been said.
   const saying = model.spoken().find((body) => lineAsked(body) === SPOKEN)
   assert.deepEqual(saying.messages[2], { role: "assistant", content: `${HOLD_LINE} ${STILL_LINE}` })
+})
+
+test("the answer is said without waiting for the chat to be named or for what was learned", async () => {
+  Object.assign(model.state, { verdict: "ASK\nHow many houses do we have?", titleAfter: 1500, memoryAfter: 1500 })
+  const started = Date.now()
+  const { out, thread } = await takeTurn()
+  assert.ok(Date.now() - started < 1200, `the turn took ${Date.now() - started} ms`)
+  assert.equal(out.said(), `${HOLD_LINE} ${SPOKEN}`)
+  assert.equal(thread.messages[1].spoken, SPOKEN)
+  // The chat is named a moment later all the same.
+  await named(thread._id)
+})
+
+test("a short, plain answer is said as written, without the writer", async () => {
+  Object.assign(model.state, { verdict: "ASK\nWho is the lender on 876 Fields Rd?", written: "The lender on 876 Fields Rd is **Kiavi**." })
+  const { out, thread } = await takeTurn()
+  assert.equal(out.said(), `${HOLD_LINE} The lender on 876 Fields Rd is Kiavi.`)
+  assert.equal(writerAsked().length, 0)
+  assert.deepEqual([thread.messages[1].content, thread.messages[1].spoken], ["The lender on 876 Fields Rd is **Kiavi**.", "The lender on 876 Fields Rd is Kiavi."])
+  await named(thread._id)
+})
+
+test("only a short, plain written answer is said as it is", () => {
+  assert.equal(voice.sayableAnswer("The lender on 876 Fields Rd is **Kiavi**."), "The lender on 876 Fields Rd is Kiavi.")
+  assert.equal(voice.sayableAnswer("No loans mature in the next 90 days.\n\nAll 3 open loans are current."), "No loans mature in the next 90 days. All 3 open loans are current.")
+  const notPlain = [WRITTEN, "Two loans:\n- Kiavi\n- Lima One", "Two loans:\n1. Kiavi\n2. Lima One", "## Loans\nKiavi", "[Purchase Contract.pdf](/documents/abc)", "See https://zillow.com", "```email\nTo: jane@example.com\n```", "word ".repeat(61), "They are $1, $2, $3 and $4.", ""]
+  for (const written of notPlain) assert.equal(voice.sayableAnswer(written), "", written)
+})
+
+test("after its first lookup the Agent says what it is looking at, once its line is recorded", async () => {
+  Object.assign(model.state, { verdict: "ASK\nWhich loans mature soon?", lookup: "list_loans" })
+  const line = voice.PROGRESS_LINES.list_loans
+  const first = await takeTurn()
+  // The first time, the line is only recorded: no answer waits for it.
+  assert.equal(first.out.said(), `${HOLD_LINE} ${SPOKEN}`)
+  assert.ok(first.out.of("status").some((event) => event.title === "Reading loans"))
+  // The data step looked the loans up and marked its plan done, and that ended it: no turn more just to say so.
+  const dataSteps = () => model.written().filter((body) => body.messages[0].content.startsWith("You are the data step"))
+  assert.equal(dataSteps().length, 2)
+  const answering = model.written().find((body) => body.messages[0].content.includes("Write the answer to the person's question"))
+  assert.match(answering.messages[answering.messages.length - 1].content, /Notes from the data step - Found the loans\.[\s\S]*### list_loans/)
+  await until(() => model.spoken().some((body) => lineAsked(body) === line))
+  await named(first.thread._id)
+
+  // From then on it is said after the hold line, while the Agent works.
+  const second = await takeTurn()
+  assert.equal(second.out.said(), `${HOLD_LINE} ${line} ${SPOKEN}`)
+  assert.equal(model.spoken().filter((body) => lineAsked(body) === line).length, 1)
+  const saying = model.spoken().filter((body) => lineAsked(body) === SPOKEN).pop()
+  assert.deepEqual(saying.messages[2], { role: "assistant", content: `${HOLD_LINE} ${line}` })
+  await named(second.thread._id)
 })
 
 test("when the short answer cannot be written, the person is pointed to the screen", async () => {
@@ -758,6 +845,47 @@ test("a spoken turn is taken as a recording and answered as a stream of events",
   await next.text()
   assert.equal((await AgentThread.findById(thread._id)).messages.length, 4)
   assert.equal(await AgentThread.countDocuments(), 1)
+})
+
+test("a question talked over while the Agent works is answered all the same, under its question, and said when asked", async () => {
+  Object.assign(model.state, { verdict: "ASK\nWhich loans mature soon?", heard: "which loans mature soon", planAfter: 500 })
+  const chat = newChat()
+  const gone = new AbortController()
+  const first = listener()
+  const asking = voice.voiceTurn({ user: sam, permissions: permissionsFor(sam), thread: chat, wav: TURN, out: first, signal: gone.signal, temporaryFor: 60000 })
+  // The question is in the chat (its id comes with the chat's), and the person talks over the Agent.
+  await until(() => first.of("thread").length === 1)
+  const question = first.of("thread")[0].asked
+  gone.abort()
+  const status = async () => (await fetch(`${base}/agent/voice/answer?threadId=${chat._id}&question=${question}`)).json()
+  assert.deepEqual(await status(), { ready: false, failed: false, said: false })
+  const saying = () => fetch(`${base}/agent/voice/answer`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ threadId: String(chat._id), question }) })
+  assert.equal((await saying()).status, 409)
+
+  // What they say meanwhile is answered and kept while the Agent still works on the question.
+  Object.assign(model.state, { verdict: "NO", heard: "How are you?" })
+  await takeTurn(await AgentThread.findById(chat._id))
+  await asking
+  // The answer went under its question, not after what was said meanwhile.
+  const kept = await AgentThread.findById(chat._id)
+  assert.deepEqual(kept.messages.map((message) => [message.role, message.content]), [["user", "Which loans mature soon?"], ["assistant", WRITTEN], ["user", "How are you?"], ["assistant", "Hello! What can I do for you?"]])
+  assert.equal(kept.messages[1].spoken, undefined)
+  assert.doesNotMatch(first.said(), /three houses/)
+
+  // The page asks after it, and has it said: a line saying it is ready, then what the Agent says of it.
+  assert.deepEqual(await status(), { ready: true, failed: false, said: false })
+  const response = await saying()
+  assert.equal(response.status, 200)
+  const events = await eventsOf(response)
+  assert.equal(events.filter((event) => event.t === "say").map((event) => event.text).join(""), `${voice.LATE_LINE} ${SPOKEN}`)
+  assert.deepEqual(events[events.length - 1], { t: "done", threadId: String(chat._id), asked: true, spoken: SPOKEN })
+  assert.equal((await AgentThread.findById(chat._id)).messages[1].spoken, SPOKEN)
+  assert.deepEqual(await status(), { ready: true, failed: false, said: true })
+  // Never someone else's chat, nor a question that is not there.
+  assert.equal((await fetch(`${base}/agent/voice/answer?threadId=${chat._id}&question=${question}`, { headers: { "x-role": "member" } })).status, 404)
+  assert.equal((await fetch(`${base}/agent/voice/answer?threadId=${chat._id}&question=${kept.messages[1]._id}`)).status, 404)
+  assert.equal((await fetch(`${base}/agent/voice/answer?threadId=${chat._id}&question=nope`)).status, 404)
+  await named(chat._id)
 })
 
 test("a temporary chat stays temporary when it is spoken", async () => {
