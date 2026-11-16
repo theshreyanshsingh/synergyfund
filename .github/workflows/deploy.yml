@@ -1,0 +1,49 @@
+# The "Deploy to EC2" button: Actions › Deploy to EC2 › Run workflow puts what is on main live on the server, by
+# running deploy.sh there over SSH. DEPLOY.md says how to set it up (the EC2_HOST, EC2_USER, EC2_SSH_KEY and
+# EC2_KNOWN_HOSTS secrets).
+name: Deploy to EC2
+
+on:
+  workflow_dispatch:
+
+# One deploy at a time: a second click waits for the first to finish.
+concurrency:
+  group: deploy-ec2
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Deploy on the server
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+          # The repository's folder on the server, from the home folder (or a full path): synergyfund unless set.
+          EC2_APP_DIR: ${{ vars.EC2_APP_DIR }}
+        run: |
+          set -euo pipefail
+          if [ -z "$EC2_HOST" ] || [ -z "$EC2_SSH_KEY" ]; then
+            echo "::error::Add the EC2_HOST and EC2_SSH_KEY secrets first (Settings › Secrets and variables › Actions). DEPLOY.md says how."
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # The server is checked against its known key when EC2_KNOWN_HOSTS is set; otherwise it is trusted as found.
+          if [ -n "$EC2_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$EC2_KNOWN_HOSTS" > ~/.ssh/known_hosts
+            check=yes
+          else
+            echo "::warning::EC2_KNOWN_HOSTS is not set, so this run did not check that it reached the right server. DEPLOY.md says how to add it."
+            check=accept-new
+          fi
+          dir="${EC2_APP_DIR:-synergyfund}"
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking="$check" -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            "${EC2_USER:-ubuntu}@$EC2_HOST" "cd $(printf '%q' "$dir") && bash deploy.sh"

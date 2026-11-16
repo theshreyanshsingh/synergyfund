@@ -11,7 +11,8 @@
     "dev:web": "npm run dev -w @synergifund/web",
     "dev:mobile": "npm --prefix mobile start",
     "db:encrypt": "npm run db:encrypt -w @synergifund/api",
-    "test": "npm test -w @synergifund/api"
+    "test": "npm test -w @synergifund/api",
+    "deploy": "bash deploy.sh"
   },
   "devDependencies": {
     "concurrently": "^9.2.5"

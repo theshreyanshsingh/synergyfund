@@ -34,3 +34,6 @@ local.properties
 *.iml
 .expo/
 coverage/
+
+# deploy.sh: one deploy at a time
+.deploy.lock

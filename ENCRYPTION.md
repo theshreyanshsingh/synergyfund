@@ -87,11 +87,14 @@ After that:
 
 ## Later deploys
 
+The Deploy to EC2 button on GitHub, or on the server (see DEPLOY.md):
+
 ```bash
-git pull && npm run build -w @synergifund/web && pm2 restart <api> <web> && npm run db:encrypt
+npm run deploy
 ```
 
-`db:encrypt` changes nothing once everything is encrypted. The daily backup also runs it first, as a backstop, so a
+It runs `db:encrypt` once the new version is up, whenever the API says encryption is on. `db:encrypt` changes nothing
+once everything is encrypted. The daily backup also runs it first, as a backstop, so a
 record restored from an older backup is encrypted again by the next day's backup.
 
 ## Rotating the key
