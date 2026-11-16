@@ -81,6 +81,9 @@ public final class SynergiNativeModule: Module {
 
     Function("takeAnswer") { Bridge.shared.takeAnswer() }
 
+    // A call answered on the phone's call screen will reach the page in a moment (the first page waits for it).
+    Function("answerPending") { Bridge.shared.answerPending() }
+
     Function("takeOpenPath") { Bridge.shared.takeOpenPath() }
   }
 }

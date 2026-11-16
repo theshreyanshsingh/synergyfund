@@ -65,14 +65,18 @@ final class CallManager: NSObject, CXProviderDelegate {
     let ringStartedAt = Self.int64(payload["ringStartedAt"])
     let ringFor = Double(Self.int64(payload["ringFor"]) ?? 45000) / 1000
     let caller = Self.text(payload["caller"]) ?? "SynergiFund"
-    let left = Self.timeLeft(ringStartedAt, ringFor)
+    // How long it still rings, by the server's clock when it sent the push (the phone's clock may be off; Apple drops
+    // a push that arrives after the ring's end).
+    let left = Self.pushTimeLeft(ringStartedAt, Self.int64(payload["sentAt"]), ringFor)
     let existing = rings[callId].flatMap { Self.sameRing($0, ringStartedAt) ? $0 : nil }
     // Already on CallKit (the page passed it on first): reported again under the same name, as Apple asks.
     if let ring = existing, ring.owner != .page, let uuid = ring.uuid {
       provider.reportNewIncomingCall(with: uuid, update: Self.update(caller)) { _ in DispatchQueue.main.async { completion() } }
       return
     }
-    let unwanted = callId.isEmpty || Store.deviceKey == nil || left < 2 || Store.endedHere(callId, ringStartedAt ?? 0) || pageInCall
+    // In a call in the page: only while the app is on screen (a page frozen in the background may not have said its
+    // call ended, and the call cannot go on there anyway).
+    let unwanted = callId.isEmpty || Store.deviceKey == nil || left < 2 || Store.endedHere(callId, ringStartedAt ?? 0) || (pageInCall && appActive)
     // A late push, signed out, or the page already shows it on screen: rung and ended in the same moment.
     if unwanted || (existing != nil && appActive) {
       reportAndEnd(caller, completion)
@@ -86,8 +90,15 @@ final class CallManager: NSObject, CXProviderDelegate {
   // From the page: it heard a ring (or its end) over its open connection.
   func pageMessage(_ data: [String: String]) {
     start()
+    // A new page: the rings the page before it was showing are gone with it (the new one passes on what still rings).
+    if data["type"] == "page-start" {
+      for ring in rings.values where ring.owner == .page { rings[ring.callId] = nil }
+      return
+    }
     guard let callId = data["callId"], !callId.isEmpty else { return }
     if data["type"] == "call-over" {
+      // Answered here: the page stops ringing too, while this call waits for the app (asking the server meanwhile).
+      if rings[callId]?.owner == .answered { return }
       end(callId, reason: .remoteEnded)
       return
     }
@@ -100,7 +111,8 @@ final class CallManager: NSObject, CXProviderDelegate {
       if ring.owner == .callKit && appActive { handBackToPage(callId) }
       return
     }
-    let left = Self.timeLeft(ringStartedAt, (Double(data["ringFor"] ?? "") ?? 45000) / 1000)
+    // How long it still rings, by this phone's own clock (the page says); else from the ring's start.
+    let left = Double(data["ringLeft"] ?? "").map { $0 / 1000 } ?? Self.timeLeft(ringStartedAt, (Double(data["ringFor"] ?? "") ?? 45000) / 1000)
     if left < 2 || Store.endedHere(callId, ringStartedAt ?? 0) { return }
     var ring = Ring(callId: callId, ringStartedAt: ringStartedAt ?? 0, caller: Self.text(data["caller"]) ?? "SynergiFund", deadline: Date().addingTimeInterval(left + 2), owner: .page)
     ring.pageKnows = true
@@ -149,8 +161,9 @@ final class CallManager: NSObject, CXProviderDelegate {
     rings[callId]?.owner = .answered
     // Time to unlock the phone and open the app; the server holds the call meanwhile.
     rings[callId]?.deadline = Date().addingTimeInterval(50)
+    Bridge.shared.setAnswering(callId)
     action.fulfill()
-    ServerClient.ringState(callId, answering: true) { _, _ in }
+    ServerClient.ringState(callId, answering: true) { _, _, _ in }
     if appActive { DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.handOver(callId) } }
   }
 
@@ -160,6 +173,7 @@ final class CallManager: NSObject, CXProviderDelegate {
     action.fulfill()
     guard let callId, let ring = rings.removeValue(forKey: callId) else { return }
     Store.markEnded(callId, ring.ringStartedAt)
+    Bridge.shared.stopAnswering(callId)
     ServerClient.decline(callId)
     Bridge.shared.emit("onDecline", ["callId": callId])
     stopPollingIfIdle()
@@ -249,6 +263,7 @@ final class CallManager: NSObject, CXProviderDelegate {
   private func end(_ callId: String, reason: CXCallEndedReason) {
     guard let ring = rings.removeValue(forKey: callId) else { return }
     Store.markEnded(callId, ring.ringStartedAt)
+    Bridge.shared.stopAnswering(callId)
     if ring.owner != .page, let uuid = ring.uuid { provider?.reportCall(with: uuid, endedAt: nil, reason: reason) }
     stopPollingIfIdle()
   }
@@ -269,8 +284,8 @@ final class CallManager: NSObject, CXProviderDelegate {
         end(ring.callId, reason: ring.owner == .answered ? .failed : .unanswered)
         continue
       }
-      ServerClient.ringState(ring.callId) { [weak self] status, state in
-        guard let self, let current = self.rings[ring.callId], current.owner != .page else { return }
+      ServerClient.ringState(ring.callId) { [weak self] status, state, ringLeft in
+        guard let self, var current = self.rings[ring.callId], current.owner != .page else { return }
         // This phone is no longer signed in.
         if status == 401 {
           self.end(ring.callId, reason: .remoteEnded)
@@ -278,7 +293,14 @@ final class CallManager: NSObject, CXProviderDelegate {
         }
         guard status == 200, let state else { return }
         switch state {
-        case "ringing": break
+        case "ringing":
+          // Rings as long as the server says (its ring is timed by its own clock, not this phone's). Once answered
+          // here, never less than the time given to unlock the phone.
+          if let ringLeft {
+            let deadline = Date().addingTimeInterval(ringLeft + 2)
+            current.deadline = current.owner == .answered ? max(current.deadline, deadline) : deadline
+            self.rings[ring.callId] = current
+          }
         case "answered": self.end(ring.callId, reason: .answeredElsewhere)
         case "declined": self.end(ring.callId, reason: .declinedElsewhere)
         case "missed": self.end(ring.callId, reason: .unanswered)
@@ -328,6 +350,12 @@ final class CallManager: NSObject, CXProviderDelegate {
   private static func sameRing(_ ring: Ring, _ ringStartedAt: Int64?) -> Bool {
     guard let ringStartedAt, ring.ringStartedAt > 0 else { return true }
     return ring.ringStartedAt == ringStartedAt
+  }
+
+  // A call push: the ring's length less the time it had rung when the server sent it, both by the server's clock.
+  private static func pushTimeLeft(_ ringStartedAt: Int64?, _ sentAt: Int64?, _ ringFor: TimeInterval) -> TimeInterval {
+    guard let ringStartedAt, let sentAt, sentAt >= ringStartedAt else { return timeLeft(ringStartedAt, ringFor) }
+    return ringFor - Double(sentAt - ringStartedAt) / 1000
   }
 
   private static func timeLeft(_ ringStartedAt: Int64?, _ ringFor: TimeInterval) -> TimeInterval {

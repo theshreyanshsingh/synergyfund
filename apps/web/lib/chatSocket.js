@@ -99,6 +99,9 @@ export function refreshPushEndpoint() {
 
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", reportVisible)
+  // The iPhone app has just registered this phone: say so now, not at the next check-in, so a call that comes in
+  // meanwhile rings in this page only (not on the phone's call screen over it as well).
+  window.addEventListener("synergifund:push-ready", reportVisible)
   window.addEventListener("pagehide", () => {
     clearInterval(heartbeat)
     if (socket?.connected) socket.emit("presence:visible", { visible: false, endpoint: pushEndpoint, channelId: "" })

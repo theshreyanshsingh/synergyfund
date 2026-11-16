@@ -37,9 +37,11 @@ enum ServerClient {
   }
 
   // answering: the person answered on this phone and is unlocking it, so the call waits for them a little longer.
-  static func ringState(_ callId: String, answering: Bool = false, done: @escaping (Int, String?) -> Void) {
+  // The reply: the call's state, and while it rings, the seconds it still rings.
+  static func ringState(_ callId: String, answering: Bool = false, done: @escaping (Int, String?, TimeInterval?) -> Void) {
     post("/api/push/native/call", ["callId": callId, "answering": answering]) { status, json in
-      done(status, json?["state"] as? String)
+      let ringLeft = (json?["ringLeft"] as? NSNumber).map { $0.doubleValue / 1000 }
+      done(status, json?["state"] as? String, ringLeft)
     }
   }
 }

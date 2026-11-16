@@ -88,6 +88,8 @@ function tellPhoneRings(before, after) {
       type: "call-ring",
       callId: call.id,
       ringStartedAt: call.ringStartedAt || 0,
+      // How long it still rings, by this device's clock (the phone's clock may not match the server's).
+      ringLeft: call.ringUntil ? Math.max(0, call.ringUntil - Date.now()) : 0,
       media: call.media,
       caller: added ? call.invitedBy : call.startedByName,
       title: added ? `${call.invitedBy} is adding you to a ${kind} call` : `${call.startedByName} is calling you`,
@@ -864,6 +866,12 @@ async function rejoin() {
 
 /* ---------- server events ---------- */
 
+// When a ring stops, by this device's clock (0 when the server did not say).
+function ringUntil(ringLeft) {
+  const left = Number(ringLeft)
+  return Number.isFinite(left) && left > 0 ? Date.now() + left : 0
+}
+
 // While a call is being set up, keep its events until the server's reply arrives.
 function hold(event, payload) {
   if (state.current?.rejoining && payload?.callId === state.current.callId) {
@@ -879,10 +887,10 @@ function hold(event, payload) {
 }
 
 export const callEvents = {
-  "call:ring": ({ call, invitedBy, ringStartedAt } = {}) => {
+  "call:ring": ({ call, invitedBy, ringStartedAt, ringLeft } = {}) => {
     if (!call || state.current?.callId === call.id || answeringNow() === call.id) return
     if (state.incoming.some((item) => item.id === call.id)) return
-    set({ incoming: [...state.incoming, { ...call, invitedBy: invitedBy || "", ringStartedAt: Number(ringStartedAt) || 0 }] })
+    set({ incoming: [...state.incoming, { ...call, invitedBy: invitedBy || "", ringStartedAt: Number(ringStartedAt) || 0, ringUntil: ringUntil(ringLeft) }] })
     refreshTone()
     if (typeof document !== "undefined" && document.hidden && typeof Notification !== "undefined" && Notification.permission === "granted") {
       try {
@@ -992,7 +1000,7 @@ export const callEvents = {
       refreshTone()
       return
     }
-    const message = reason === "declined" ? "Call declined." : reason === "missed" ? "No answer." : reason === "moved" ? "You joined this call on another device." : reason === "removed" ? "You no longer have access to this conversation, so you left the call." : "Call ended."
+    const message = reason === "declined" ? "Call declined." : reason === "missed" ? "No answer." : reason === "moved" ? "You joined this call on another device." : reason === "answered-other" ? "You answered another call, so you left this one." : reason === "removed" ? "You no longer have access to this conversation, so you left the call." : "Call ended."
     teardown(message)
   },
   reconnect: () => {
@@ -1002,7 +1010,7 @@ export const callEvents = {
       for (const call of reply.calls || []) live[call.channelId] = call
       // Replace the ringing list: anything that stopped while we were offline disappears.
       const answering = answeringNow()
-      const ringing = (reply.ringing || []).filter((call) => call.id !== state.current?.callId && call.id !== answering)
+      const ringing = (reply.ringing || []).filter((call) => call.id !== state.current?.callId && call.id !== answering).map((call) => ({ ...call, ringUntil: ringUntil(call.ringLeft) }))
       set({ live, liveLoaded: true, incoming: ringing })
       refreshTone()
     }).catch(() => {})

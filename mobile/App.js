@@ -86,10 +86,13 @@ function Shell() {
     // On iPhone, a call answered on the phone's call screen, or a tapped notification, may have opened the app.
     const answered = Platform.OS === "ios" ? phone?.takeAnswer() : null
     const tapped = Platform.OS === "ios" ? phone?.takeOpenPath() : null
+    // Answered just now, and the phone's call screen is still letting go of the sound: the call comes in a moment
+    // (onAnswer below), so the first page waits for it instead of loading the start page first.
+    const waiting = Platform.OS === "ios" && !answered && !tapped && phone?.answerPending?.() === true
     if (answered) go(`/calls?join=${encodeURIComponent(answered)}&answer=1`)
     else if (tapped) go(tapped)
-    Linking.getInitialURL().then((url) => go(pathFromLink(url))).catch(() => go(""))
-    const timer = setTimeout(() => go(""), 1500)
+    if (!waiting) Linking.getInitialURL().then((url) => go(pathFromLink(url))).catch(() => go(""))
+    const timer = setTimeout(() => go(""), waiting ? 4000 : 1500)
     // A notification or Answer while the app is already open: go to that page (without reloading the site).
     const subscription = Linking.addEventListener("url", ({ url }) => {
       const path = pathFromLink(url)
@@ -215,6 +218,8 @@ function Shell() {
     if (data.type === "page-start") {
       if (inCall.current && phone) phone.endCall()
       inCall.current = false
+      // iPhone: the rings the page before it was showing are gone with it (the new page passes on what still rings).
+      if (phone && Platform.OS === "ios") phone.showPush({ type: "page-start" })
     }
     // A call started or ended on the page: keep it going with the screen off, with Hang up in the notification.
     if (data.type === "call-state" && phone) {
@@ -224,7 +229,7 @@ function Shell() {
     }
     // The page heard a ring (or its end) over its open connection: ring the phone now, before the push arrives.
     if (data.type === "call-ring" && phone && data.callId) {
-      phone.showPush({ type: "call", callId: String(data.callId), title: String(data.title || "Incoming call"), body: String(data.body || ""), media: String(data.media || "audio"), caller: String(data.caller || ""), sentAt: String(Date.now()), ringFor: "45000", ringStartedAt: String(data.ringStartedAt || "") })
+      phone.showPush({ type: "call", callId: String(data.callId), title: String(data.title || "Incoming call"), body: String(data.body || ""), media: String(data.media || "audio"), caller: String(data.caller || ""), sentAt: String(Date.now()), ringFor: "45000", ringStartedAt: String(data.ringStartedAt || ""), ringLeft: String(Number(data.ringLeft) > 0 ? Math.round(Number(data.ringLeft)) : "") })
     }
     if (data.type === "call-ring-stop" && phone && data.callId) phone.showPush({ type: "call-over", callId: String(data.callId), quiet: "true" })
     if (data.type === "signed-out" && phone) {

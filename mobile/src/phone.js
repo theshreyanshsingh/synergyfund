@@ -45,6 +45,7 @@ export function registerScript(token, extra = {}) {
       .then(function (data) {
         if (!data || !data.deviceKey) return;
         window.SynergiFundNative = Object.assign(window.SynergiFundNative || {}, { pushToken: ${JSON.stringify(token)}, pushReady: true });
+        try { window.dispatchEvent(new Event("synergifund:push-ready")); } catch (e) {}
         window.ReactNativeWebView.postMessage(JSON.stringify({ type: "push-registered", deviceKey: data.deviceKey }));
       })
       .catch(function () {});

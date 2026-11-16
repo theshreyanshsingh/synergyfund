@@ -80,7 +80,8 @@ final class PushCenter: NSObject, PKPushRegistryDelegate, UNUserNotificationCent
 
   func didRegister(alertToken data: Data) {
     let token = hexString(data)
-    let changed = Store.alertToken != nil && Store.alertToken != token
+    // New, or the first one (Apple may give it only after the phone registered without it): register again.
+    let changed = Store.alertToken != token
     Store.alertToken = token
     alertFailed = false
     resolveAlert(token)

@@ -9,6 +9,9 @@ final class Bridge {
   private var send: ((String, [String: Any]) -> Void)?
   private var listening = Set<String>()
   private var answer: (callId: String, at: Date)?
+  // Answered on the phone's call screen, and not yet handed to the page (the phone is unlocking, or the call screen
+  // is letting go of the sound).
+  private var answering: (callId: String, at: Date)?
   private var openPath: String?
 
   func attach(_ send: @escaping (String, [String: Any]) -> Void) {
@@ -41,8 +44,31 @@ final class Bridge {
   func deliverAnswer(_ callId: String) {
     lock.lock()
     answer = (callId, Date())
+    answering = nil
     lock.unlock()
     flush()
+  }
+
+  func setAnswering(_ callId: String) {
+    lock.lock()
+    answering = (callId, Date())
+    lock.unlock()
+  }
+
+  func stopAnswering(_ callId: String) {
+    lock.lock()
+    if answering?.callId == callId { answering = nil }
+    lock.unlock()
+  }
+
+  // A call answered on the phone's call screen is on its way to the page (onAnswer, or takeAnswer).
+  func answerPending() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    let now = Date()
+    if let held = answer, now.timeIntervalSince(held.at) < 60 { return true }
+    if let waiting = answering, now.timeIntervalSince(waiting.at) < 60 { return true }
+    return false
   }
 
   func deliverOpen(_ path: String) {

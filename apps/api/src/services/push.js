@@ -101,7 +101,8 @@ async function toIphones(devices, message, options, skipPhones) {
     const ringFor = Number(message.ringFor) || 45000
     return sendApns(ringing, {
       push: "voip",
-      payload: { type: "call", callId: message.callId, ringStartedAt: started, ringFor, sentAt: Number(message.sentAt) || Date.now(), caller: message.caller || "", title: message.title, body: message.body || "", media: message.media || "audio" },
+      // sentAt now (after asking the pages): the phone times the ring from it, by the server's clock.
+      payload: { type: "call", callId: message.callId, ringStartedAt: started, ringFor, sentAt: Date.now(), caller: message.caller || "", title: message.title, body: message.body || "", media: message.media || "audio" },
       expiresAt: started + ringFor,
       priority: 10,
     })

@@ -270,6 +270,23 @@ async function removePeer(state, peerId, { away = false, moving = false } = {}) 
   await settle(state)
 }
 
+// This person answered another call: they leave this one on every device (each is told why).
+async function leaveForAnother(state, userId) {
+  clearTimeout(state.away.get(userId))
+  state.away.delete(userId)
+  let removed = false
+  for (const [peerId, peer] of [...state.peers.entries()]) {
+    if (peer.userId !== userId || !live.has(state.id)) continue
+    chatIo()?.to(peerId).emit("call:ended", { callId: state.id, reason: "answered-other" })
+    removed = true
+    await removePeer(state, peerId)
+  }
+  if (!removed && live.has(state.id)) {
+    markLeft(state, userId)
+    await settle(state)
+  }
+}
+
 function markLeft(state, userId) {
   Call.updateOne(
     { _id: state.id },
@@ -323,7 +340,8 @@ function ringPeople(state, userIds, invitedBy) {
     ringPerson(state, userId, RING_MS)
   }
   if (!fresh.length) return
-  emitToUsers(fresh, "call:ring", { call: summary(state), invitedBy: invitedBy || "", ringStartedAt: now })
+  // ringLeft: how long it rings, which a phone can time by its own clock (its clock may not match the server's).
+  emitToUsers(fresh, "call:ring", { call: summary(state), invitedBy: invitedBy || "", ringStartedAt: now, ringLeft: RING_MS })
   pushRing(state, fresh, invitedBy, now).catch((error) => console.error("Call push failed", error))
   const busy = fresh.filter((userId) => {
     const other = userInCall(userId)
@@ -342,6 +360,8 @@ function nameIn(state, userId) {
 // get a quiet notification that replaces the ringing one (the device that acted is skipped).
 function stopRinging(state, userId, { reason = "", endpoint = "" } = {}) {
   const wasRinging = state.ringing.has(userId)
+  // Answered on the iPhone's call screen: the other devices were already told (see holdRing).
+  const wasHeld = state.held.has(userId)
   clearTimeout(state.ringing.get(userId))
   state.ringing.delete(userId)
   state.ringStarted.delete(userId)
@@ -349,7 +369,7 @@ function stopRinging(state, userId, { reason = "", endpoint = "" } = {}) {
   state.held.delete(userId)
   stopRepeats(state, userId)
   emitToUsers([userId], "call:ring-stop", { callId: state.id })
-  if (reason && wasRinging && state.pushed.has(userId)) {
+  if (reason && wasRinging && !wasHeld && state.pushed.has(userId)) {
     pushRingStopped(state, userId, reason, endpoint).catch((error) => console.error("Call push failed", error))
   }
 }
@@ -679,7 +699,15 @@ export function registerCallHandlers(socket) {
     if (!live.has(state.id)) return reply({ error: "That call has ended." })
     if (state.peers.has(socket.id)) return reply({ call: summary(state), peerId: socket.id, peers: peerList(state, socket.id), ...net, share: state.shareKey })
     const busy = userInCall(me)
-    if (busy && busy !== state) return reply({ error: "You are already in another call. Leave it first." })
+    if (busy && busy !== state) {
+      // Answering a call that rings for you ends the call you are in (End & answer), on whichever device you answer:
+      // the iPhone's call screen, a notification, or the ringing card.
+      if (busy === "starting" || !state.ringing.has(me)) return reply({ error: "You are already in another call. Leave it first." })
+      await leaveForAnother(busy, me)
+      if (!live.has(state.id)) return reply({ error: "That call has ended." })
+      const still = userInCall(me)
+      if (still && still !== state) return reply({ error: "You are already in another call. Leave it first." })
+    }
     const earlier = [...state.peers.entries()].filter(([, peer]) => peer.userId === me).map(([peerId]) => peerId)
     if (state.peers.size - earlier.length >= MAX_PEERS) return reply({ error: `This call is full. Calls hold up to ${MAX_PEERS} people.` })
     const media = data.media === "video" ? "video" : "audio"
@@ -878,11 +906,12 @@ export async function liveCallsFor(user) {
 }
 
 // Calls still ringing for this person, so a device that connects late (or opens from a notification) rings too.
+// Not a call they answered on the iPhone's call screen: it waits for the app, and rings nowhere else.
 function ringingFor(userId) {
   const result = []
   for (const state of live.values()) {
-    if (!state.ringing.has(userId) || inCall(state, userId)) continue
-    result.push({ ...summary(state), ringStartedAt: state.ringStarted.get(userId) || 0 })
+    if (!state.ringing.has(userId) || state.held.has(userId) || inCall(state, userId)) continue
+    result.push({ ...summary(state), ringStartedAt: state.ringStarted.get(userId) || 0, ringLeft: Math.max(0, (state.ringEnds.get(userId) || 0) - Date.now()) })
   }
   return result
 }
@@ -902,7 +931,8 @@ export function ringState(userId, callId) {
 }
 
 // Answered on a locked iPhone, which now asks for Face ID and opens the app: once per ring, the call waits for them
-// a little longer instead of being missed meanwhile, and their other devices stop ringing.
+// a little longer instead of being missed meanwhile, and their other devices stop ringing at once (as when answering
+// anywhere else), not once the app has opened.
 export function holdRing(userId, callId) {
   const state = live.get(cleanId(callId))
   const me = String(userId)
@@ -912,6 +942,8 @@ export function holdRing(userId, callId) {
   if ((state.ringEnds.get(me) || 0) - now < HOLD_MS) ringPerson(state, me, HOLD_MS)
   if (!state.answered && state.ringTimer && state.ringEndsAt - now < HOLD_MS) ringUntil(state, HOLD_MS)
   stopRepeats(state, me)
+  emitToUsers([me], "call:ring-stop", { callId: state.id })
+  if (state.pushed.has(me)) pushRingStopped(state, me, "answered", "").catch((error) => console.error("Call push failed", error))
   return true
 }
 
