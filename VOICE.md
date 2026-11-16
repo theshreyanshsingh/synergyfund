@@ -26,11 +26,17 @@ It is a port of Oscar, a voice agent built and measured separately (`~/Desktop/O
    - **Anything the records, the documents or the web would answer or do:** you hear "One moment, let me look that
      up", and the question is asked of the Agent exactly as a typed one is, with your permissions. After its first
      lookup it says what it is looking at ("Checking the loans now.", `PROGRESS_LINES` in voice.js), once, and after
-     14 seconds that it is still working. Its answer is said as soon as it is saved: a short, plain one (60 words,
-     three figures, no table, list or link) as written, a longer one as a text model puts it in two or three
-     sentences, which the speech model says word for word. The written answer is saved to the chat as usual, and
-     shows there (the page is sent `saved`) while the short version is still being said; the chat is named, and
-     what the Agent learned is saved, while it is said.
+     14 seconds that it is still working. Its answer is said from its opening paragraph (the direct answer, by the
+     answer's instructions) as soon as that is written, while the rest is still being written (`onLead` and
+     `openingOf` in run.js; the page is sent `answering`): a short, plain opening (60 words, three figures, no
+     table, list or link) as written and then "You'll see the details on your screen." (the rest may not be there
+     yet), a longer one as a text model puts it in two or three sentences, told that the rest is still being
+     written, which the speech model says word for word. An answer that opens with a table, list or heading, with a
+     line that is not a whole sentence ("Two loans:", "Hi Jane,", a bold title, a link), or is all one paragraph, is
+     said the same way from the whole of it once it is saved; so is one that tells of a change, rename or team note
+     to confirm, so that "tap Confirm" is said. If the answer then fails, the Agent says so after its opening. The
+     written answer is saved to the chat as usual, and shows there (the page is sent `saved`) while it is said; the
+     chat is named, and what the Agent learned is saved, while it is said.
 
 The speech model is `openai/gpt-audio` through OpenRouter, the turn is written down by `deepgram/nova-3`, and the
 short spoken version is written by `anthropic/claude-haiku-5.5` (`VOICE_WRITER_MODEL` changes that). The Agent's own
@@ -112,6 +118,24 @@ Measured on a test database with four made-up houses:
   keeps to the provider that served its first turn, and what each model call cost is saved without the answer
   waiting for the database. Not helping: OpenRouter's "fastest" providers (slower, 4.3 to 5.8 seconds a turn), and
   Haiku writing the answer (5.6 seconds: it thought longer).
+- On 16 November 2026, two more steps (run.js). The answer is started as soon as a turn of the data step brings its
+  lookups back, while the data step takes its next turn, which usually only marks the plan done (1.4 to 3.4 seconds
+  on the two questions): it is used when that turn looks nothing more up and leaves each step of the plan as the
+  early answer was told (not when it cancels a step it could not do), and stopped as soon as it looks more up (what
+  it was sent is still counted as spent). Only for an answer that thinks briefly (`QUICK`), and not while a step of
+  the plan is still to be started; typed questions get it too. And a spoken answer is said from its opening
+  paragraph, as above, which means it is streamed: a stream that fails part-way, or stops without its end, is asked
+  for again like any failed model call (its opening is only passed on once). The same two spoken questions: the spoken answer started 9.6 and 12.3 seconds after the turn was sent
+  (14.7 and 15.6 before), and the written answer was in the chat after 8.4 and 11.4 seconds (12.2 and 12.8). What
+  is left is mostly the speech model deciding where the turn goes (1.4 to 1.5 seconds), the plan (1.8 to 3.9), the
+  data step's first turn (1.2 to 2), the answer up to the end of its opening (1 to 4) and the speech model starting
+  to say it (1.1 to 1.3).
+- Tried for that and left out: having the answer step write the spoken version itself, in a "Say:" line before the
+  written answer or after its first paragraph. That line was ready about a second and a half into the answer, but
+  the written answer got worse. Asked which loans mature in the next 90 days when the nearest was two days past
+  that, it opened "One loan matures in the next 90 days" (and then said it was outside) on 5 replays of 5, where the
+  answer step as it is opened "No open loan matures in the next 90 days" on 3 of 3. The plan step thinking briefly
+  made no difference once its instructions were cached (1.6 to 1.9 seconds against 1.7).
 - A question someone talked over while the Agent worked on it is answered all the same. The answer goes under its
   question in the chat, also when other things were said meanwhile; once the page is free it asks
   `GET /api/agent/voice/answer` whether it is ready, shows it, and has it said (`POST` the same address: "Your

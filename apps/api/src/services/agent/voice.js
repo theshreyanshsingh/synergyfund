@@ -484,8 +484,9 @@ export async function decide({ user, history, turn, meter }) {
   return parseVerdict(response.content)
 }
 
-// What the Agent says of its written answer ("" when the writer has nothing to say).
-export async function spokenVersion({ user, question, answer, meter }) {
+// What the Agent says of its written answer ("" when the writer has nothing to say). `opening`: only the answer's
+// opening paragraph is written yet (the rest is on its way to the screen).
+export async function spokenVersion({ user, question, answer, meter, opening = false }) {
   const response = await chat({
     model: WRITER_MODEL,
     temperature: 0.2,
@@ -496,7 +497,7 @@ export async function spokenVersion({ user, question, answer, meter }) {
     extra: { reasoning: { enabled: false } },
     messages: [
       { role: "system", content: spokenInstructions(user) },
-      { role: "user", content: `What ${firstName(user)} asked:\n${question}\n\nThe written answer on their screen:\n${String(answer || "").slice(0, 12000)}` },
+      { role: "user", content: `What ${firstName(user)} asked:\n${question}\n\n${opening ? "The opening of the written answer (the rest of it is still being written, and they will see it on their screen)" : "The written answer on their screen"}:\n${String(answer || "").slice(0, 12000)}` },
     ],
   })
   return spokenLine(response.content)
@@ -805,17 +806,45 @@ export async function voiceTurn({ user, permissions, thread, wav, out, signal, t
     progressed = true
     if (recordedNow(PROGRESS_LINES[tool], settings, meter)) tell(PROGRESS_LINES[tool])
   }
+  // Nothing more is said while the Agent works once its answer is on its way.
+  const answerComing = () => {
+    written = true
+    clearTimeout(nudge)
+  }
+  // The answer is said from its opening paragraph as soon as that is written and the answer is known to be the one
+  // used, while the rest is still being written (onLead): the writer starts on every opening at once, and the first
+  // one used is said, after the lines said meanwhile. `leading`: what was said of it (null: nothing, so the whole
+  // answer is said once saved; { failed } when the speech failed).
+  let leading = null
+  const lead = (opening, used) => {
+    if (signal?.aborted) return
+    const line = openingLine({ user, question, opening, meter })
+    used.then((yes) => {
+      if (!yes || leading || signal?.aborted) return
+      answerComing()
+      leading = line.then(async (text) => {
+        await telling
+        if (!text || signal?.aborted) return null
+        out.send({ t: "answering" })
+        return sayLine({ line: text, soFar: [...soFar, { role: "assistant", content: told.join(" ") }], settings, meter, signal, out, say }).catch((error) => {
+          if (signal?.aborted) return null
+          console.error("Agent voice: the answer could not be said:", error.message)
+          return { failed: true }
+        })
+      })
+    })
+  }
   // Asked exactly as a typed question is. It saves its answer to the chat itself, also when the person has gone. Its
-  // answer is said as soon as it is saved: the chat's name (and what was learned) are saved while it is said.
+  // answer is said from its opening, or else as soon as it is saved: the chat's name (and what was learned) are saved
+  // while it is said.
   let saved
   const answering = new Promise((resolve) => { saved = resolve })
-  const asking = runAgent({ user, permissions, thread, prompt: question, res: progressTo(out, lookedUp), settings: await agentSettings(), learnGraceMs: 0, onAnswer: saved, spoken: true })
+  const asking = runAgent({ user, permissions, thread, prompt: question, res: progressTo(out, lookedUp), settings: await agentSettings(), learnGraceMs: 0, onAnswer: saved, spoken: true, onLead: lead })
   let answer
   try {
     answer = await Promise.race([answering, asking.then(() => thread.messages[thread.messages.length - 1])])
   } finally {
-    written = true
-    clearTimeout(nudge)
+    answerComing()
   }
   // Talked over while it worked, the person may have said more meanwhile: the answer goes under its question.
   if (signal?.aborted && answer?._id) await keepTogether(thread._id, asked._id, answer._id)
@@ -823,16 +852,18 @@ export async function voiceTurn({ user, permissions, thread, wav, out, signal, t
   // The written answer is in the chat: the page shows it while the Agent says its short version.
   out.send({ t: "saved" })
   const answered = answer?.role === "assistant" && !answer.error
-  let spoken = ""
-  if (!signal?.aborted) {
+  let reply = leading && (await leading)
+  // (An answer that failed after its opening was said is said to have failed all the same.)
+  if (!answered) reply = null
+  if (!reply && !signal?.aborted) {
     const line = answered ? await answerLine({ user, question, answer, meter }) : FAILED_LINE
-    const reply = await sayLine({ line, soFar: [...soFar, { role: "assistant", content: told.join(" ") }], settings, meter, signal, out, say }).catch((error) => {
+    reply = await sayLine({ line, soFar: [...soFar, { role: "assistant", content: told.join(" ") }], settings, meter, signal, out, say }).catch((error) => {
       if (!signal?.aborted) console.error("Agent voice: the answer could not be said:", error.message)
-      return null
+      return { failed: true }
     })
-    spoken = reply?.text.trim() || ""
-    if (!reply && !signal?.aborted) out.send({ t: "status", title: ON_SCREEN_LINE })
   }
+  const spoken = reply?.text?.trim() || ""
+  if (reply?.failed && !signal?.aborted) out.send({ t: "status", title: ON_SCREEN_LINE })
   if (answered && spoken) {
     await AgentThread.updateOne({ _id: thread._id, "messages._id": answer._id }, { $set: { "messages.$.spoken": spoken, "messages.$.voice": true } }, { timestamps: false })
   }
@@ -848,6 +879,21 @@ async function answerLine({ user, question, answer, meter }) {
     return ""
   }))
   return written || ON_SCREEN_LINE
+}
+
+// Said after an answer's opening paragraph when that is said as written. (The rest of the answer may not be on the
+// screen yet when this is said, or it may be already.)
+export const DETAILS_LINE = "You'll see the details on your screen."
+
+// What the Agent says of an answer from its opening paragraph alone, the rest being still on its way to the screen:
+// a short, plain, whole sentence or two as written, otherwise as the writer puts it ("" when it cannot be written).
+async function openingLine({ user, question, opening, meter }) {
+  const plain = sayableAnswer(opening)
+  if (plain && /[.!?]$/.test(plain)) return `${plain} ${DETAILS_LINE}`
+  return spokenVersion({ user, question, answer: opening, meter, opening: true }).catch((error) => {
+    console.error("Agent voice: the spoken answer could not be written:", error.message)
+    return ""
+  })
 }
 
 /* ---------- an answer the person talked over ---------- */

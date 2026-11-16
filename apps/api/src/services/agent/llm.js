@@ -184,23 +184,103 @@ function cachedInstructions(model, messages) {
   return [{ ...first, content: [{ type: "text", text: first.content, cache_control: { type: "ephemeral" } }] }, ...rest]
 }
 
+// A streamed answer read as it comes: `onText(text, { calling })` gets the text so far after each piece (`calling`:
+// a tool call has begun). Gives what a whole answer gives ({ data, streamed }); a service that answers in one piece
+// anyway is read as one, and a stream that stops before its end is a failure (what came of it is not the answer).
+async function readAnswer(response, onText) {
+  if (!/event-stream/i.test(response.headers.get("content-type") || "")) {
+    const data = await response.json().catch(() => ({}))
+    const content = data.choices?.[0]?.message?.content
+    if (!data.error && typeof content === "string" && content) onText(content, { calling: Boolean(data.choices[0].message.tool_calls?.length) })
+    return { data, streamed: false }
+  }
+  let content = ""
+  let usage = null
+  let provider = ""
+  let error = null
+  // (The service ends a whole answer with a reason it finished, then [DONE].)
+  let finished = false
+  const calls = []
+  const decoder = new TextDecoder()
+  let rest = ""
+  const read = (line) => {
+    if (!line.startsWith("data:")) return false
+    const text = line.slice(5).trim()
+    if (text === "[DONE]") {
+      finished = true
+      return true
+    }
+    let piece
+    try {
+      piece = JSON.parse(text)
+    } catch {
+      return false
+    }
+    if (piece?.error) {
+      error = piece.error
+      return true
+    }
+    if (piece?.usage) usage = piece.usage
+    if (typeof piece?.provider === "string") provider ||= piece.provider
+    if (piece?.choices?.[0]?.finish_reason) finished = true
+    const delta = piece?.choices?.[0]?.delta || {}
+    for (const call of delta.tool_calls || []) {
+      const at = Number.isInteger(call.index) ? call.index : calls.length
+      calls[at] ||= { id: "", type: "function", function: { name: "", arguments: "" } }
+      if (call.id) calls[at].id = call.id
+      if (call.function?.name) calls[at].function.name += call.function.name
+      if (call.function?.arguments) calls[at].function.arguments += call.function.arguments
+    }
+    if (typeof delta.content === "string" && delta.content) {
+      content += delta.content
+      onText(content, { calling: calls.length > 0 })
+    }
+    return false
+  }
+  reading: for await (const chunk of response.body) {
+    rest += decoder.decode(chunk, { stream: true })
+    for (let end = rest.indexOf("\n"); end !== -1; end = rest.indexOf("\n")) {
+      const line = rest.slice(0, end).trim()
+      rest = rest.slice(end + 1)
+      if (read(line)) break reading
+    }
+  }
+  if (rest.trim()) read(rest.trim())
+  if (!error && !finished) error = { message: "The model's answer was cut off.", code: 502 }
+  const message ={ role: "assistant", content, ...(calls.length ? { tool_calls: calls.filter(Boolean) } : {}) }
+  return { data: error ? { error } : { provider, usage, choices: [{ message }] }, streamed: true }
+}
+
+// What a call stopped part-way would have been charged for its instructions, by their length (about four characters
+// a token), when the service could not say.
+function stoppedUsage(body) {
+  return { prompt_tokens: Math.round(JSON.stringify(body.messages || []).length / 4), completion_tokens: 0 }
+}
+
 // `extra`: more request settings for this call only, such as { reasoning: { effort: "low" } }. `meter`: what the call
 // is for and who for (createMeter); every call is counted against the team's monthly budget. `attempts`: how many
 // times a busy or failing model service is tried. `cache`: the instructions are cached (cachedInstructions).
+// `onText(text, { calling })`: the answer is streamed and this gets its text so far as it comes (see readAnswer); a
+// call that fails part-way is tried again like any other, and this then gets the new answer's text from its start.
+// `signal`: stops the call (it then throws an AbortError, and what it cost so far is counted from its length).
 // Gives { content, toolCalls, provider }, `provider` being who served it ("Io Net").
-export async function chat({ model, messages, tools, toolChoice, temperature = 0.2, maxTokens = 4000, tracker, extra = null, timeoutMs = TIMEOUT_MS, meter = null, attempts = MAX_ATTEMPTS, cache = false }) {
+export async function chat({ model, messages, tools, toolChoice, temperature = 0.2, maxTokens = 4000, tracker, extra = null, timeoutMs = TIMEOUT_MS, meter = null, attempts = MAX_ATTEMPTS, cache = false, onText = null, signal = null }) {
   const key = modelKey()
   if (!key) throw new Error("The agent is not connected to a model yet. Add OPENROUTER_API_KEY to the server .env file.")
   await checkBudget(meter)
   const body = { model, messages: cache ? cachedInstructions(model, messages) : messages, temperature, max_tokens: maxTokens, ...(extra || {}) }
+  if (onText) Object.assign(body, { stream: true, usage: { include: true } })
   if (tools?.length) {
     body.tools = tools
     if (toolChoice) body.tool_choice = toolChoice
   }
   let lastError = null
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (signal?.aborted) throw stopped()
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const stop = () => controller.abort()
+    signal?.addEventListener("abort", stop, { once: true })
     try {
       const response = await fetch(`${(process.env.OPENROUTER_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "")}/chat/completions`, {
         method: "POST",
@@ -213,10 +293,13 @@ export async function chat({ model, messages, tools, toolChoice, temperature = 0
         body: JSON.stringify(body),
         signal: controller.signal,
       })
-      const data = await response.json().catch(() => ({}))
+      const streaming = onText && response.ok
+      const data = streaming ? (await readAnswer(response, onText)).data : await response.json().catch(() => ({}))
       if (!response.ok || data.error) {
         const message = data.error?.message || `The model service answered ${response.status}.`
-        const retryable = response.status === 429 || response.status >= 500
+        // (A stream that fails part-way says why in its last piece, with a status code or none.)
+        const status = streaming ? Number(data.error?.code) || 502 : response.status
+        const retryable = status === 429 || status >= 500
         lastError = new Error(message)
         lastError.fatal = !retryable
         if (!retryable || attempt === attempts) throw lastError
@@ -234,12 +317,25 @@ export async function chat({ model, messages, tools, toolChoice, temperature = 0
         }
       }
     } catch (error) {
+      if (signal?.aborted) {
+        // (Stopped by the caller: it is charged for what it was sent.)
+        noteUsage({ meter, model, usage: stoppedUsage(body) })
+        throw stopped()
+      }
       lastError = error.name === "AbortError" ? new Error("The model took too long to answer.") : error
       if (lastError.fatal || attempt === attempts) throw lastError
     } finally {
       clearTimeout(timer)
+      signal?.removeEventListener("abort", stop)
     }
     await wait(500 * 2 ** (attempt - 1))
   }
   throw lastError || new Error("The model did not answer.")
+}
+
+function stopped() {
+  const error = new Error("The model call was stopped.")
+  error.name = "AbortError"
+  error.stopped = true
+  return error
 }

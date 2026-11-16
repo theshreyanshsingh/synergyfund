@@ -159,11 +159,12 @@ export function useAgentVoice({ threadId = "", temporary = false, streaming = fa
 
   // The exchange under way is dropped: the upload or the answer is cancelled and the voice falls silent. The chat
   // shows what the server had saved of it by then. `later`: a question for the records that is in the chat but not yet
-  // answered is answered all the same, and its answer is then shown ("show") or also said ("say").
+  // answered is answered all the same, and its answer is then shown ("show") or also said ("say"; only shown when the
+  // person talked over the answer itself, which is said from its opening before it is saved).
   function drop(run, later = "") {
     const turn = run.turn
     const spoken = turn?.spoken
-    if (later && spoken && turn.asked && turn.inChat && turn.questionId && !turn.saved && run.chatId) run.late.push({ chatId: run.chatId, question: turn.questionId, say: later === "say", since: Date.now() })
+    if (later && spoken && turn.asked && turn.inChat && turn.questionId && !turn.saved && run.chatId) run.late.push({ chatId: run.chatId, question: turn.questionId, say: later === "say" && !turn.answering, since: Date.now() })
     run.turn?.abort.abort()
     run.turn = null
     run.player?.stop()
@@ -208,6 +209,8 @@ export function useAgentVoice({ threadId = "", temporary = false, streaming = fa
         show(turn)
       }
     } else if (event.t === "audio") run.player.push(event.d)
+    // The Agent has started saying its answer, before the whole of it is written.
+    else if (event.t === "answering") turn.answering = true
     else if (event.t === "saved") {
       // The written answer is in the chat: it shows, with its cards, while the Agent says its short version. (The
       // Agent is shown at work until it is on screen.)
@@ -265,7 +268,7 @@ export function useAgentVoice({ threadId = "", temporary = false, streaming = fa
   // once it has been heard the Agent listens again.
   async function exchange(run, path, body, { samples = NO_SOUND, takeBacks = 0 } = {}) {
     run.turns += 1
-    const turn = { abort: new AbortController(), kind: path, spoken: path === "turn", key: run.turns, samples, takeBacks, heard: "", reply: "", asked: false, routed: false, routedAt: 0, inChat: false, saved: false, shown: null, done: false, failed: "", status: 0 }
+    const turn = { abort: new AbortController(), kind: path, spoken: path === "turn", key: run.turns, samples, takeBacks, heard: "", reply: "", asked: false, routed: false, routedAt: 0, inChat: false, answering: false, saved: false, shown: null, done: false, failed: "", status: 0 }
     drop(run)
     run.turn = turn
     setState(path === "greet" ? "starting" : "thinking")

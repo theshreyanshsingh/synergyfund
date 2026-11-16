@@ -23,9 +23,11 @@ const { AgentSetting, AgentThread, AiMonth, AiUsage } = await import("../src/mod
 const voice = await import("../src/services/agent/voice.js")
 const llm = await import("../src/services/agent/llm.js")
 const catalog = await import("../src/services/agent/catalog.js")
-const { runAgent } = await import("../src/services/agent/run.js")
+const { openingOf, runAgent } = await import("../src/services/agent/run.js")
 const { voiceRouter } = await import("../src/routes/voice.js")
 const { ABOUT_LINE, GREETING_LINE, HOLD_LINE, STILL_LINE, ON_SCREEN_LINE, FAILED_LINE, PATIENCE } = voice
+// What is said of WRITTEN when it is said from its opening paragraph (short and plain, so as written).
+const OPENING = `You have 3 houses. ${voice.DETAILS_LINE}`
 
 const sam = { _id: new mongoose.Types.ObjectId(), name: "Sam Taylor", role: "admin" }
 const SETTINGS = { voice: "cedar", accent: "australian" }
@@ -108,6 +110,21 @@ async function startFakeModelService() {
     // A lookup the Agent makes for a question (a tool's name): it plans one step, its data step looks it up and then
     // marks the plan done, and it answers. Unset: its plan step answers at once.
     lookup: null,
+    // A second lookup its data step makes on its second turn (then it marks the plan done on its third).
+    nextLookup: null,
+    // A second step in its plan, started once the first is done.
+    secondStep: false,
+    // How long the data step takes over each turn after its first.
+    dataAfter: 0,
+    // The Agent's answer (streamed): how long before it starts, and between its opening paragraph and the rest.
+    answerAfter: 0,
+    answerPause: 0,
+    answersStopped: 0,
+    // For the next streamed answers, in order, how each breaks off after its opening paragraph: a status code (the
+    // service says it failed) or "cut" (the stream just ends).
+    answerBreaks: [],
+    // How the data step leaves its plan once it has the facts.
+    lastStatus: "completed",
     titleAfter: 0,
     memoryAfter: 0,
   })
@@ -118,7 +135,8 @@ async function startFakeModelService() {
     res.writeHead(200, { "Content-Type": "application/json" })
     res.end(JSON.stringify({ provider: "Io Net", choices: [{ message: { role: "assistant", content, ...(tool_calls.length ? { tool_calls } : {}) } }], usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 } }))
   }
-  const plan = (status) => ["todo_write", { todos: [{ id: "1", content: "Find the loans", status }] }]
+  // (With `secondStep`, a second step that is only started once the first is done.)
+  const plan = (status) => ["todo_write", { todos: [{ id: "1", content: "Find the loans", status }, ...(state.secondStep ? [{ id: "2", content: "Find the payments", status: status === "in_progress" ? "pending" : status }] : [])] }]
   const server = http.createServer(async (req, res) => {
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
@@ -135,7 +153,7 @@ async function startFakeModelService() {
       return
     }
     const body = JSON.parse(Buffer.concat(chunks).toString() || "{}")
-    state.requests.push({ path, body })
+    state.requests.push({ path, body, at: Date.now() })
     if (req.headers.authorization !== "Bearer test-key") {
       res.writeHead(401, { "Content-Type": "application/json" })
       res.end(JSON.stringify({ error: { message: "No auth credentials found" } }))
@@ -148,6 +166,42 @@ async function startFakeModelService() {
       return
     }
     const system = instructionsOf(body)
+    if (system.includes("Write the answer to the person's question")) {
+      let ended = false
+      res.on("close", () => {
+        if (!ended) state.answersStopped += 1
+      })
+      await wait(state.answerAfter)
+      if (res.destroyed) return
+      if (!body.stream) {
+        ended = true
+        return whole(res, state.written)
+      }
+      // The Agent's answer, streamed a few words at a time: its opening paragraph and the first word after it, then
+      // (after `answerPause`) the rest.
+      res.writeHead(200, { "Content-Type": "text/event-stream" })
+      const [opening, ...rest] = state.written.split("\n\n")
+      const pieces = (text) => text.match(/\S+\s*/g) || []
+      const put = (text) => !res.destroyed && res.write(text)
+      for (const piece of pieces(opening)) put(sse({ content: piece }, { provider: "Io Net" }))
+      if (rest.length) {
+        const [next, ...more] = pieces(rest.join("\n\n"))
+        put(sse({ content: `\n\n${next}` }))
+        const broken = state.answerBreaks.shift()
+        if (broken) {
+          ended = true
+          res.end(broken === "cut" ? "" : `data: ${JSON.stringify({ error: { message: "Provider returned error", code: broken } })}\n\n`)
+          return
+        }
+        await wait(state.answerPause)
+        if (res.destroyed) return
+        for (const piece of more) put(sse({ content: piece }))
+      }
+      res.write(sse({}, { usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 } }))
+      ended = true
+      res.end("data: [DONE]\n\n")
+      return
+    }
     if (!body.stream) {
       if (body.modalities?.length === 1 && body.modalities[0] === "text") {
         await wait(state.decideAfter)
@@ -176,7 +230,9 @@ async function startFakeModelService() {
       if (state.lookup && system.startsWith("You are the data step")) {
         const turn = (state.dataTurns = (state.dataTurns || 0) + 1)
         if (turn === 1) return whole(res, "", [plan("in_progress"), [state.lookup, {}]])
-        if (turn === 2) return whole(res, "Found the loans.", [plan("completed")])
+        await wait(state.dataAfter)
+        if (turn === 2 && state.nextLookup) return whole(res, "", [[state.nextLookup, {}]])
+        if (turn === 2 || (turn === 3 && state.nextLookup)) return whole(res, "Found the loans.", [plan(state.lastStatus)])
         return whole(res, "Still the loans.")
       }
       // The Agent's plan step: answering without a tool call is its answer.
@@ -221,10 +277,10 @@ async function startFakeModelService() {
     state,
     reset,
     stop: () => new Promise((resolve) => server.close(resolve)),
-    // What was asked of the speech model aloud, of the deciding model, and so on.
-    spoken: () => state.requests.filter((request) => request.body.stream).map((request) => request.body),
-    decisions: () => state.requests.filter((request) => !request.body.stream && request.body.modalities).map((request) => request.body),
-    written: () => state.requests.filter((request) => request.path.endsWith("/chat/completions") && !request.body.stream && !request.body.modalities).map((request) => request.body),
+    // What was asked of the speech model aloud, of the deciding model, and of the text models.
+    spoken: () => state.requests.filter((request) => request.body.modalities?.includes("audio")).map((request) => request.body),
+    decisions: () => state.requests.filter((request) => request.body.modalities && !request.body.modalities.includes("audio")).map((request) => request.body),
+    written: () => state.requests.filter((request) => request.path.endsWith("/chat/completions") && !request.body.modalities).map((request) => request.body),
   }
 }
 
@@ -654,25 +710,27 @@ test("only a short, plain written answer is said as it is", () => {
 })
 
 test("after its first lookup the Agent says what it is looking at, once its line is recorded", async () => {
+  await modelsKnown()
   Object.assign(model.state, { verdict: "ASK\nWhich loans mature soon?", lookup: "list_loans" })
   const line = voice.PROGRESS_LINES.list_loans
   const first = await takeTurn()
   // The first time, the line is only recorded: no answer waits for it.
-  assert.equal(first.out.said(), `${HOLD_LINE} ${SPOKEN}`)
+  assert.equal(first.out.said(), `${HOLD_LINE} ${OPENING}`)
   assert.ok(first.out.of("status").some((event) => event.title === "Reading loans"))
   // The data step looked the loans up and marked its plan done, and that ended it: no turn more just to say so.
   const dataSteps = () => model.written().filter((body) => instructionsOf(body).startsWith("You are the data step"))
   assert.equal(dataSteps().length, 2)
+  // (Its answer was written from the loans while it marked the plan done.)
   const answering = model.written().find((body) => instructionsOf(body).includes("Write the answer to the person's question"))
-  assert.match(answering.messages[answering.messages.length - 1].content, /Notes from the data step - Found the loans\.[\s\S]*### list_loans/)
+  assert.match(answering.messages[answering.messages.length - 1].content, /"status":"completed"[\s\S]*Notes from the data step - none[\s\S]*### list_loans/)
   await until(() => model.spoken().some((body) => lineAsked(body) === line))
   await named(first.thread._id)
 
   // From then on it is said after the hold line, while the Agent works.
   const second = await takeTurn()
-  assert.equal(second.out.said(), `${HOLD_LINE} ${line} ${SPOKEN}`)
+  assert.equal(second.out.said(), `${HOLD_LINE} ${line} ${OPENING}`)
   assert.equal(model.spoken().filter((body) => lineAsked(body) === line).length, 1)
-  const saying = model.spoken().filter((body) => lineAsked(body) === SPOKEN).pop()
+  const saying = model.spoken().filter((body) => lineAsked(body) === OPENING).pop()
   assert.deepEqual(saying.messages[2], { role: "assistant", content: `${HOLD_LINE} ${line}` })
   await named(second.thread._id)
 })
@@ -691,7 +749,7 @@ test("the Agent thinks briefly where that is enough, caches its instructions, an
   await modelsKnown()
   Object.assign(model.state, { verdict: "ASK\nWhich loans mature soon?", lookup: "list_loans" })
   const { out } = await takeTurn()
-  assert.equal(out.said(), `${HOLD_LINE} ${SPOKEN}`)
+  assert.equal(out.said(), `${HOLD_LINE} ${OPENING}`)
   const [plan] = step("Your job in this step")
   const data = step("You are the data step")
   const [answer] = step("Write the answer to the person's question")
@@ -732,6 +790,139 @@ test("a model not known to take a setting is not sent it", async () => {
   assert.ok(step("You are the data step").length >= 2)
 })
 
+test("an answer is started as soon as the lookups are back, and used when the data step looks up nothing more", async () => {
+  await modelsKnown()
+  Object.assign(model.state, { lookup: "list_loans", dataAfter: 300 })
+  const thread = newChat([{ role: "user", content: "Which loans mature soon?" }])
+  await runAgent({ user: sam, permissions: permissionsFor(sam), thread, prompt: "Which loans mature soon?", res: silent, settings: await llm.agentSettings() })
+  const asked = (text) => model.state.requests.filter((request) => instructionsOf(request.body).includes(text))
+  const answers = asked("Write the answer to the person's question")
+  const data = asked("You are the data step")
+  // One answer, asked for while the data step's last turn (300 ms here) was still under way.
+  assert.equal(answers.length, 1)
+  assert.equal(data.length, 2)
+  assert.ok(answers[0].at - data[1].at < 250, `the answer was asked for ${answers[0].at - data[1].at} ms into the data step's last turn`)
+  assert.equal(model.state.answersStopped, 0)
+  assert.deepEqual([thread.messages[1].content, thread.messages[1].error], [WRITTEN, false])
+})
+
+test("an early answer is stopped when the data step looks up more, and the answer is written from everything", async () => {
+  await modelsKnown()
+  Object.assign(model.state, { lookup: "list_loans", nextLookup: "list_properties", dataAfter: 150, answerAfter: 400 })
+  const thread = newChat([{ role: "user", content: "Which loans mature soon?" }])
+  await runAgent({ user: sam, permissions: permissionsFor(sam), thread, prompt: "Which loans mature soon?", res: silent, settings: await llm.agentSettings() })
+  const answers = step("Write the answer to the person's question").map((body) => body.messages[body.messages.length - 1].content)
+  assert.equal(answers.length, 2)
+  assert.equal(model.state.answersStopped, 1)
+  assert.doesNotMatch(answers[0], /### list_properties/)
+  assert.match(answers[1], /### list_loans[\s\S]*### list_properties/)
+  assert.equal(thread.messages[1].content, WRITTEN)
+  // What the stopped one was sent is counted as spent, by its length.
+  await llm.usageSettled()
+  const answering = await AiUsage.find({ model: "anthropic/claude-sonnet-5.5" }).lean()
+  assert.ok(answering.some((usage) => usage.estimated && usage.promptTokens > 100))
+})
+
+test("no answer is started early while a step of the plan is still to be started", async () => {
+  await modelsKnown()
+  Object.assign(model.state, { lookup: "list_loans", secondStep: true, dataAfter: 150 })
+  const thread = newChat([{ role: "user", content: "Which loans and payments are due?" }])
+  await runAgent({ user: sam, permissions: permissionsFor(sam), thread, prompt: "Which loans and payments are due?", res: silent, settings: await llm.agentSettings() })
+  const asked = (text) => model.state.requests.filter((request) => instructionsOf(request.body).includes(text))
+  const [answer, ...more] = asked("Write the answer to the person's question")
+  assert.equal(more.length, 0)
+  // (Asked for once the data step's last turn had come back.)
+  assert.ok(answer.at - asked("You are the data step")[1].at >= 140)
+  assert.equal(thread.messages[1].content, WRITTEN)
+})
+
+test("an answer's opening paragraph is known once it is written and more has begun after it", () => {
+  // Not yet: the paragraph may still be being written, or nothing has begun after it.
+  for (const text of ["", "You have **3 houses**.", "You have **3 houses**.\n\n", "No loan matures soon.\nThe clos", "1"]) assert.equal(openingOf(text), "", text)
+  assert.equal(openingOf("You have **3 houses**.\n\n|"), "You have **3 houses**.")
+  assert.equal(openingOf("\nNo loan matures soon.\nThe closest is in May.\n\nMore"), "No loan matures soon. The closest is in May.")
+  assert.equal(openingOf("**No loans** mature soon.\n\nMore"), "**No loans** mature soon.")
+  assert.equal(openingOf("Is it the loan on 88 Demo Rd?\n\nMore"), "Is it the loan on 88 Demo Rd?")
+  // None to say: the answer opens with a table, list, heading or block, or with a line that is not a whole sentence.
+  const none = ["| Address | Status |\n|---|---|\n", "| Addr", "## Loans\n\nKiavi", "- Kiavi\n- Lima One\n\nMore", "```email\nTo: jane@example.com\n```\n\nMore", "Two loans:\n- Kiavi", "Hi Jane,\n\nThanks for", "**Summary**\n\nMore", "[Purchase Contract.pdf](/documents/abc)\n\nMore", "Subject: Payoff for 88 Demo Rd\n\nHi"]
+  for (const text of none) assert.equal(openingOf(text), null, text)
+})
+
+test("an answer whose stream fails part-way or stops before its end is asked for again, and its opening passed on once", async () => {
+  await modelsKnown()
+  Object.assign(model.state, { lookup: "list_loans", answerBreaks: [502, "cut"] })
+  const thread = newChat([{ role: "user", content: "Which loans mature soon?" }])
+  const openings = []
+  await runAgent({ user: sam, permissions: permissionsFor(sam), thread, prompt: "Which loans mature soon?", res: silent, settings: await llm.agentSettings(), onLead: (opening, used) => openings.push(opening) })
+  assert.equal(step("Write the answer to the person's question").length, 3)
+  assert.deepEqual([thread.messages[1].content, thread.messages[1].error], [WRITTEN, false])
+  assert.deepEqual(openings, ["You have **3 houses**."])
+})
+
+test("an early answer is not used when the data step leaves the plan otherwise than it was told", async () => {
+  await modelsKnown()
+  Object.assign(model.state, { lookup: "list_loans", lastStatus: "cancelled", dataAfter: 150 })
+  const thread = newChat([{ role: "user", content: "Which loans mature soon?" }])
+  await runAgent({ user: sam, permissions: permissionsFor(sam), thread, prompt: "Which loans mature soon?", res: silent, settings: await llm.agentSettings() })
+  const plans = step("Write the answer to the person's question").map((body) => /Plan - (.*)/.exec(body.messages[body.messages.length - 1].content)[1])
+  // The early one was told the step was done; the one used, that it was cancelled.
+  assert.equal(plans.length, 2)
+  assert.match(plans[0], /"status":"completed"/)
+  assert.match(plans[1], /"status":"cancelled"/)
+  assert.equal(thread.messages[1].content, WRITTEN)
+})
+
+test("a spoken answer is said from its opening as soon as that is written, before the rest is", async () => {
+  await modelsKnown()
+  Object.assign(model.state, { verdict: "ASK\nHow many houses do we have?", lookup: "list_properties", answerPause: 300 })
+  const { out, thread } = await takeTurn()
+  assert.equal(out.said(), `${HOLD_LINE} ${OPENING}`)
+  // The page is told the answer has begun, and hears it, before the whole of it is in the chat.
+  const kinds = out.kinds()
+  const saved = kinds.indexOf("saved")
+  assert.ok(kinds.indexOf("answering") !== -1 && kinds.indexOf("answering") < saved)
+  assert.ok(kinds.indexOf("audio", kinds.indexOf("answering")) < saved)
+  // A short, plain opening is said as written; the whole answer is in the chat, said as that.
+  assert.equal(writerAsked().length, 0)
+  assert.deepEqual([thread.messages[1].content, thread.messages[1].spoken], [WRITTEN, OPENING])
+  assert.equal(out.events[out.events.length - 1].spoken, OPENING)
+  await named(thread._id)
+})
+
+test("a longer opening is put in spoken words by the writer, which is told more follows on the screen", async () => {
+  await modelsKnown()
+  const written = "You have **3 houses** worth $412,000, bought for $300,000 in 2025, with $45,000 of rehab left.\n\n| Address | Status |\n|---|---|\n| 88 Demo Rd | Rehab |"
+  Object.assign(model.state, { verdict: "ASK\nHow many houses do we have?", lookup: "list_properties", written, answerPause: 300 })
+  const { out, thread } = await takeTurn()
+  assert.equal(out.said(), `${HOLD_LINE} ${SPOKEN}`)
+  assert.ok(out.kinds().indexOf("answering") < out.kinds().indexOf("saved"))
+  const [writer] = writerAsked()
+  assert.equal(writer.messages[1].content, `What Sam asked:\nHow many houses do we have?\n\nThe opening of the written answer (the rest of it is still being written, and they will see it on their screen):\n${written.split("\n\n")[0]}`)
+  assert.equal(thread.messages[1].spoken, SPOKEN)
+  await named(thread._id)
+})
+
+test("an answer that tells of a change to confirm is said from the whole of it", async () => {
+  await modelsKnown()
+  Object.assign(model.state, { verdict: "ASK\nRename the contract to 88 Demo PSA", lookup: "rename_document", answerPause: 100 })
+  const { out, thread } = await takeTurn()
+  assert.equal(out.said(), `${HOLD_LINE} ${SPOKEN}`)
+  assert.equal(out.of("answering").length, 0)
+  assert.equal(writerAsked()[0].messages[1].content, `What Sam asked:\nRename the contract to 88 Demo PSA\n\nThe written answer on their screen:\n${WRITTEN}`)
+  await named(thread._id)
+})
+
+test("the opening of an early answer that was dropped is not said", async () => {
+  await modelsKnown()
+  Object.assign(model.state, { verdict: "ASK\nWhich loans mature soon?", lookup: "list_loans", nextLookup: "list_properties", dataAfter: 150, answerPause: 400 })
+  const { out, thread } = await takeTurn()
+  assert.equal(model.state.answersStopped, 1)
+  assert.equal(out.said(), `${HOLD_LINE} ${OPENING}`)
+  assert.equal(model.spoken().filter((body) => lineAsked(body) === OPENING).length, 1)
+  assert.equal(thread.messages[1].spoken, OPENING)
+  await named(thread._id)
+})
+
 test("when the short answer cannot be written, the person is pointed to the screen", async () => {
   Object.assign(model.state, { verdict: "ASK\nHow many houses do we have?", writerFails: true })
   const { out, thread } = await takeTurn()
@@ -749,6 +940,15 @@ test("an answer the Agent could not finish is said to have failed", async () => 
   // No short version is written of an answer that is not there.
   assert.equal(model.written().filter((body) => instructionsOf(body).startsWith("You write what the SynergiFund Agent says aloud")).length, 0)
   assert.equal(out.events[out.events.length - 1].asked, true)
+})
+
+test("an answer that fails after its opening was said is said to have failed too", async () => {
+  await modelsKnown()
+  // (The early answer fails after its opening, and so does the one asked for once more.)
+  Object.assign(model.state, { verdict: "ASK\nHow many houses do we have?", lookup: "list_properties", answerBreaks: [400, 400] })
+  const { out, thread } = await takeTurn()
+  assert.equal(out.said(), `${HOLD_LINE} ${OPENING} ${FAILED_LINE}`)
+  assert.deepEqual([thread.messages[1].error, thread.messages[1].spoken], [true, undefined])
 })
 
 test("a person who leaves while the Agent works still gets the answer in the chat, unspoken", async () => {

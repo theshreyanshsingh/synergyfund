@@ -5,7 +5,8 @@ import { modelTakes, providerSlug, providerSlugs } from "./catalog.js"
 import { StreamProcessor, createRun } from "./stream.js"
 import { clientResult, executeTool, toolContent, toolSpecs, toolsFor } from "./tools.js"
 import { readAttachments } from "./attachments.js"
-import { CHANGE_TOOL } from "./proposals.js"
+import { CHANGE_TOOL, LOAN_CHANGE_TOOL } from "./proposals.js"
+import { RENAME_TOOL } from "./renames.js"
 import { learnFromMessage, memoriesFor, memoryOn, memoryPrompt, memoryRule } from "./memory.js"
 import { makePdfs, withPdfSources } from "./pdfs.js"
 import { TEAM_NOTE_TOOL, houseList, seesKnowledge, teamNotesPrompt } from "./knowledge.js"
@@ -29,6 +30,38 @@ const LEARN_GRACE_MS = 3000
 // review, the web, attached files) is answered with the model's full thought.
 const QUICK = { reasoning: { effort: "low" } }
 const WEIGHED = new Set(["arv_analysis", "stress_test", "check_records", "portfolio_summary", "web_search", "read_webpage"])
+// Lookups that prepare something for the person to confirm on a card: an answer that tells of one is said from the
+// whole of it (where it says to tap Confirm), never from its opening alone.
+const PREPARES = new Set([CHANGE_TOOL, LOAN_CHANGE_TOOL, RENAME_TOOL, TEAM_NOTE_TOOL])
+
+// A line that begins a list, table, heading, quote or block rather than a paragraph ("**Bold**" is a paragraph).
+const BLOCK_START = /^\s*(?:[-*•+]\s|>|\||#{1,6}\s|\d+[.)]\s|```)/
+
+// A paragraph that ends a sentence ("**No loans** mature soon." but not "Two loans:", "Hi Jane," or "**Summary**").
+const SENTENCE_END = /[.!?]["'”’)\]*_]*$/
+
+// The opening paragraph of an answer still being written (its direct answer, by the answer's instructions), once that
+// paragraph is complete and more has begun after it; "" until then. null when the answer has no such opening: it
+// opens with a table, list, heading or block, or with a line that is not a whole sentence (one that leads into a
+// list, a letter's greeting, a bold heading, a link).
+export function openingOf(text) {
+  const lines = String(text || "").replace(/^\s+/, "").split("\n")
+  const opening = []
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (!line.trim() || BLOCK_START.test(line)) {
+      const more = lines.slice(index).join("\n").trim()
+      if (!opening.length) return more ? null : ""
+      if (!more) return ""
+      const paragraph = opening.join(" ")
+      return SENTENCE_END.test(paragraph) ? paragraph : null
+    }
+    // (The last line may still be being written.)
+    if (index === lines.length - 1) return ""
+    opening.push(line.trim())
+  }
+  return ""
+}
 
 const FOLLOW_UP_TOOL = {
   type: "function",
@@ -308,8 +341,10 @@ async function chatTitle({ prompts, model, tracker, meter }) {
 // `learnGraceMs`: how long the answer waits for what was learned (a spoken answer waits for none: the notes join it
 // once ready). `onAnswer(message)`: called once the answer is saved in the chat, before the chat is named (a spoken
 // answer is said from then on; the run itself ends once the name is saved too). `spoken`: asked aloud (Talk), so it
-// is answered quickly (QUICK).
-export async function runAgent({ user, permissions, thread, prompt, attachments = [], res, settings, learn = true, learnGraceMs = LEARN_GRACE_MS, onAnswer = null, spoken = false }) {
+// is answered quickly (QUICK). `onLead(opening, used)`: the answer's opening paragraph as soon as it is written
+// (openingOf), while the rest is still being written, with a promise of whether this is the answer that will be
+// used (true, or false for an early one that was dropped); not for an answer that tells of a change to confirm.
+export async function runAgent({ user, permissions, thread, prompt, attachments = [], res, settings, learn = true, learnGraceMs = LEARN_GRACE_MS, onAnswer = null, spoken = false, onLead = null }) {
   const run = createRun({ ownerId: user._id })
   const stream = new StreamProcessor(res, run.runId)
   stream.start()
@@ -370,8 +405,73 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
     return { call, outcome, repeated: false }
   }
 
+  // Whether the answer thinks briefly (QUICK): for a spoken question, or a plain lookup of one or two steps.
+  const quickNow = () => (spoken || (context.todos.length <= 2 && !attachments.length && !evidence.some((item) => WEIGHED.has(item.tool)))) && modelTakes(settings.decisionModel, "reasoning")
+  // Passes the answer's opening paragraph to onLead once, as it is written. Settled at the first sign of what the
+  // answer opens with: an answer with no opening to say, or one that calls for more lookups first, passes nothing on
+  // (nor does the same answer asked for again after a failure).
+  const leadTo = (used) => {
+    if (!onLead || evidence.some((item) => PREPARES.has(item.tool))) return null
+    let settled = false
+    return (text, { calling }) => {
+      if (settled) return
+      const opening = calling ? null : openingOf(text)
+      if (opening === "") return
+      settled = true
+      if (opening) onLead(opening, used)
+    }
+  }
+  // One go at the answer from the evidence so far. `todos`: the plan as the answer is shown it. `used`: a promise of
+  // whether this answer is the one used (leadTo).
+  const answerFrom = ({ question, canFollowUp, todos, notes, signal = null, used = Promise.resolve(true) }) => chat({
+    model: settings.decisionModel,
+    tracker,
+    meter,
+    cache: true,
+    extra: quickNow() ? QUICK : null,
+    temperature: 0.3,
+    maxTokens: 5000,
+    tools: canFollowUp ? [FOLLOW_UP_TOOL] : undefined,
+    signal,
+    onText: leadTo(used),
+    messages: [
+      { role: "system", content: answerPrompt(user, canFollowUp, canPropose, memory, knowledge) },
+      ...history,
+      {
+        role: "user",
+        content: `Question - ${question}\n\nPlan - ${JSON.stringify(todos)}\n\nNotes from the data step - ${notes.filter(Boolean).join("\n") || "none"}\n\nEvidence:\n${evidenceText(evidence)}`,
+      },
+    ],
+  })
+  // A quick answer is started as soon as a turn's lookups are back, while the data step takes its next turn. That
+  // turn usually only marks the plan done (one to three seconds), and then this answer is the one used; it is
+  // stopped as soon as the data step looks up more, and not used when the data step left its plan otherwise than it
+  // was told (a step cancelled because it could not be done, a step added). (`count`: how much evidence it was
+  // written from; `plan`: each step's status as it was told them.)
+  const planShape = (todos) => todos.map((todo) => `${todo.id}:${todo.status}`).join(",")
+  let early = null
+  const dropEarly = () => {
+    if (!early) return
+    early.stop.abort()
+    early.used(false)
+    early = null
+  }
+  const answerEarly = (question) => {
+    dropEarly()
+    // (Not while a step of the plan is still to be started: that one will look more up.)
+    if (!quickNow() || Date.now() > deadline || context.todos.some((todo) => todo.status === "pending")) return
+    let used
+    const stop = new AbortController()
+    // (Its plan as the data step would leave it once done.)
+    const todos = context.todos.map((todo) => (todo.status === "pending" || todo.status === "in_progress" ? { ...todo, status: "completed" } : todo))
+    const call = answerFrom({ question, canFollowUp: true, todos, notes: [], signal: stop.signal, used: new Promise((resolve) => { used = resolve }) })
+    call.catch(() => {})
+    early = { count: evidence.length, plan: planShape(todos), stop, used, call }
+  }
+
   const gatherMessages = [{ role: "system", content: gatherPrompt(user, webAllowed, canPropose, memory, knowledge) }, ...history]
-  const gather = async (instruction) => {
+  // `question`: answered early (answerEarly) from what each turn's lookups bring back.
+  const gather = async (instruction, { question = "" } = {}) => {
     gatherMessages.push({ role: "user", content: instruction })
     let notes = ""
     let nudges = 0
@@ -411,6 +511,9 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
       })
       const planning = response.toolCalls.filter((call) => call.name === "todo_write")
       const lookups = response.toolCalls.filter((call) => call.name !== "todo_write")
+      // (An early answer is stopped as soon as there will be more to answer from.)
+      if (lookups.some((call) => !results.has(`${call.name}:${call.arguments}`))) dropEarly()
+      const before = evidence.length
       const done = []
       for (const call of planning) done.push(await runTool(call))
       done.push(...(await Promise.all(lookups.map(runTool))))
@@ -419,6 +522,7 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
         const content = toolContent(call.name, item.outcome.result)
         gatherMessages.push({ role: "tool", tool_call_id: call.id, content: item.repeated ? `Same lookup as before. ${content}` : content })
       }
+      if (question && evidence.length > before) answerEarly(question)
       // A turn that only marks the whole plan done ends the data step: the facts are in, and another turn just to say
       // so took a second and a half.
       const open = context.todos.some((todo) => todo.status === "pending" || todo.status === "in_progress")
@@ -458,30 +562,22 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
       answer = plan.content.trim() || "Could you tell me a little more about what you want to know?"
     } else {
       await runTool(planCall)
-      const notes = [await gather(`Current user request - ${question}\nPlan - ${JSON.stringify(context.todos)}`)]
+      const notes = [await gather(`Current user request - ${question}\nPlan - ${JSON.stringify(context.todos)}`, { question })]
 
       for (let round = 0; round <= MAX_FOLLOW_UPS; round += 1) {
         const canFollowUp = round < MAX_FOLLOW_UPS && Date.now() < deadline
         status(round === 0 ? "Writing the answer" : "Writing the answer with the new findings")
-        const quick = (spoken || (context.todos.length <= 2 && !attachments.length && !evidence.some((item) => WEIGHED.has(item.tool)))) && modelTakes(settings.decisionModel, "reasoning")
-        const final = await chat({
-          model: settings.decisionModel,
-          tracker,
-          meter,
-          cache: true,
-          extra: quick ? QUICK : null,
-          temperature: 0.3,
-          maxTokens: 5000,
-          tools: canFollowUp ? [FOLLOW_UP_TOOL] : undefined,
-          messages: [
-            { role: "system", content: answerPrompt(user, canFollowUp, canPropose, memory, knowledge) },
-            ...history,
-            {
-              role: "user",
-              content: `Question - ${question}\n\nPlan - ${JSON.stringify(context.todos)}\n\nNotes from the data step - ${notes.filter(Boolean).join("\n") || "none"}\n\nEvidence:\n${evidenceText(evidence)}`,
-            },
-          ],
-        })
+        // The early answer, when the data step looked nothing more up after it started and left the plan as that
+        // answer was told (it then failing, once more).
+        let final = null
+        if (early && early.count === evidence.length && early.plan === planShape(context.todos) && canFollowUp) {
+          const { call, used } = early
+          early = null
+          used(true)
+          final = await call.catch(() => null)
+        }
+        dropEarly()
+        final ||= await answerFrom({ question, canFollowUp, todos: context.todos, notes })
         const followUp = canFollowUp ? final.toolCalls.find((call) => call.name === "request_more_data") : null
         let steps = []
         if (followUp) {
@@ -512,6 +608,7 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
     answer = `Error: ${error.message}`
     stream.sendError(error.message)
   }
+  dropEarly()
 
   const durationMs = Date.now() - startedAt
   // What it learned, when that is ready in time; otherwise the answer is saved now and the notes join it once ready.
