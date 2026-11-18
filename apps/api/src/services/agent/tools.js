@@ -1,6 +1,7 @@
 import { cityLine, COMPANY_FOLDERS, EXPENSE_CATEGORIES, insurancePolicies, isPaidOff, latestPropertyTaxes, loanStatus, refinancePlan, taxYears, yearlyInsurance, LOAN_STATUSES, LOAN_TYPES, loansEndedWithSale, NOT_OWNED_STAGES, PERMISSIONS, policyActive, policyName, propertyDrawFigures, PROPERTY_FOLDERS, rehabLeft, STRESS_INPUTS, STRESS_RULES, STRESS_SERIOUS, stressTest, TASK_LABELS, documentType, documentTypeName, drawHealth, folderName, folderOf, resolveBudget } from "@synergifund/shared"
 import { Bill, Company, DocumentFile, Draw, DrawBudget, Expense, ExpenseRequest, Lender, Loan, Property, Task, TeamNote, User } from "../../models/index.js"
 import { presentProperty } from "../../lib/serialize.js"
+import { titleCompanyOf } from "../titleCompany.js"
 import { propertyFilter } from "../access.js"
 import { presentContractorDraw, presentDraw } from "../../routes/draws.js"
 import { matchScore, rank } from "./match.js"
@@ -91,6 +92,12 @@ function countBy(items, read) {
 async function scopedProperties(context) {
   if (!context.cache.properties) context.cache.properties = await Property.find(propertyFilter(context.user)).sort({ address: 1 })
   return context.cache.properties
+}
+
+// The title company and how to reach it, in one short line for a list row ("" when none).
+function titleCompanyRow(property) {
+  const title = titleCompanyOf(property)
+  return title.name ? [title.name, title.contactName, title.phone, title.email, title.fileNumber ? `File # ${title.fileNumber}` : ""].filter(Boolean).join(" · ") : ""
 }
 
 function compactProperty(property, user) {
@@ -502,7 +509,7 @@ export const TOOLS = [
     name: "list_properties",
     label: "Reading properties",
     permission: PERMISSIONS.propertiesRead,
-    description: "List properties the person can see, filtered by words, status, goal, city, owning company, price, purchase date and missing figures. Totals cover every match. Each row has address, city, status, goal, owning company, purchase price and date, ARV, rehab budget, rents, health and next step, and from Property Info the tax parcel, the property taxes and tax assessment by year, and the insurance policies. For \"under 200 grand\" pass maxPrice 200000 (purchase price unless the person means ARV, rehab or rent); for \"under Revive Jax\" pass company \"Revive Jax\".",
+    description: "List properties the person can see, filtered by words, status, goal, city, owning company, price, purchase date and missing figures. Totals cover every match. Each row has address, city, status, goal, owning company, purchase price and date, ARV, rehab budget, rents, health and next step, and from Property Info the title company (with its contact, phone, email and file #), the tax parcel, the property taxes and tax assessment by year, and the insurance policies. For \"under 200 grand\" pass maxPrice 200000 (purchase price unless the person means ARV, rehab or rent); for \"under Revive Jax\" pass company \"Revive Jax\".",
     parameters: {
       type: "object",
       properties: {
@@ -593,6 +600,7 @@ export const TOOLS = [
           health: property.health || "",
           nextStep: property.nextAction || "",
           // Property Info and the refinance.
+          titleCompany: titleCompanyRow(property),
           taxParcel: property.taxParcel || "",
           // One row per year, newest first; latestPropertyTaxes is the newest year that has them (for the refinance).
           taxYears: taxYears(property).map(({ year, propertyTaxes, taxAssessment, paidOn }) => ({ year, propertyTaxes, taxAssessment, lastPaid: paidOn })),
@@ -649,7 +657,7 @@ export const TOOLS = [
     name: "get_property",
     label: "Opening the property",
     permission: PERMISSIONS.propertiesRead,
-    description: "Everything on file for one property: deal figures, scope, loans, draw schedule, expenses, upcoming bills, open tasks and documents, limited to what the person may see, and for people who see the whole books the house's summary (what it is, the plan, how it got here, who is involved, the key documents, what is open) and the team's notes on it. rehabLeft is what is left of the rehab budget, the same figure as Rehab Left on the property page.",
+    description: "Everything on file for one property: deal figures, the title company and its contact details, scope, loans, draw schedule, expenses, upcoming bills, open tasks and documents, limited to what the person may see, and for people who see the whole books the house's summary (what it is, the plan, how it got here, who is involved, the key documents, what is open) and the team's notes on it. rehabLeft is what is left of the rehab budget, the same figure as Rehab Left on the property page.",
     parameters: {
       type: "object",
       properties: { property: { type: "string", description: "The property id or address, as written by the person." } },

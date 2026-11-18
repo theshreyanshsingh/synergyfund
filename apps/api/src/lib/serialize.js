@@ -1,4 +1,5 @@
 import { assignmentFee, can, cleanSounds, insurancePolicies, permissionsFor, propertyUtilities, taxYears } from "@synergifund/shared"
+import { titleCompanyOf } from "../services/titleCompany.js"
 
 export function publicUser(user) {
   return {
@@ -99,6 +100,7 @@ export function presentProperty(property, user) {
     taxYears: taxYears(source),
     insurancePolicies: insurancePolicies(source),
     utilities: propertyUtilities(source.utilities),
+    titleCompany: titleCompanyOf(source),
     refinanceStage: source.refinanceStage || "",
     refinanceClosedAt: source.refinanceClosedAt || null,
     labels: source.labels || [],

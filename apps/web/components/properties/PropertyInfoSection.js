@@ -101,6 +101,7 @@ export function PropertyInfoSection({ property, company = null, writable, canPay
   const utilities = propertyUtilities(property.utilities)
   // Only the years entered (usually one): a year's bill that doesn't exist yet isn't shown as an empty row.
   const taxes = taxYears(property)
+  const title = titleCompanyOf(property)
 
   async function save(body) {
     await api(`/properties/${property.id}`, { method: "PATCH", body })
@@ -116,6 +117,16 @@ export function PropertyInfoSection({ property, company = null, writable, canPay
     try {
       await api(`/properties/${property.id}/insurance/${item.id}`, { method: "DELETE" })
       onChanged?.()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function removeTitle() {
+    if (!window.confirm(`Remove ${title.name} as this property's title company? Its contact details on this property go too.`)) return
+    setError("")
+    try {
+      await save({ titleCompany: EMPTY_TITLE })
     } catch (err) {
       setError(err.message)
     }
@@ -185,6 +196,31 @@ export function PropertyInfoSection({ property, company = null, writable, canPay
           <p className="info-none">No tax year entered yet.{writable ? " Edit adds the year and its property taxes." : ""}</p>
         )}
         <p className="info-hint">{canPay ? "One row per year you enter, newest first. Mark paid puts a year's property taxes on the cost sheet." : "One row per year entered, newest first."}</p>
+      </section>
+
+      <section className="panel property-card info-card info-title" data-section="title-company">
+        <div className="property-card-head">
+          <h2>Title company</h2>
+          {writable && (
+            <span className="row-actions">
+              {title.name && <button type="button" className="tool danger" onClick={removeTitle}>Remove</button>}
+              {edit("title")}
+            </span>
+          )}
+        </div>
+        {title.name ? (
+          <dl className="info-facts">
+            <div><dt>Title company</dt><dd>{title.name}</dd></div>
+            <div><dt>Contact</dt><dd>{shown(title.contactName)}</dd></div>
+            <div><dt>Phone</dt><dd>{title.phone ? <a href={`tel:${title.phone.replace(/[^\d+]/g, "")}`} className="info-link">{title.phone}</a> : shown("")}</dd></div>
+            <div><dt>Email</dt><dd>{title.email ? <a href={`mailto:${title.email}`} className="info-link">{title.email}</a> : shown("")}</dd></div>
+            <div className="info-wide"><dt>Office address</dt><dd>{shown(title.address)}</dd></div>
+            <div><dt>File #</dt><dd>{shown(title.fileNumber, "Optional")}</dd></div>
+            {title.notes && <div className="info-wide"><dt>Notes</dt><dd className="info-notes">{title.notes}</dd></div>}
+          </dl>
+        ) : (
+          <p className="info-none">No title company yet.{writable ? " Edit adds who is handling the closing and how to reach them." : ""}</p>
+        )}
       </section>
 
       <section className="panel property-card info-card info-insurance">
@@ -258,6 +294,7 @@ export function PropertyInfoSection({ property, company = null, writable, canPay
       </section>
 
       {editing === "ownership" && <OwnershipForm property={property} company={company} onClose={() => setEditing("")} onSave={save} />}
+      {editing === "title" && <TitleForm property={property} onClose={() => setEditing("")} onSave={save} />}
       {editing === "taxes" && <TaxForm property={property} onClose={() => setEditing("")} onSave={save} />}
       {policy && <PolicyForm property={property} target={policy} onClose={() => setPolicy(null)} onSaved={() => { setPolicy(null); onChanged?.() }} />}
       {utility && <UtilityForm utilities={utilities} target={utility} onClose={() => setUtility(null)} onSave={save} />}
@@ -393,6 +430,68 @@ function OwnershipForm({ property, company, onClose, onSave }) {
           </>
         )}
         <label className="field"><span>Purchase date</span><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+      </div>
+    </FormSheet>
+  )
+}
+
+// The title company: who handles the closing, the person working the file and how to reach them, and the file #.
+const TITLE_KEYS = ["name", "contactName", "phone", "email", "address", "fileNumber", "notes"]
+const EMPTY_TITLE = Object.fromEntries(TITLE_KEYS.map((key) => [key, ""]))
+// What belongs to the company (not to this property's file): filled in from another property that has it.
+const TITLE_COMPANY_KEYS = ["contactName", "phone", "email", "address"]
+
+function titleCompanyOf(property) {
+  const saved = property.titleCompany || {}
+  return Object.fromEntries(TITLE_KEYS.map((key) => [key, String(saved[key] || "")]))
+}
+
+function TitleForm({ property, onClose, onSave }) {
+  const start = titleCompanyOf(property)
+  const known = useApi("/properties/title-companies").data?.items || []
+  const [fields, setFields] = useState(start)
+  const [filled, setFilled] = useState("")
+  const { error, setError, pending, run } = useSave(onSave)
+  const change = (key) => (event) => setFields((current) => ({ ...current, [key]: event.target.value }))
+
+  // A title company already entered on other properties brings its contact details, when none are typed here yet.
+  function changeName(event) {
+    const name = event.target.value
+    const match = known.find((item) => same(item.name, name))
+    const others = match ? match.properties - (same(start.name, match.name) ? 1 : 0) : 0
+    if (match && others > 0 && TITLE_COMPANY_KEYS.every((key) => !fields[key].trim()) && TITLE_COMPANY_KEYS.some((key) => match[key])) {
+      setFields({ ...fields, name, ...Object.fromEntries(TITLE_COMPANY_KEYS.map((key) => [key, match[key] || ""])) })
+      setFilled(`Contact details filled in from ${others === 1 ? "another property" : `${others} other properties`}. Check them for this closing.`)
+      return
+    }
+    setFields({ ...fields, name })
+  }
+
+  function submit(event) {
+    event.preventDefault()
+    const body = Object.fromEntries(TITLE_KEYS.map((key) => [key, key === "notes" ? fields[key].trim() : fields[key].replace(/\s+/g, " ").trim()]))
+    if (!body.name && TITLE_KEYS.some((key) => key !== "name" && body[key])) return setError("Enter the title company's name.")
+    if (body.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) return setError("Enter the email like closings@titleco.com.")
+    run({ titleCompany: body })
+  }
+
+  return (
+    <FormSheet eyebrow={property.address} title="Title company" hint="Who is handling the closing and how to reach them. A title company entered on another property fills in its contact details." onClose={onClose} pending={pending} error={error} submitLabel="Save"
+      onSubmit={submit}>
+      <div className="form-grid">
+        <label className="field wide"><span>Title company</span>
+          <input name="titleCompany" list="title-company-choices" value={fields.name} onChange={changeName} maxLength={160} placeholder="For example, First Coast Title" autoComplete="off" autoFocus={!start.name} />
+          <datalist id="title-company-choices">
+            {known.map((item) => <option key={item.name} value={item.name}>{item.properties === 1 ? "On 1 property" : `On ${item.properties} properties`}</option>)}
+          </datalist>
+        </label>
+        {filled && <p className="chat-form-hint wide" role="status">{filled}</p>}
+        <label className="field"><span>Contact</span><input name="contactName" value={fields.contactName} onChange={change("contactName")} maxLength={120} placeholder="Escrow officer or closer" /></label>
+        <label className="field"><span>Phone</span><input name="phone" type="tel" inputMode="tel" value={fields.phone} onChange={change("phone")} maxLength={40} placeholder="(904) 555-0142" /></label>
+        <label className="field"><span>Email</span><input name="email" type="email" inputMode="email" value={fields.email} onChange={change("email")} maxLength={160} placeholder="closings@titleco.com" /></label>
+        <label className="field"><span>File # (optional)</span><input name="fileNumber" value={fields.fileNumber} onChange={change("fileNumber")} maxLength={80} placeholder="Title or escrow file number" /></label>
+        <label className="field wide"><span>Office address</span><input name="address" value={fields.address} onChange={change("address")} maxLength={300} placeholder="Street, city, state ZIP" /></label>
+        <label className="field wide"><span>Notes</span><textarea name="notes" value={fields.notes} onChange={change("notes")} maxLength={2000} placeholder="Closing date, wire instructions to confirm by phone, who else is on the file…" /></label>
       </div>
     </FormSheet>
   )

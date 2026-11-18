@@ -2557,6 +2557,9 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .info-facts dt { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
 .info-facts dd { margin: 0; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
 .info-facts small { color: var(--muted); font-size: 12px; }
+/* A phone number or an email on Property Info (the title company): tap to call or write. */
+.info-link { color: var(--accent); text-decoration: none; }
+.info-link:hover { text-decoration: underline; }
 .info-empty { color: var(--faint); font-weight: 500; }
 .info-hint { margin: 12px 0 0; color: var(--muted); font-size: 12.5px; }
 .info-message { grid-column: 1 / -1; margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--good-bg); font-size: 13px; }
@@ -2589,6 +2592,17 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .tax-year-remove.tool.danger { color: var(--bad); }
 /* Insurance: one card per policy, side by side on a wide screen. */
 .info-insurance { grid-column: 1 / -1; }
+/* The title company spans the page, its details four across on a wide screen. */
+.info-title { grid-column: 1 / -1; }
+.info-title .info-facts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.info-title .info-facts > .info-wide { grid-column: span 2; }
+@media (max-width: 900px) {
+  .info-title .info-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .info-title .info-facts { grid-template-columns: minmax(0, 1fr); }
+  .info-title .info-facts > .info-wide { grid-column: auto; }
+}
 .info-none { margin: 0; color: var(--muted); font-size: 13px; }
 .info-policies { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr)); gap: 12px; }
 .info-policies li { display: grid; align-content: start; gap: 12px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; }

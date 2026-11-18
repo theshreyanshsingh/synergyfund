@@ -161,6 +161,9 @@ export const Property = register(
       // The last time Mark paid recorded the tax, from before the tax years (each year keeps its own paidOn now).
       taxPaidOn: String,
       utilities: [{ name: String, provider: String, account: String, _id: false }],
+      // The title company handling the closing, the person working the file, how to reach them, and the file number
+      // (services/titleCompany.js).
+      titleCompany: { name: String, contactName: String, phone: String, email: String, address: String, fileNumber: String, notes: String },
       // BRRRR refinance stage (Ready to Start, In Process, Closed), and the loans closing it marked Paid off (with the
       // status each had, so reopening the refinance can put them back).
       refinanceStage: String,

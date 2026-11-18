@@ -11,6 +11,7 @@ import { ensureLenders } from "../services/lenders.js"
 import { loanFields } from "../services/loans.js"
 import { clearLoanInsurance, findPolicy, keepEarlierPolicy, POLICY_FIELDS, readPolicy } from "../services/insurance.js"
 import { keepEarlierTaxes, readTaxYears, taxYearChanges } from "../services/taxes.js"
+import { readTitleCompany, titleCompanyChange, titleCompanyChoices } from "../services/titleCompany.js"
 import { removePropertyRoom } from "../services/chat.js"
 import { orderProperties } from "../services/propertyOrder.js"
 import { geocode } from "../services/geocode.js"
@@ -454,6 +455,17 @@ propertiesRouter.put(
   }),
 )
 
+// The title companies already entered on properties (with their contact details), offered while typing one.
+propertiesRouter.get(
+  "/title-companies",
+  requirePermission("properties.read"),
+  blockContractors,
+  asyncHandler(async (req, res) => {
+    const properties = await Property.find({ ...propertyFilter(req.user), "titleCompany.name": { $nin: [null, ""] } }).select("titleCompany updatedAt")
+    res.json({ items: titleCompanyChoices(properties) })
+  }),
+)
+
 propertiesRouter.get(
   "/:id",
   requirePermission("properties.read"),
@@ -628,6 +640,12 @@ propertiesRouter.patch(
       sendError(res, 400, taxRead.error)
       return
     }
+    // Contractors do not see the title company, so they cannot change it either.
+    const titleRead = "titleCompany" in req.body && req.user.role !== "contractor" ? readTitleCompany(req.body.titleCompany) : null
+    if (titleRead?.error) {
+      sendError(res, 400, titleRead.error)
+      return
+    }
     if ("taxParcel" in parsed.data) parsed.data.taxParcel = String(parsed.data.taxParcel || "").trim()
     // Water and Electric always stay; the rest are kept as entered (one per name).
     if ("utilities" in parsed.data) parsed.data.utilities = propertyUtilities(parsed.data.utilities).map(({ fixed, ...utility }) => utility)
@@ -652,6 +670,7 @@ propertiesRouter.patch(
       keepEarlierTaxes(property)
       property.taxYears = taxRead.rows
     }
+    if (titleRead) property.titleCompany = titleRead.value
     // An ARV typed over one from comps or the Agent is no longer that analysis.
     if ("arv" in parsed.data && parsed.data.arv !== before.arv && !("arvMethod" in parsed.data)) {
       property.arvMethod = parsed.data.arv == null ? undefined : "Entered by hand"
@@ -682,6 +701,7 @@ propertiesRouter.patch(
       // Access info (lockbox and door codes) is encrypted, so the log and the admin alert only say it changed.
       (before.accessInfo || "") !== (after.accessInfo || "") ? "Access info changed" : "",
       taxRead ? taxYearChanges(before, after) : "",
+      titleRead ? titleCompanyChange(before, after) : "",
       companyChange,
       before.houseBoughtPrice !== after.houseBoughtPrice ? "Internal pricing changed" : "",
       "scopeLines" in req.body ? `Scope of work now ${after.scopeLines.length} lines` : "",
