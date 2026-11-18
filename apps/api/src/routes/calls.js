@@ -46,6 +46,12 @@ callsRouter.get(
       const joined = (call.participants || []).some((person) => String(person.userId) === me)
       const ended = call.status === "ended"
       const names = [...new Set((call.participants || []).map((person) => person.name).filter(Boolean))]
+      // Everyone who joined, once each, in the order they first joined (Call info lists them).
+      const joinedPeople = []
+      for (const person of call.participants || []) {
+        const id = String(person.userId)
+        if (!joinedPeople.some((entry) => entry.id === id)) joinedPeople.push({ id, name: person.name || "" })
+      }
       const others = [...new Set([call.startedByName, ...(call.participants || []).filter((person) => String(person.userId) !== me).map((person) => person.name)].filter((name) => name && name !== req.user.name))]
       return {
         id: String(call._id),
@@ -62,6 +68,9 @@ callsRouter.get(
         declined: !joined && (call.declinedIds || []).some((id) => String(id) === me),
         missed: ended && !joined && (call.invitedIds || []).some((id) => String(id) === me) && !(call.declinedIds || []).some((id) => String(id) === me),
         participants: names,
+        joinedPeople,
+        invitedIds: (call.invitedIds || []).map(String),
+        declinedIds: (call.declinedIds || []).map(String),
         seconds: call.answeredAt && call.endedAt ? Math.max(0, Math.round((call.endedAt - call.answeredAt) / 1000)) : 0,
         startedAt: call.startedAt,
         endedAt: call.endedAt || null,
@@ -69,7 +78,24 @@ callsRouter.get(
         notes: notesByCall.get(String(call._id)) || [],
       }
     })
-    res.json({ items, live: await liveCallsFor(req.user) })
+    const favorites = (req.user.callFavorites || []).map(String).filter((id) => channels.has(id))
+    res.json({ items, live: await liveCallsFor(req.user), favorites })
+  }),
+)
+
+// Favourites on the Calls page: conversations this person can see, in the order given.
+const MAX_FAVORITES = 30
+callsRouter.put(
+  "/favorites",
+  asyncHandler(async (req, res) => {
+    const asked = Array.isArray(req.body?.channelIds) ? req.body.channelIds.map(String) : null
+    if (!asked) return sendError(res, 400, "Send the favourites as a list.")
+    const visible = new Set((await visibleChannels(req.user)).map((entry) => String(entry.channel._id)))
+    const favorites = [...new Set(asked)].filter((id) => visible.has(id))
+    if (favorites.length > MAX_FAVORITES) return sendError(res, 400, `Keep up to ${MAX_FAVORITES} favourites.`)
+    req.user.callFavorites = favorites
+    await req.user.save()
+    res.json({ favorites })
   }),
 )
 

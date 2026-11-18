@@ -47,6 +47,8 @@ export const User = register(
       taskViews: Schema.Types.Mixed,
       // The call ringtone and message chime this person picked in Settings.
       sounds: { ringtone: String, chime: String },
+      // The conversations this person keeps under Favourites on the Calls page, in their order.
+      callFavorites: [{ type: Schema.Types.ObjectId, ref: "ChatChannel" }],
       // The AI teammate's account: it posts in property chats, never signs in, and gets no notifications.
       bot: { type: Boolean, default: false },
       // People this person blocked in chat: their messages are hidden for them, and they can't message them directly.

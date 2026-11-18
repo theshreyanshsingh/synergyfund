@@ -2845,24 +2845,91 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .chat-call-icon { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--good-bg); color: var(--good); flex: none; }
 .chat-call-note.is-missed .chat-call-icon { background: var(--bad-bg, #fdecec); color: var(--bad); }
 
-.calls-page { display: grid; gap: 18px; width: 100%; min-width: 0; }
-.calls-sub { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+/* Calls: a call log like a phone's (picture, name, what happened, the time), and Call info for one conversation. */
+.calls-page { display: grid; gap: 16px; width: 100%; max-width: 760px; min-width: 0; margin: 0 auto; }
 .calls-page .workspace-top .primary { display: inline-flex; align-items: center; gap: 6px; }
 .calls-page .workspace-top { margin-bottom: 0; }
-.calls-section { display: grid; gap: 10px; }
-.calls-section h2 { margin: 0; font-size: 15px; }
-.calls-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.calls-list { display: grid; margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--white); }
-.calls-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 12px; }
-.calls-row + .calls-row { border-top: 1px solid var(--line); }
-.calls-row.is-missed .calls-copy strong, .calls-row.is-missed .calls-direction { color: var(--bad); }
-.calls-copy { display: grid; gap: 2px; min-width: 0; }
-.calls-copy strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
-.calls-copy span { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12.5px; }
-.calls-copy small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.calls-direction { display: inline-grid; font-style: normal; color: var(--muted); }
+.calls-find { display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 16px; border-radius: 999px; background: var(--neutral-bg, var(--hover)); color: var(--muted); cursor: text; }
+.calls-find input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 16px; }
+.calls-find input::placeholder { color: var(--muted); }
+.calls-find:focus-within { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+.calls-section { display: grid; gap: 4px; }
+.calls-section h2 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+.calls-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 32px; }
+.calls-list { display: grid; margin: 0 -10px; padding: 0; list-style: none; }
+.calls-line { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.calls-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; flex: 1; min-width: 0; min-height: 68px; padding: 8px 10px; border: 0; border-radius: 14px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.calls-item.is-static { cursor: default; }
+.calls-item:hover:not(.is-static) { background: var(--hover); }
+.calls-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.calls-face { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: var(--neutral-bg, var(--hover)); color: var(--text); font-size: 16px; font-weight: 650; letter-spacing: .02em; flex: none; }
+.calls-face.is-group { color: var(--neutral, var(--muted)); }
+.calls-face.is-small { width: 36px; height: 36px; font-size: 13px; }
+.calls-face.is-big { width: 104px; height: 104px; font-size: 36px; }
+.calls-face.is-live { background: var(--good-bg); color: var(--good); }
+.calls-face.is-add { background: var(--ink); color: var(--on-ink); }
+.calls-copy { display: grid; gap: 3px; min-width: 0; }
+.calls-copy strong { overflow: hidden; font-size: 16px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.calls-meta { display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; color: var(--muted); font-size: 14px; white-space: nowrap; }
+.calls-meta.is-missed { color: var(--bad); }
+.calls-meta-media { display: inline-grid; margin-left: 2px; color: var(--muted); }
+.calls-meta-notes { display: inline-flex; align-items: center; gap: 3px; margin-left: 4px; color: var(--accent); font-size: 12.5px; font-weight: 600; }
+.calls-when { align-self: start; padding-top: 7px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+.calls-line-actions { display: flex; align-items: center; gap: 2px; padding-right: 4px; flex: none; }
+.calls-line-actions .call-pill { padding: 7px 14px; }
+.calls-icon-button { display: grid; place-items: center; width: 42px; height: 42px; border: 0; border-radius: 50%; background: transparent; color: var(--text); }
+.calls-icon-button:hover:not(:disabled) { background: var(--hover); }
+.calls-icon-button:disabled { opacity: .4; }
+.calls-icon-button.is-remove { color: var(--bad); }
+.calls-text-button { padding: 4px 10px; border: 0; border-radius: 999px; background: transparent; color: var(--accent); font-size: 14px; font-weight: 600; }
+.calls-text-button:hover { background: var(--hover); }
+.calls-text-button.is-pill { background: var(--neutral-bg, var(--hover)); color: var(--text); font-size: 13px; }
+.calls-chips { display: flex; gap: 6px; }
+.calls-chips button { padding: 5px 12px; line-height: 18px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; }
+.calls-chips button.is-on { border-color: transparent; background: var(--ink); color: var(--on-ink); }
 .calls-actions { display: flex; align-items: center; gap: 6px; }
 .calls-actions .primary { display: inline-flex; align-items: center; gap: 6px; }
+.calls-pick-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font: inherit; text-align: left; }
+.calls-pick-row:hover:not(:disabled) { background: var(--hover); }
+.calls-pick-row > svg { color: var(--muted); }
+
+/* Names and what happened are shown as written ("#ops", "No answer"), not in the buttons' title case. */
+.calls-item, .calls-pick-row, .call-info-person-row, .call-info-hero h2, .call-info-head h3, .call-info-top .page-title { text-transform: none; }
+
+/* Call info: the conversation's picture and name, Message / Voice / Video / Favourite, its calls, and who joined. */
+.call-info { gap: 18px; padding-bottom: 32px; }
+.call-info-top { gap: 10px; }
+.call-info-top .page-heading { flex: 1; min-width: 0; }
+.call-info-top .page-title { font-size: 20px; letter-spacing: -0.02em; text-align: center; }
+.call-info-back, .call-info-spacer { display: grid; place-items: center; width: 40px; height: 40px; flex: none; }
+.call-info-back { border: 1px solid var(--line); border-radius: 50%; background: var(--white); color: var(--text); }
+.call-info-back:hover { background: var(--hover); }
+.call-info-hero { display: grid; justify-items: center; gap: 6px; padding: 4px 0 2px; text-align: center; }
+.call-info-hero .calls-face { margin-bottom: 8px; }
+.call-info-hero h2 { max-width: 100%; margin: 0; overflow-wrap: anywhere; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+.call-info-hero p { margin: 0; color: var(--muted); font-size: 15px; overflow-wrap: anywhere; }
+.call-info-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.call-info-tiles button { display: grid; justify-items: center; align-content: center; gap: 6px; min-height: 74px; padding: 10px 4px; border: 1px solid var(--line); border-radius: 16px; background: var(--white); color: var(--text); font-size: 13.5px; font-weight: 600; }
+.call-info-tiles button:hover:not(:disabled) { background: var(--hover); }
+.call-info-tiles button:disabled { color: var(--muted); opacity: .55; cursor: not-allowed; }
+.call-info-tiles button.is-on svg { color: var(--warn); }
+.call-info-section { display: grid; gap: 8px; }
+.call-info-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; padding: 0 4px; }
+.call-info-head h3 { margin: 0; color: var(--muted); font-size: 14px; font-weight: 650; }
+.call-info-head > span { color: var(--muted); font-size: 13.5px; }
+.call-info-card { display: grid; margin: 0; padding: 0 14px; list-style: none; border: 1px solid var(--line); border-radius: 16px; background: var(--white); }
+.call-info-call { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 0; }
+.call-info-call + .call-info-call { border-top: 1px solid var(--line); }
+.call-info-kind { display: grid; place-items: center; width: 28px; color: var(--text); }
+.call-info-kind.is-missed, .call-info-call strong.is-missed { color: var(--bad); }
+.call-info-call .calls-copy strong { font-size: 15.5px; font-weight: 550; white-space: normal; }
+.call-info-call .calls-notes { margin-top: 4px; }
+.call-info-length { align-self: start; padding-top: 2px; color: var(--muted); font-size: 13.5px; text-align: right; white-space: nowrap; }
+.call-info-person + .call-info-person .call-info-person-row { border-top: 1px solid var(--line); }
+.call-info-card .call-info-person-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; min-height: 58px; padding: 8px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+button.call-info-person-row { cursor: pointer; }
+button.call-info-person-row:hover strong { color: var(--accent); }
+.call-info-chevron { display: grid; color: var(--muted); transform: rotate(180deg); }
 .calls-join-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; }
 .calls-join-banner > div:first-child { display: grid; gap: 2px; }
 .calls-join-banner span { color: var(--muted); font-size: 13px; }
@@ -2910,8 +2977,6 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .call-mini { top: max(8px, env(safe-area-inset-top)); bottom: auto; left: 50%; right: auto; transform: translateX(-50%); padding: 5px; gap: 6px; border-radius: 999px; }
   .call-mini-copy strong { max-width: 110px; }
   .call-mini .call-round.is-small { width: 32px; height: 32px; }
-  .calls-row { grid-template-columns: auto minmax(0, 1fr); }
-  .calls-row .calls-actions { grid-column: 2; }
 }
 
 /* While the call window is open, messages appear at the top so they never cover the call buttons. */
@@ -2962,6 +3027,11 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .calls-fab:active { transform: scale(.96); }
   .calls-fab:disabled { opacity: .5; }
   .calls-page { padding-bottom: 84px; }
+  /* Call info has its own Back where the menu button sits. */
+  .app:has(.call-info) .nav-toggle { display: none; }
+  .app:not(.is-contractor) .main .workspace-top.call-info-top { flex-wrap: nowrap; padding-left: 12px; padding-right: 12px; }
+  .call-info-tiles { gap: 6px; }
+  .call-info-hero h2 { font-size: 24px; }
   .call-controls { gap: 10px; }
   .call-control em { font-size: 12px; }
 }
@@ -4753,7 +4823,8 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
    rounded-md), as tall as its words. An icon-only button keeps its square, with the same corners; a search box's
    frame takes the shape and the box inside it stays bare. What only acts like a button keeps its own shape: a list's
    rows and cards, headings that open and close, a calendar's or a date picker's days, checkboxes and switches, menu
-   rows, scrims, the round controls of a call and of Talk mode, and links within a sentence. */
+   rows, scrims, the round controls of a call and of Talk mode, the Calls page's call log and Call info, and links within
+   a sentence. */
 :root { --control-y: 4px; --control-x: 8px; --control-radius: 6px; }
 
 :is(button, a.primary, a.ghost, a.tool, a.import-button, .chat-switch a, .doc-actions a):not(
@@ -4764,7 +4835,8 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
   .company-owners-head, .chat-nav-heading > button:first-child, .cost-type-toggle, .folder-tile, .folders-toggle, .check, .task-check, .drag-handle, .overview-handle, .property-figure, .stat,
   .overview-card, .comp-card, .legal-card, .home-row, .chat-result, .chat-image, .chat-attachment, .chat-thread-link, .chat-inline-link, .chat-head-link,
   .tracking-thumb, .comp-photo-add, .import-row, .quick-row, .back-link, .crumbs-link, .crumbs-back, .doc-open, .doc-head-link, .company-file-link,
-  .cost-line-file, .table-link, .report-doc, .agent-doc-name, .agent-download, .agent-spend-day, .call-round, .call-control, .call-pill, .agent-orb, .agent-voice-control, .camera-shutter, .skip-link,
+  .cost-line-file, .table-link, .report-doc, .agent-doc-name, .agent-download, .agent-spend-day, .call-round, .call-control, .call-pill, .call-icon-button, .call-mini-icon, .calls-fab, .calls-item, .calls-icon-button, .calls-text-button, .calls-chips button, .calls-pick-row,
+  .call-info-back, .call-info-tiles button, .call-info-person-row, .agent-orb, .agent-voice-control, .camera-shutter, .skip-link,
   .refi-banner, .multi-option, [role="menuitem"], [role="option"], [role="switch"], [role="menu"] *, [role="listbox"] *, .pop > *,
   .date-picker-grid *, .paycal-mini-grid *, .task-pick-list *, p button
 ) {
@@ -4774,7 +4846,8 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
 /* (A button with words is as tall as they are; one with only an icon, a floating one, or Talk mode's Stop and End, keeps its size.) */
 :is(button, a.primary, a.ghost, a.tool, a.import-button, .chat-switch a, .doc-actions a):not([aria-label], .icon-btn, .agent-icon-button, .agent-send-button,
   .agent-action, .agent-sheet-icon, .row-menu-button, .sidebar-dismiss, .title-copy, .chat-nav-add, .chat-send, .home-customize, .nav-toggle, .multi-toggle,
-  .call-icon-button, .call-mini-icon, .cal-create-button, .calls-fab, .dock-link, .more-switch, .check, .task-check, .drag-handle, .overview-handle, .paycal-num,
+  .call-icon-button, .call-mini-icon, .calls-item, .calls-icon-button, .call-info-back, .call-info-tiles button, .call-info-person-row,
+  .cal-create-button, .calls-fab, .dock-link, .more-switch, .check, .task-check, .drag-handle, .overview-handle, .paycal-num,
   .menu-backdrop, .more-scrim, .agent-panel-scrim, .agent-voice-control, [role="menuitem"], [role="option"], [role="switch"], [role="menu"] *, .pop > *,
   .date-picker-grid *, .paycal-mini-grid *, .chat-nav-heading > button:first-child, p button) {
   height: auto !important;
@@ -4784,7 +4857,7 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
 /* Fields, and the frames that hold a bare search box. */
 :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"], [type="hidden"], [type="button"], [type="submit"], [type="reset"], [type="image"]), select, textarea):not(
   :is(.search, .palette-search, .agent-panel-search, .agent-list-search, .draws-search, .chat-nav-search, .folders-search, .agent-sheet-search, .tasks-search,
-    .task-pick-search, .multi-box, .agent-box, .chat-box, .tasks-cell) *, .tasks-add-input, .task-panel-title, .cal-editor-title
+    .task-pick-search, .multi-box, .agent-box, .chat-box, .tasks-cell, .calls-find) *, .tasks-add-input, .task-panel-title, .cal-editor-title
 ),
 .search, .palette-search, .agent-panel-search, .agent-list-search, .draws-search, .chat-nav-search, .folders-search, .agent-sheet-search, .tasks-search,
 .task-pick-search, .multi-box {
@@ -4793,7 +4866,7 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
 }
 :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"], [type="hidden"], [type="button"], [type="submit"], [type="reset"], [type="image"]), select):not(
   :is(.search, .palette-search, .agent-panel-search, .agent-list-search, .draws-search, .chat-nav-search, .folders-search, .agent-sheet-search, .tasks-search,
-    .task-pick-search, .multi-box, .agent-box, .chat-box, .tasks-cell) *, .tasks-add-input, .task-panel-title, .cal-editor-title
+    .task-pick-search, .multi-box, .agent-box, .chat-box, .tasks-cell, .calls-find) *, .tasks-add-input, .task-panel-title, .cal-editor-title
 ),
 .palette-search, .agent-panel-search, .agent-list-search, .draws-search, .chat-nav-search, .folders-search, .agent-sheet-search, .tasks-search, .task-pick-search {
   height: auto !important;
@@ -4939,4 +5012,119 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
   .house-summary .property-card-head > div:first-child { flex: 1 1 100%; }
   .house-summary-actions { justify-content: flex-start; }
   .house-summary-lists { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------- Calls in Liquid Glass (as in iOS 26) ----------
+   Controls float on a frosted pane that shows a blur of what is behind it, with a light rim along the top edge, in
+   round and capsule shapes: the search box, the All / Missed switch, the new-call button, Call info's Back and its four
+   buttons, and on the call screen the round controls, the name labels, the small call bar and the ringing card.
+   Content (the call log, Call info's cards) stays solid. Without blur, or when the system asks for less transparency,
+   the same shapes are solid. */
+:root {
+  --glass: rgba(255, 255, 255, .58);
+  --glass-lens: rgba(255, 255, 255, .92);
+  --glass-sheen: rgba(255, 255, 255, .4);
+  --glass-rim: rgba(255, 255, 255, .85);
+  --glass-edge: rgba(17, 24, 39, .07);
+  --glass-shadow: 0 8px 26px rgba(17, 24, 39, .09), 0 1px 3px rgba(17, 24, 39, .06);
+  --glass-blur: blur(22px) saturate(180%);
+  /* On the call screen (always dark): */
+  --glass-call: rgba(255, 255, 255, .13);
+  --glass-call-hover: rgba(255, 255, 255, .22);
+  /* Thick enough to read over a light page (the ringing card, the small call bar). */
+  --glass-call-panel: rgba(22, 25, 32, .88);
+  --glass-call-rim: rgba(255, 255, 255, .26);
+}
+[data-theme="dark"] {
+  --glass: rgba(44, 47, 56, .52);
+  --glass-lens: rgba(255, 255, 255, .16);
+  --glass-sheen: rgba(255, 255, 255, .07);
+  --glass-rim: rgba(255, 255, 255, .16);
+  --glass-edge: rgba(255, 255, 255, .07);
+  --glass-shadow: 0 10px 30px rgba(0, 0, 0, .4), 0 1px 3px rgba(0, 0, 0, .3);
+}
+
+/* The pane itself. */
+.calls-find, .calls-chips, .calls-text-button.is-pill, .call-info-back, .call-info-tiles button {
+  border: 0;
+  background: linear-gradient(to bottom, var(--glass-sheen), transparent 60%), var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 1px 0 var(--glass-rim), inset 0 0 0 1px var(--glass-edge), var(--glass-shadow);
+}
+.calls-find { height: 48px; }
+.calls-find:focus-within { box-shadow: inset 0 1px 0 var(--glass-rim), inset 0 0 0 1px var(--glass-edge), 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent), var(--glass-shadow); }
+
+/* All / Missed: a glass capsule with a lens that sits on the chosen side. */
+.calls-chips { gap: 2px; padding: 3px; border-radius: 999px; }
+.calls-chips button { border: 0; background: transparent; color: var(--muted); transition: background .2s ease, color .2s ease, box-shadow .2s ease; }
+.calls-chips button.is-on { background: var(--glass-lens); color: var(--text); box-shadow: 0 1px 4px rgba(17, 24, 39, .12), inset 0 1px 0 var(--glass-rim); }
+
+/* New call: tinted glass, round. */
+.calls-fab {
+  border-radius: 50%;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, .18), transparent 60%), color-mix(in srgb, var(--ink) 78%, transparent);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), inset 0 0 0 1px rgba(255, 255, 255, .08), 0 12px 30px rgba(0, 0, 0, .25);
+}
+
+/* Call info: Back is a glass circle; the four buttons are glass; the cards round off like the screen's corners. */
+.call-info-back { width: 44px; height: 44px; border-radius: 50%; }
+.call-info-spacer { width: 44px; height: 44px; }
+.call-info-tiles button { border-radius: 20px; }
+.call-info-tiles button:hover:not(:disabled) { background: linear-gradient(to bottom, var(--glass-sheen), transparent 60%), var(--glass-lens); }
+.call-info-card { border-radius: 22px; border-color: var(--glass-edge); box-shadow: 0 1px 2px rgba(17, 24, 39, .04); }
+.calls-face.is-big { box-shadow: inset 0 1px 0 var(--glass-rim), 0 10px 30px rgba(17, 24, 39, .1); }
+
+/* Phones: the top bar is see-through; the list scrolls under a soft blur that fades out below it. */
+@media (max-width: 760px) {
+  .app:not(.is-contractor) .main .calls-page > .workspace-top { background: transparent; border-bottom-color: transparent; isolation: isolate; }
+  .app:not(.is-contractor) .main .calls-page > .workspace-top::before {
+    content: ""; position: absolute; inset: 0 0 -22px; z-index: -1; pointer-events: none;
+    background: linear-gradient(to bottom, var(--bg) 0%, color-mix(in srgb, var(--bg) 72%, transparent) 55%, transparent 100%);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    -webkit-mask-image: linear-gradient(to bottom, #000 60%, transparent); mask-image: linear-gradient(to bottom, #000 60%, transparent);
+  }
+}
+
+/* The call screen: glass controls over the call. */
+.call-round, .call-icon-button, .call-tile-name, .call-tile-status, .call-mini, .call-incoming, .call-notice {
+  -webkit-backdrop-filter: blur(20px) saturate(170%);
+  backdrop-filter: blur(20px) saturate(170%);
+}
+.call-round { background: var(--glass-call); box-shadow: inset 0 1px 0 var(--glass-call-rim), inset 0 0 0 1px rgba(255, 255, 255, .06); }
+.call-round:hover { background: var(--glass-call-hover); }
+.call-round.is-off { background: rgba(244, 244, 245, .92); box-shadow: inset 0 1px 0 #fff; }
+.call-round.is-active { background: rgba(37, 99, 235, .85); }
+.call-round.is-danger { background: rgba(220, 38, 38, .88); }
+.call-round.is-danger:hover { background: rgba(185, 28, 28, .92); }
+.call-round.is-accept { background: rgba(22, 163, 74, .88); }
+.call-round.is-accept:hover { background: rgba(21, 128, 61, .92); }
+.call-icon-button { border-radius: 50%; background: var(--glass-call); box-shadow: inset 0 1px 0 var(--glass-call-rim); }
+.call-icon-button:hover { background: var(--glass-call-hover); }
+.call-tile-name, .call-tile-status { border-radius: 999px; background: rgba(10, 12, 16, .42); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14); }
+.call-tile { border-radius: 20px; }
+.call-mini, .call-incoming, .call-notice { background: var(--glass-call-panel); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), inset 0 0 0 1px rgba(255, 255, 255, .06), 0 18px 46px rgba(0, 0, 0, .35); }
+.call-mini { border-radius: 999px; }
+.call-mini-icon { border-radius: 50%; }
+.call-incoming { border-radius: 24px; }
+.call-notice { border-radius: 999px; }
+.call-notice.is-bad { background: rgba(127, 29, 29, .82); }
+.call-notice button { border-radius: 50%; }
+/* The full-screen ringing on phones has nothing behind its card to blur. */
+@media (max-width: 760px) {
+  .call-incoming-stack.is-full .call-incoming { -webkit-backdrop-filter: none; backdrop-filter: none; background: transparent; box-shadow: none; }
+}
+
+/* Solid instead of see-through: when the system asks for less transparency, or blur is not available. */
+@media (prefers-reduced-transparency: reduce) {
+  :root, [data-theme="dark"] { --glass: var(--white); --glass-sheen: transparent; --glass-call: #2a2e36; --glass-call-hover: #353a44; --glass-call-panel: #15181e; }
+  .calls-fab { background: var(--ink); }
+  .call-tile-name, .call-tile-status { background: rgba(0, 0, 0, .7); }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root, [data-theme="dark"] { --glass: var(--white); --glass-sheen: transparent; --glass-call: #2a2e36; --glass-call-hover: #353a44; --glass-call-panel: #15181e; }
+  .calls-fab { background: var(--ink); }
+  .call-tile-name, .call-tile-status { background: rgba(0, 0, 0, .7); }
 }
