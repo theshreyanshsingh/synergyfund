@@ -45,8 +45,8 @@ export const User = register(
       // How this person left the Tasks page (group, sort, filters, hidden columns), as `main`, and a property's
       // Tasks tab as `property`.
       taskViews: Schema.Types.Mixed,
-      // The call ringtone and message chime this person picked in Settings.
-      sounds: { ringtone: String, chime: String },
+      // The call ringtone, the message chime and whether the Agent makes its sounds, as picked in Settings.
+      sounds: { ringtone: String, chime: String, agent: String },
       // The conversations this person keeps under Favourites on the Calls page, in their order.
       callFavorites: [{ type: Schema.Types.ObjectId, ref: "ChatChannel" }],
       // The AI teammate's account: it posts in property chats, never signs in, and gets no notifications.
@@ -824,8 +824,11 @@ export const AgentThread = register(
           files: [{ fileId: { type: Schema.Types.ObjectId, ref: "Document" }, name: String, mime: String, size: Number, source: String, _id: false }],
           // What the Agent remembered or forgot from the question ("Saved: …", "Forgot: …"), for "Memory updated".
           memoryNotes: [String],
-          // The person's thumbs on an answer: "up", "down" or "".
+          // The person's thumbs on an answer: "up", "down" or "". After a thumbs down, what was wrong
+          // (AGENT_FEEDBACK_REASONS ids) and their note, from the Feedback sheet.
           feedback: { type: String, default: "" },
+          feedbackReasons: [String],
+          feedbackNote: String,
           // A turn of a spoken conversation (services/agent/voice.js). `spoken`: what the Agent said aloud for an
           // answer, which is shorter than what it wrote; later spoken turns go by it.
           voice: Boolean,

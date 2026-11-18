@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { chatTitleFromPrompt } from "@synergifund/shared"
 import { api } from "../../lib/api"
 import { streamAgent, streamPayloadToAssistantParts } from "../../lib/agentStream"
+import { playAgentSound } from "../../lib/sounds"
 import { useApi } from "../../lib/useApi"
 
 // One Agent conversation: the chats (rename, pin, delete), the open chat's messages, sending and streaming the reply,
@@ -25,7 +26,7 @@ function threadRows(messages) {
       content: "",
       toolResult: { UsedTool: call.tool, result: call.result },
     }))
-    return [...tools, { id: message.id, role: "assistant", content: message.content, error: message.error, feedback: message.feedback || "", memoryNotes: message.memoryNotes || [], agentRun: { durationMs: message.agentRunDurationMs } }]
+    return [...tools, { id: message.id, role: "assistant", content: message.content, error: message.error, feedback: message.feedback || "", feedbackReasons: message.feedbackReasons || [], feedbackNote: message.feedbackNote || "", memoryNotes: message.memoryNotes || [], agentRun: { durationMs: message.agentRunDurationMs } }]
   })
 }
 
@@ -233,6 +234,8 @@ export function useAgentChat({ openId = "" } = {}) {
     setError("")
     const startedAt = Date.now()
     let chatId = threadId
+    let answered = false
+    playAgentSound("send")
     if (!threadId) setTitle(chatTitleFromPrompt(prompt || `About ${files.map((file) => file.name).join(", ")}`))
     const shownFiles = files.length ? files.map((file, index) => ({ id: `local-${index}`, name: file.name, mime: file.mime, url: file.url })) : replaceFrom?.attachments || []
     setRows((current) => {
@@ -251,6 +254,7 @@ export function useAgentChat({ openId = "" } = {}) {
           onPacket: (parsed) => {
             const parts = streamPayloadToAssistantParts(parsed)
             if (parts.skipMessage) return
+            if (parts.userMessage && !parts.error && !parts.toolResult) answered = true
             add({ id: rowId(), role: "assistant", content: parts.userMessage, toolResult: parts.toolResult, error: parts.error, revealFrom: parts.toolResult || parts.error ? undefined : Date.now() })
           },
         },
@@ -272,6 +276,7 @@ export function useAgentChat({ openId = "" } = {}) {
       })
       streamingRef.current = false
       setStreaming(false)
+      if (answered) playAgentSound("reply")
       refreshThread(chatId)
     }
   }
@@ -301,6 +306,13 @@ export function useAgentChat({ openId = "" } = {}) {
       put(before)
       setError(err.message)
     }
+  }
+
+  // The Feedback sheet after a thumbs down: what was wrong (AGENT_FEEDBACK_REASONS ids) and a note. The thumb stays down.
+  async function explain(row, { reasons = [], note = "" } = {}) {
+    if (!threadId || !savedMessage(row.id)) return
+    const result = await api(`/agent/threads/${threadId}/messages/${row.id}`, { method: "PATCH", body: { feedback: "down", reasons, note } })
+    setRows((current) => current.map((item) => (item.id === row.id ? { ...item, feedback: result.feedback, feedbackReasons: result.feedbackReasons, feedbackNote: result.feedbackNote } : item)))
   }
 
   async function renameThread(id, name) {
@@ -370,6 +382,7 @@ export function useAgentChat({ openId = "" } = {}) {
     retry,
     edit,
     rate,
+    explain,
     renameThread,
     pinThread,
     savePrompt,

@@ -4,11 +4,14 @@ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef,
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import Link from "next/link"
-import { PERMISSIONS, can } from "@synergifund/shared"
+import { AGENT_FEEDBACK_REASONS, MAX_FEEDBACK_NOTE, PERMISSIONS, can } from "@synergifund/shared"
 import { useSession } from "../shell/Providers"
 import { Icon } from "../ui/Icon"
 import { api } from "../../lib/api"
 import { useCopy } from "../../lib/useCopy"
+import { playAgentSound } from "../../lib/sounds"
+import { AgentBottomSheet, agentToast } from "./AgentSheets"
+import { AgentSpark } from "./AgentSpark"
 import { savedMessage } from "./useAgentChat"
 
 const AGENT_NAME = "SynergiFund"
@@ -1003,14 +1006,53 @@ function UserPrompt({ row, onEdit }) {
   )
 }
 
-// Under an answer, on hover (always on the last one, and on touch screens): Copy, Retry, thumbs, and Star to save
-// the question as a prompt.
-// Under an answer: Copy, Download as PDF (a memo of the question and answer), Retry, thumbs, and Star.
-function ReplyActions({ row, memo, onRetry, onRate, onStar, starred }) {
+// Under an answer (on hover; always on the last one, and on touch screens): thumbs up and down, Share (where the
+// device can), Copy, Download as PDF (a memo of the question and answer), Retry, and Star to save the question as a
+// prompt. A thumbs down opens Feedback, to say what was wrong (`onExplain`).
+function ReplyActions({ row, memo, onRetry, onRate, onExplain, onStar, starred }) {
   const [copied, copy] = useCopy()
+  const [feedback, setFeedback] = useState(false)
+  const [canShare, setCanShare] = useState(false)
+  useEffect(() => setCanShare(typeof navigator !== "undefined" && typeof navigator.share === "function" && window.matchMedia?.("(pointer: coarse)").matches), [])
+
+  async function copyIt() {
+    const ok = await copy(row.content)
+    playAgentSound("tap")
+    agentToast(ok ? "Copied to clipboard" : "Couldn't copy. Select the text instead.")
+  }
+  function rate(value) {
+    const taking = row.feedback === value
+    onRate(value)
+    playAgentSound("tap")
+    if (taking) return
+    if (value === "down" && onExplain) setFeedback(true)
+    else agentToast("Thanks for your feedback!")
+  }
+  async function share() {
+    try {
+      await navigator.share({ text: row.content })
+    } catch {}
+  }
+
   return (
+    <>
     <div className="agent-actions">
-      <button type="button" className="agent-action" onClick={() => copy(row.content)} aria-label={copied === "yes" ? "Copied" : "Copy"} title={copied === "yes" ? "Copied" : "Copy"}>
+      {onRate && (
+        <>
+          <button type="button" className={row.feedback === "up" ? "agent-action is-on" : "agent-action"} aria-pressed={row.feedback === "up"} onClick={() => rate("up")} aria-label="Good answer" title="Good answer">
+            <Icon name="thumbUp" size={15} />
+          </button>
+          <button type="button" className={row.feedback === "down" ? "agent-action is-on" : "agent-action"} aria-pressed={row.feedback === "down"} onClick={() => rate("down")} aria-label="Bad answer" title="Bad answer">
+            <Icon name="thumbDown" size={15} />
+          </button>
+        </>
+      )}
+      {canShare && (
+        <button type="button" className="agent-action" onClick={share} aria-label="Share" title="Share">
+          <Icon name="share" size={15} />
+        </button>
+      )}
+      <button type="button" className="agent-action" onClick={copyIt} aria-label={copied === "yes" ? "Copied" : "Copy"} title={copied === "yes" ? "Copied" : "Copy"}>
         <Icon name={copied === "yes" ? "tick" : "copy"} size={15} />
       </button>
       {memo && (
@@ -1023,22 +1065,60 @@ function ReplyActions({ row, memo, onRetry, onRate, onStar, starred }) {
           <Icon name="retry" size={15} />
         </button>
       )}
-      {onRate && (
-        <>
-          <button type="button" className={row.feedback === "up" ? "agent-action is-on" : "agent-action"} aria-pressed={row.feedback === "up"} onClick={() => onRate("up")} aria-label="Good answer" title="Good answer">
-            <Icon name="thumbUp" size={15} />
-          </button>
-          <button type="button" className={row.feedback === "down" ? "agent-action is-on" : "agent-action"} aria-pressed={row.feedback === "down"} onClick={() => onRate("down")} aria-label="Bad answer" title="Bad answer">
-            <Icon name="thumbDown" size={15} />
-          </button>
-        </>
-      )}
       {onStar && (
         <button type="button" className={starred ? "agent-action is-starred" : "agent-action"} aria-pressed={starred} onClick={onStar} aria-label={starred ? "Saved as a prompt" : "Save the question as a prompt"} title={starred ? "Saved as a prompt" : "Save the question as a prompt"}>
           <Icon name={starred ? "star" : "starLine"} size={15} />
         </button>
       )}
     </div>
+    {feedback && <FeedbackSheet row={row} onExplain={onExplain} onClose={() => setFeedback(false)} />}
+    </>
+  )
+}
+
+// After a thumbs down: what was wrong (any of the reasons) and more in their own words. Done saves it; X leaves just
+// the thumb.
+function FeedbackSheet({ row, onExplain, onClose }) {
+  const [reasons, setReasons] = useState(() => row.feedbackReasons || [])
+  const [note, setNote] = useState(row.feedbackNote || "")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState("")
+  const toggle = (id) => setReasons((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
+  const ready = reasons.length > 0 || note.trim().length > 0
+
+  async function done(close) {
+    setSaving(true)
+    setError("")
+    try {
+      await onExplain({ reasons, note: note.trim() })
+      agentToast("Thanks for your feedback!")
+      close()
+    } catch (err) {
+      setError(err.message)
+      setSaving(false)
+    }
+  }
+
+  return (
+    <AgentBottomSheet title="Feedback" onClose={onClose} className="agent-feedback-sheet">
+      {(close) => (
+        <>
+          <p className="agent-feedback-ask">What was wrong with the answer?</p>
+          <div className="agent-feedback-reasons">
+            {AGENT_FEEDBACK_REASONS.map((reason) => (
+              <button key={reason.id} type="button" className={reasons.includes(reason.id) ? "agent-chip is-on" : "agent-chip"} aria-pressed={reasons.includes(reason.id)} onClick={() => toggle(reason.id)}>
+                {reason.name}
+              </button>
+            ))}
+          </div>
+          <textarea className="agent-feedback-note" value={note} maxLength={MAX_FEEDBACK_NOTE} rows={4} placeholder="Tell us more (optional)" aria-label="Tell us more" onChange={(event) => setNote(event.target.value)} />
+          {error && <p className="agent-sheet-error">{error}</p>}
+          <div className="agent-feedback-foot">
+            <button type="button" className="agent-pill-button" disabled={!ready || saving} onClick={() => done(close)}>{saving ? "Sending…" : "Send feedback"}</button>
+          </div>
+        </>
+      )}
+    </AgentBottomSheet>
   )
 }
 
@@ -1084,7 +1164,7 @@ function Thinking() {
 // onRate(answer, "up" | "down"), onStar(question text); `starred(text)` says whether a question is already a prompt.
 // They only show on messages the server has saved (and not while an answer is coming).
 // `threadId` and `title`: the open chat, for Download as PDF.
-export function AgentMessages({ rows, streaming, empty = null, threadId = "", title = "", onRetry, onEdit, onRate, onStar, starred = () => false, onMemory = null }) {
+export function AgentMessages({ rows, streaming, empty = null, threadId = "", title = "", onRetry, onEdit, onRate, onExplain = null, onStar, starred = () => false, onMemory = null }) {
   const endRef = useRef(null)
 
   useEffect(() => {
@@ -1112,7 +1192,7 @@ export function AgentMessages({ rows, streaming, empty = null, threadId = "", ti
             {/* A spoken turn the person is still adding to has no reply yet. */}
             {(turn.replies.length > 0 || live || !question?.spoken) && <div className="agent-replies">
               <div className="agent-reply-head">
-                <span className="agent-mark" aria-label={AGENT_NAME}><Icon name="spark" size={14} /></span>
+                <span className="agent-mark" aria-label={AGENT_NAME}><AgentSpark size={18} live={live} /></span>
                 {live ? <Thinking /> : <WorkedFor durationMs={finalRow?.agentRun?.durationMs ?? null} steps={steps.map((row) => row.toolResult)} todos={todos} />}
               </div>
               {texts.map((row) => (
@@ -1125,12 +1205,14 @@ export function AgentMessages({ rows, streaming, empty = null, threadId = "", ti
               {!live && renamesOf(turn.replies).map((rename) => <RenameCard key={rename.id} rename={rename} />)}
               {!live && teamNotesOf(turn.replies).map((draft) => <TeamNoteCard key={draft.id} draft={draft} />)}
               {!live && finalRow?.memoryNotes?.length > 0 && <MemoryNote notes={finalRow.memoryNotes} onOpen={onMemory} />}
+              {!live && last && finalRow && !finalRow.error && <p className="agent-disclaimer">AI-generated content may be inaccurate.</p>}
               {!live && finalRow && (
                 <ReplyActions
                   row={finalRow}
                   memo={threadId && savedMessage(finalRow.id) && !finalRow.error ? { href: `/api/agent/threads/${threadId}/messages/${finalRow.id}/memo`, name: `${(title || "Agent answer").replace(/[\\/:*?"<>|]+/g, " ").trim()} - Agent memo.pdf` } : null}
                   onRetry={acts && onRetry ? () => onRetry(question) : null}
                   onRate={acts && onRate && savedMessage(finalRow.id) && !finalRow.error ? (value) => onRate(finalRow, value) : null}
+                  onExplain={acts && onExplain && savedMessage(finalRow.id) && !finalRow.error ? (details) => onExplain(finalRow, details) : null}
                   onStar={acts && onStar && question.content ? () => onStar(question.content) : null}
                   starred={Boolean(question?.content && starred(question.content))}
                 />

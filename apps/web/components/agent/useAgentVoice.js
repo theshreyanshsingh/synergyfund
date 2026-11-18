@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { streamVoice } from "../../lib/agentStream"
 import { api } from "../../lib/api"
-import { audioContext } from "../../lib/sounds"
+import { audioContext, playAgentSound } from "../../lib/sounds"
 import { createBargeIn } from "../../lib/bargeIn"
 import { createTurnDetector, encodeWav16k, loudness } from "../../lib/turnDetector"
 import { useApi } from "../../lib/useApi"
@@ -133,6 +133,7 @@ export function useAgentVoice({ threadId = "", temporary = false, streaming = fa
     runRef.current = null
     drop(run)
     release(run)
+    playAgentSound("talkEnd")
     live.current.onSpoken?.(null)
     setState("idle")
     setAsking(false)
@@ -449,6 +450,8 @@ export function useAgentVoice({ threadId = "", temporary = false, streaming = fa
     }
     const run = { context, chatId: live.current.threadId, temporary: live.current.temporary, muted: false, hearing: false, echoTurn: false, failures: 0, turns: 0, turn: null, kept: null, waiting: null, late: [], askingLate: false, lateTimer: null }
     runRef.current = run
+    // Three rising notes, played in the tap and over before the microphone opens.
+    playAgentSound("talk")
     setError("")
     setCaption("")
     setState("starting")

@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { AgentComposer } from "../../../components/agent/AgentComposer"
 import { AgentMessages } from "../../../components/agent/AgentMessages"
+import { AgentToasts } from "../../../components/agent/AgentSheets"
 import { AgentWelcome } from "../../../components/agent/AgentWelcome"
 import { KnowledgePanel } from "../../../components/agent/KnowledgePanel"
 import { chatWhen, useAgentChat } from "../../../components/agent/useAgentChat"
@@ -89,6 +90,11 @@ function Agent() {
     go("chat")
     setFill({ text, key: Date.now() })
   }
+  // A suggested question is asked at once, or put in the box to finish.
+  const suggest = (item) => {
+    if (item.send) chat.send(item.text)
+    else setFill({ text: item.fill || item.text, key: Date.now() })
+  }
   const starred = (text) => chat.prompts.some((prompt) => prompt.text === String(text || "").trim())
   const star = async (text) => {
     if (starred(text)) return
@@ -158,11 +164,12 @@ function Agent() {
                     streaming={chat.streaming || voice.working}
                     threadId={chat.threadId}
                     title={chat.chatTitle}
-                    empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} />}
+                    empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} onSuggest={voice.on ? null : suggest} />}
                     onRetry={voice.on ? null : chat.retry}
                     onEdit={voice.on ? null : chat.edit}
                     onMemory={() => go("knowledge", "you")}
                     onRate={chat.rate}
+                    onExplain={chat.explain}
                     onStar={star}
                     starred={starred}
                   />
@@ -170,7 +177,8 @@ function Agent() {
               </div>
             </div>
             <div className="agent-column agent-dock-box">
-              <AgentComposer onSend={chat.send} streaming={chat.streaming} connected={chat.connected} temporary={chat.temporary} fill={fill} blocked={chat.budgetMessage} voice={voice} />
+              <AgentToasts />
+              <AgentComposer onSend={chat.send} streaming={chat.streaming} connected={chat.connected} temporary={chat.temporary} fill={fill} blocked={chat.budgetMessage} voice={voice} onPrompts={() => go("prompts")} />
             </div>
           </div>
         )}

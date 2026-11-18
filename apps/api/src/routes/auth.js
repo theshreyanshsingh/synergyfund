@@ -1,7 +1,7 @@
 import { Router } from "express"
 import bcrypt from "bcryptjs"
 import { z } from "zod"
-import { CHIMES, RINGTONES, cleanSounds } from "@synergifund/shared"
+import { AGENT_SOUNDS, CHIMES, RINGTONES, cleanSounds } from "@synergifund/shared"
 import { NativeDevice, User } from "../models/index.js"
 import jwt from "jsonwebtoken"
 import { recordActivity } from "../services/notify.js"
@@ -92,13 +92,13 @@ authRouter.get(
   }),
 )
 
-// The sounds this person hears in the app: the call ringtone and the message chime.
+// The sounds this person hears in the app: the call ringtone, the message chime and the Agent's sounds (on or off).
 authRouter.patch(
   "/me/sounds",
   requireAuth,
   asyncHandler(async (req, res) => {
     const next = { ...cleanSounds(req.user.sounds) }
-    for (const [key, list] of [["ringtone", RINGTONES], ["chime", CHIMES]]) {
+    for (const [key, list] of [["ringtone", RINGTONES], ["chime", CHIMES], ["agent", AGENT_SOUNDS]]) {
       if (!(key in (req.body || {}))) continue
       if (!list.some((item) => item.id === req.body[key])) {
         sendError(res, 400, "Choose one of the sounds in the list.")

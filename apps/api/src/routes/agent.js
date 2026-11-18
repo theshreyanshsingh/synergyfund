@@ -1,7 +1,7 @@
 import { Router } from "express"
 import { chatTitleFromPrompt } from "@synergifund/shared"
 import mongoose from "mongoose"
-import { NOT_OWNED_STAGES, cityLine } from "@synergifund/shared"
+import { AGENT_FEEDBACK_REASONS, MAX_FEEDBACK_NOTE, NOT_OWNED_STAGES, cityLine } from "@synergifund/shared"
 import { AgentMemory, AgentPrompt, AgentProposal, AgentRename, AgentSetting, AgentThread, AiMonth, AiUsage, DocumentFile, HouseSummary, Loan, Property, TeamNote, TeamNoteDraft, User } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
@@ -102,6 +102,8 @@ function presentMessage(message) {
     error: Boolean(message.error),
     attachments: (message.attachments || []).map((item) => ({ id: String(item.fileId), name: item.name || "File", mime: item.mime || "", size: item.size || 0 })),
     feedback: FEEDBACK.includes(message.feedback) ? message.feedback : "",
+    feedbackReasons: message.feedback === "down" ? (message.feedbackReasons || []) : [],
+    feedbackNote: message.feedback ? message.feedbackNote || "" : "",
     createdAt: message.at,
   }
 }
@@ -358,7 +360,8 @@ agentRouter.patch(
   }),
 )
 
-// Thumbs up or down on an answer ("" takes it back).
+// Thumbs up or down on an answer ("" takes it back). With a thumbs down, `reasons` (AGENT_FEEDBACK_REASONS) say what
+// was wrong, and `note` says it in the person's words. Taking the thumb back clears them.
 agentRouter.patch(
   "/threads/:id/messages/:messageId",
   asyncHandler(async (req, res) => {
@@ -368,9 +371,23 @@ agentRouter.patch(
     if (!message || message.role === "user") return sendError(res, 404, "That answer was not found.")
     const feedback = String(req.body.feedback ?? "")
     if (!FEEDBACK.includes(feedback)) return sendError(res, 400, "Send up, down or nothing.")
+    const body = req.body || {}
+    if ("reasons" in body) {
+      const known = AGENT_FEEDBACK_REASONS.map((reason) => reason.id)
+      if (!Array.isArray(body.reasons) || body.reasons.some((reason) => !known.includes(reason))) return sendError(res, 400, "Choose reasons from the list.")
+      if (body.reasons.length && feedback !== "down") return sendError(res, 400, "Reasons go with a thumbs down.")
+    }
+    const note = "note" in body ? String(body.note ?? "").trim() : null
+    if (note && note.length > MAX_FEEDBACK_NOTE) return sendError(res, 400, `Keep the note to ${MAX_FEEDBACK_NOTE} characters.`)
+    if (feedback !== message.feedback) {
+      message.feedbackReasons = []
+      message.feedbackNote = ""
+    }
     message.feedback = feedback
+    if (feedback === "down" && Array.isArray(body.reasons)) message.feedbackReasons = [...new Set(body.reasons)]
+    if (feedback && note != null) message.feedbackNote = note
     await thread.save({ timestamps: false })
-    res.json({ feedback })
+    res.json({ feedback, feedbackReasons: message.feedbackReasons || [], feedbackNote: message.feedbackNote || "" })
   }),
 )
 

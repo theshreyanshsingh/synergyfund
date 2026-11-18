@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { AgentComposer } from "./AgentComposer"
 import { AgentMessages } from "./AgentMessages"
+import { AgentBottomSheet, AgentToasts } from "./AgentSheets"
 import { AgentWelcome } from "./AgentWelcome"
 import { KnowledgePanel } from "./KnowledgePanel"
 import { chatWhen, hasStoredThread, useAgentChat } from "./useAgentChat"
@@ -14,12 +15,15 @@ const SLIDE_MS = 240
 const DELETE_WIDTH = 88
 
 // Phones: the Agent slides up over the page you are on, to full height. X, a swipe down on its top bar, or the phone's
-// Back closes it and leaves you where you were. ⋮ has New chat, Chats, Prompts, Knowledge and Temporary chat.
-// Talk (in the box) is Talk mode, as on the Agent page; closing the sheet ends it.
+// Back closes it and leaves you where you were. In a chat its name is beside X, with New chat (the pencil), Chats and
+// ⋮ on the right; ⋮ has Chats, Prompts, Knowledge and Temporary chat, each of which slides up as a sheet over the chat.
+// A new chat is the greeting with Suggested questions. Talk (the round wave in the box) takes the whole sheet;
+// closing the sheet ends it.
 export function AgentSheet({ onClose }) {
   const chat = useAgentChat()
   const voice = useAgentVoice({ threadId: chat.threadId, temporary: chat.temporary, streaming: chat.streaming, onThread: chat.adoptThread, onRefresh: chat.refreshThread, onSpoken: chat.showSpoken })
-  const [view, setView] = useState("chat")
+  // The sheet over the chat: "chats", "prompts", "knowledge" or "".
+  const [view, setView] = useState("")
   // Knowledge's tab: "team", or "you" (what the Agent remembers about this person).
   const [knowing, setKnowing] = useState("team")
   const [menu, setMenu] = useState(false)
@@ -85,8 +89,7 @@ export function AgentSheet({ onClose }) {
     const onKey = (event) => {
       if (event.key !== "Escape") return
       if (menu) setMenu(false)
-      else if (view !== "chat") setView("chat")
-      else close()
+      else if (!view) close()
     }
     document.addEventListener("keydown", onKey)
     return () => document.removeEventListener("keydown", onKey)
@@ -109,91 +112,109 @@ export function AgentSheet({ onClose }) {
 
   function choose(action) {
     setMenu(false)
-    if (action === "new") { chat.newChat(); setView("chat") }
+    if (action === "new") { chat.newChat(); setView("") }
     if (action === "chats") setView("chats")
     if (action === "prompts") setView("prompts")
     if (action === "knowledge") { setKnowing("team"); setView("knowledge") }
-    if (action === "temporary") { chat.toggleTemporary(); setView("chat") }
+    if (action === "temporary") { chat.toggleTemporary(); setView("") }
   }
 
   const pick = (prompt) => {
-    setView("chat")
+    setView("")
     setFill({ text: prompt.text, key: Date.now() })
+  }
+  // A suggested question is asked at once, or put in the box to finish.
+  const suggest = (item) => {
+    if (item.send) chat.send(item.text)
+    else setFill({ text: item.fill || item.text, key: Date.now() })
   }
   const starred = (text) => chat.prompts.some((prompt) => prompt.text === String(text || "").trim())
   const star = (text) => {
     if (!starred(text)) chat.savePrompt(text).catch((err) => window.alert(err.message))
   }
   const savedTitle = !chat.temporary && chat.threadId ? chat.chatTitle : ""
+  const inChat = chat.rows.length > 0 || chat.streaming
   const style = { transform: shown ? `translateY(${drag}px)` : "translateY(100%)", transition: swipe.current ? "none" : undefined }
+  const closeView = () => setView("")
 
   return (
     <section ref={sheetRef} className="agent-sheet" style={style} role="dialog" aria-modal="true" aria-label="Agent">
       <header className="agent-sheet-bar" {...bar}>
         <span className="agent-sheet-grip" aria-hidden="true" />
-        {view === "chat" ? (
-          <button type="button" className="agent-sheet-icon" onClick={close} aria-label="Close Agent"><Icon name="close" size={20} /></button>
-        ) : (
-          <button type="button" className="agent-sheet-icon" onClick={() => setView("chat")} aria-label="Back to the chat"><Icon name="back" size={20} /></button>
-        )}
-        <h2 className="agent-sheet-title">{view === "chats" ? "Chats" : view === "prompts" ? "Prompts" : view === "knowledge" ? "Knowledge" : chat.temporary ? "Temporary chat" : savedTitle}</h2>
-        {view === "chat" ? (
-          <div className="agent-sheet-more" ref={menuRef}>
-            <button type="button" className="agent-sheet-icon" onClick={() => setMenu((open) => !open)} aria-label="More" aria-haspopup="menu" aria-expanded={menu}><Icon name="kebab" size={20} /></button>
-            {menu && (
-              <div className="agent-sheet-menu" role="menu">
-                <button type="button" role="menuitem" disabled={chat.streaming} onClick={() => choose("new")}><Icon name="plus" size={18} /> New chat</button>
-                <button type="button" role="menuitem" onClick={() => choose("chats")}><Icon name="history" size={18} /> Chats</button>
-                <button type="button" role="menuitem" onClick={() => choose("prompts")}><Icon name="forward" size={18} /> Prompts</button>
-                <button type="button" role="menuitem" onClick={() => choose("knowledge")}><Icon name="book" size={18} /> Knowledge</button>
-                <button type="button" role="menuitem" disabled={chat.streaming} onClick={() => choose("temporary")}><Icon name="tempChat" size={18} /> {chat.temporary ? "Leave temporary chat" : "Temporary chat"}</button>
-              </div>
-            )}
-          </div>
-        ) : <span />}
+        <button type="button" className="agent-round is-soft" onClick={close} aria-label="Close Agent"><Icon name="close" size={19} /></button>
+        <h2 className="agent-sheet-title">{chat.temporary ? "Temporary chat" : inChat ? savedTitle : ""}</h2>
+        <div className="agent-sheet-tools" ref={menuRef}>
+          {inChat && !chat.temporary && (
+            <>
+              <button type="button" className="agent-round" disabled={chat.streaming} onClick={() => choose("new")} aria-label="New chat" title="New chat"><Icon name="edit" size={18} /></button>
+              <button type="button" className="agent-round" onClick={() => choose("chats")} aria-label="Chats" title="Chats"><Icon name="chat" size={18} /></button>
+            </>
+          )}
+          <button type="button" className="agent-round" onClick={() => setMenu((open) => !open)} aria-label="More" aria-haspopup="menu" aria-expanded={menu}><Icon name="kebab" size={19} /></button>
+          {menu && (
+            <div className="agent-sheet-menu" role="menu">
+              {inChat && chat.temporary && <button type="button" role="menuitem" disabled={chat.streaming} onClick={() => choose("new")}><Icon name="edit" size={18} /> New chat</button>}
+              <button type="button" role="menuitem" onClick={() => choose("chats")}><Icon name="chat" size={18} /> Chats</button>
+              <button type="button" role="menuitem" onClick={() => choose("prompts")}><Icon name="starLine" size={18} /> Prompts</button>
+              <button type="button" role="menuitem" onClick={() => choose("knowledge")}><Icon name="book" size={18} /> Knowledge</button>
+              <button type="button" role="menuitem" disabled={chat.streaming} onClick={() => choose("temporary")}><Icon name="tempChat" size={18} /> {chat.temporary ? "Leave temporary chat" : "Temporary chat"}</button>
+            </div>
+          )}
+        </div>
       </header>
 
-      {view === "chat" && (
-        <>
-          <div className="agent-sheet-scroll">
-            {chat.error && <div className="banner">{chat.error}</div>}
-            {chat.opening ? <PageSpinner /> : (
-              <AgentMessages
-                rows={chat.rows}
-                streaming={chat.streaming || voice.working}
-                threadId={chat.threadId}
-                title={chat.chatTitle}
-                empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} />}
-                onRetry={voice.on ? null : chat.retry}
-                onEdit={voice.on ? null : chat.edit}
-                onMemory={() => { setKnowing("you"); setView("knowledge") }}
-                onRate={chat.rate}
-                onStar={star}
-                starred={starred}
-              />
-            )}
-          </div>
-          <AgentComposer onSend={chat.send} streaming={chat.streaming} connected={chat.connected} temporary={chat.temporary} autoFocus={typeAway} fill={fill} placeholder="Ask Agent anything…" blocked={chat.budgetMessage} voice={voice} />
-        </>
+      <div className="agent-sheet-scroll">
+        {chat.error && <div className="banner">{chat.error}</div>}
+        {chat.opening ? <PageSpinner /> : (
+          <AgentMessages
+            rows={chat.rows}
+            streaming={chat.streaming || voice.working}
+            threadId={chat.threadId}
+            title={chat.chatTitle}
+            empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} onSuggest={voice.on ? null : suggest} />}
+            onRetry={voice.on ? null : chat.retry}
+            onEdit={voice.on ? null : chat.edit}
+            onMemory={() => { setKnowing("you"); setView("knowledge") }}
+            onRate={chat.rate}
+            onExplain={chat.explain}
+            onStar={star}
+            starred={starred}
+          />
+        )}
+      </div>
+      <div className="agent-sheet-foot">
+        <AgentToasts />
+        <AgentComposer onSend={chat.send} streaming={chat.streaming} connected={chat.connected} temporary={chat.temporary} autoFocus={typeAway} fill={fill} placeholder="Ask Agent anything…" blocked={chat.budgetMessage} voice={voice} onPrompts={() => setView("prompts")} />
+      </div>
+
+      {view === "chats" && (
+        <AgentBottomSheet title="Chats" onClose={closeView} className="agent-chats-sheet" action={<button type="button" className="agent-round" disabled={chat.streaming} onClick={() => choose("new")} aria-label="New chat" title="New chat"><Icon name="edit" size={18} /></button>}>
+          <ChatList threads={chat.threads} activeId={chat.threadId} onOpen={(id) => { chat.openThread(id); setView("") }} onDelete={chat.deleteThread} />
+        </AgentBottomSheet>
       )}
-      {view === "knowledge" && <div className="agent-sheet-memory"><KnowledgePanel tab={knowing} onOpen={(id) => { chat.openThread(id); setView("chat") }} /></div>}
-      {view === "chats" && <ChatList threads={chat.threads} activeId={chat.threadId} onOpen={(id) => { chat.openThread(id); setView("chat") }} onDelete={chat.deleteThread} />}
       {view === "prompts" && (
-        // Saved prompts (the star under an answer, or New on the Agent page). Tap one to put it in the box.
-        chat.prompts.length ? (
-          <ul className="agent-sheet-list agent-prompts">
-            {chat.prompts.map((prompt) => (
-              <li key={prompt.id}>
-                <button type="button" onClick={() => pick(prompt)}>
-                  <Icon name="forward" size={16} />
-                  <span>{prompt.text}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="agent-sheet-none">{chat.promptsLoaded ? "No saved prompts yet. Tap the star under an answer to save the question you asked." : "Loading…"}</p>
-        )
+        <AgentBottomSheet title="Prompts" onClose={closeView}>
+          {/* Saved prompts (the star under an answer, or New on the Agent page). Tap one to put it in the box. */}
+          {chat.prompts.length ? (
+            <ul className="agent-sheet-list agent-prompts">
+              {chat.prompts.map((prompt) => (
+                <li key={prompt.id}>
+                  <button type="button" onClick={() => pick(prompt)}>
+                    <Icon name="suggest" size={16} />
+                    <span>{prompt.text}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="agent-sheet-none">{chat.promptsLoaded ? "No saved prompts yet. Tap the star under an answer to save the question you asked." : "Loading…"}</p>
+          )}
+        </AgentBottomSheet>
+      )}
+      {view === "knowledge" && (
+        <AgentBottomSheet title="Knowledge" onClose={closeView} className="agent-knowledge-sheet">
+          <div className="agent-sheet-memory"><KnowledgePanel tab={knowing} onOpen={(id) => { chat.openThread(id); setView("") }} /></div>
+        </AgentBottomSheet>
       )}
     </section>
   )
@@ -260,8 +281,11 @@ function ChatRow({ thread, active, open, onSwipe, onOpen, onDelete }) {
           else onOpen()
         }}
       >
-        <span className="agent-chat-title">{thread.title}</span>
-        <small>{chatWhen(thread.updatedAt)}</small>
+        <span className="agent-chat-icon" aria-hidden="true"><Icon name="chat" size={17} /></span>
+        <span className="agent-chat-text">
+          <span className="agent-chat-title">{thread.title}</span>
+          <small>{chatWhen(thread.updatedAt)}</small>
+        </span>
       </button>
     </li>
   )

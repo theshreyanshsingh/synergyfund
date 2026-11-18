@@ -712,12 +712,29 @@ export const CHIMES = [
   { id: "marimba", name: "Marimba" },
   { id: "off", name: "Off" },
 ]
-export const DEFAULT_SOUNDS = { ringtone: "marimba", chime: "chime" }
+// Why an answer missed, picked on the Feedback sheet after a thumbs down (with a note in their own words).
+export const AGENT_FEEDBACK_REASONS = [
+  { id: "wrong", name: "Got the facts wrong" },
+  { id: "missed", name: "Didn't answer what I asked" },
+  { id: "short", name: "Not detailed enough" },
+  { id: "action", name: "Did the wrong thing" },
+  { id: "slow", name: "Too slow" },
+  { id: "other", name: "Other" },
+]
+export const MAX_FEEDBACK_NOTE = 1000
+
+// The Agent's own small sounds: sending a question, an answer arriving, the microphone and Talk starting and ending.
+export const AGENT_SOUNDS = [
+  { id: "on", name: "On" },
+  { id: "off", name: "Off" },
+]
+export const DEFAULT_SOUNDS = { ringtone: "marimba", chime: "chime", agent: "on" }
 
 export function cleanSounds(value = {}) {
   return {
     ringtone: RINGTONES.some((item) => item.id === value?.ringtone) ? value.ringtone : DEFAULT_SOUNDS.ringtone,
     chime: CHIMES.some((item) => item.id === value?.chime) ? value.chime : DEFAULT_SOUNDS.chime,
+    agent: AGENT_SOUNDS.some((item) => item.id === value?.agent) ? value.agent : DEFAULT_SOUNDS.agent,
   }
 }
 

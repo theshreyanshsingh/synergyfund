@@ -11,9 +11,10 @@ export function SoundAlerts({ user, chat }) {
   const me = user?.id
   const ringtone = user?.sounds?.ringtone
   const chime = user?.sounds?.chime
+  const agent = user?.sounds?.agent
   useEffect(() => {
-    setSoundPrefs({ ringtone, chime })
-  }, [ringtone, chime])
+    setSoundPrefs({ ringtone, chime, agent })
+  }, [ringtone, chime, agent])
 
   // Browsers only allow sound after a tap or key press.
   useEffect(() => {
