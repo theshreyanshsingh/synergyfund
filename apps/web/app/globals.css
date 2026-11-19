@@ -4364,6 +4364,7 @@ button.call-info-person-row:hover strong { color: var(--accent); }
 /* New chat, Chats and More in one soft pill on the right. */
 .agent-sheet-tools { position: relative; display: flex; align-items: center; gap: 2px; padding: 2px; border-radius: 999px; background: var(--white); box-shadow: 0 1px 2px rgba(15, 18, 24, .06), 0 0 0 1px var(--line); }
 .agent-sheet-tools .agent-round { width: 38px; height: 38px; background: transparent; box-shadow: none; }
+.agent-sheet-tools .agent-round.is-on, .agent-sheet-tools .agent-round.is-on:hover { background: var(--ink); color: var(--on-ink); }
 .agent-sheet-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 3; display: grid; min-width: 220px; padding: 6px; border: 1px solid var(--line); border-radius: 16px; background: var(--white); box-shadow: var(--shadow); transform-origin: top right; animation: agent-menu-in .16s cubic-bezier(.2, .8, .2, 1) both; }
 .agent-sheet-menu button { display: flex; align-items: center; gap: 12px; padding: 12px; border: 0; border-radius: 10px; background: none; color: var(--text); font-size: 15px; text-align: left; text-transform: none; }
 .agent-sheet-menu button:active, .agent-sheet-menu button:hover { background: var(--hover); }

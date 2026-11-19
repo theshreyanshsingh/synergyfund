@@ -15,10 +15,11 @@ const SLIDE_MS = 240
 const DELETE_WIDTH = 88
 
 // Phones: the Agent slides up over the page you are on, to full height. X, a swipe down on its top bar, or the phone's
-// Back closes it and leaves you where you were. In a chat its name is beside X, with New chat (the pencil), Chats and
-// ⋮ on the right; ⋮ has Chats, Prompts, Knowledge and Temporary chat, each of which slides up as a sheet over the chat.
-// A new chat is the greeting with Suggested questions. Talk (the round wave in the box) takes the whole sheet;
-// closing the sheet ends it.
+// Back closes it and leaves you where you were. A new chat is the greeting with Suggested questions, and Temporary
+// chat (the dashed bubble, dark while on) beside ⋮. In a chat its name is beside X, with New chat (the pencil), Chats and
+// ⋮ on the right; ⋮ has Chats, Prompts and Knowledge, each of which slides up as a sheet over the chat (and Temporary
+// chat, in a chat that is kept). Under an answer: thumbs, Share, Copy and Retry. Talk (the round wave in the box) takes
+// the whole sheet; closing the sheet ends it.
 export function AgentSheet({ onClose }) {
   const chat = useAgentChat()
   const voice = useAgentVoice({ threadId: chat.threadId, temporary: chat.temporary, streaming: chat.streaming, onThread: chat.adoptThread, onRefresh: chat.refreshThread, onSpoken: chat.showSpoken })
@@ -128,10 +129,6 @@ export function AgentSheet({ onClose }) {
     if (item.send) chat.send(item.text)
     else setFill({ text: item.fill || item.text, key: Date.now() })
   }
-  const starred = (text) => chat.prompts.some((prompt) => prompt.text === String(text || "").trim())
-  const star = (text) => {
-    if (!starred(text)) chat.savePrompt(text).catch((err) => window.alert(err.message))
-  }
   const savedTitle = !chat.temporary && chat.threadId ? chat.chatTitle : ""
   const inChat = chat.rows.length > 0 || chat.streaming
   const style = { transform: shown ? `translateY(${drag}px)` : "translateY(100%)", transition: swipe.current ? "none" : undefined }
@@ -144,6 +141,11 @@ export function AgentSheet({ onClose }) {
         <button type="button" className="agent-round is-soft" onClick={close} aria-label="Close Agent"><Icon name="close" size={19} /></button>
         <h2 className="agent-sheet-title">{chat.temporary ? "Temporary chat" : inChat ? savedTitle : ""}</h2>
         <div className="agent-sheet-tools" ref={menuRef}>
+          {(!inChat || chat.temporary) && (
+            <button type="button" className={chat.temporary ? "agent-round is-on" : "agent-round"} aria-pressed={chat.temporary} disabled={chat.streaming} onClick={() => choose("temporary")} aria-label={chat.temporary ? "Leave temporary chat" : "Temporary chat"} title={chat.temporary ? "Leave temporary chat" : "Temporary chat: not kept in Chats"}>
+              <Icon name="tempChat" size={19} />
+            </button>
+          )}
           {inChat && !chat.temporary && (
             <>
               <button type="button" className="agent-round" disabled={chat.streaming} onClick={() => choose("new")} aria-label="New chat" title="New chat"><Icon name="edit" size={18} /></button>
@@ -157,7 +159,7 @@ export function AgentSheet({ onClose }) {
               <button type="button" role="menuitem" onClick={() => choose("chats")}><Icon name="chat" size={18} /> Chats</button>
               <button type="button" role="menuitem" onClick={() => choose("prompts")}><Icon name="starLine" size={18} /> Prompts</button>
               <button type="button" role="menuitem" onClick={() => choose("knowledge")}><Icon name="book" size={18} /> Knowledge</button>
-              <button type="button" role="menuitem" disabled={chat.streaming} onClick={() => choose("temporary")}><Icon name="tempChat" size={18} /> {chat.temporary ? "Leave temporary chat" : "Temporary chat"}</button>
+              {inChat && !chat.temporary && <button type="button" role="menuitem" disabled={chat.streaming} onClick={() => choose("temporary")}><Icon name="tempChat" size={18} /> Temporary chat</button>}
             </div>
           )}
         </div>
@@ -177,8 +179,7 @@ export function AgentSheet({ onClose }) {
             onMemory={() => { setKnowing("you"); setView("knowledge") }}
             onRate={chat.rate}
             onExplain={chat.explain}
-            onStar={star}
-            starred={starred}
+            memos={false}
           />
         )}
       </div>
@@ -194,7 +195,7 @@ export function AgentSheet({ onClose }) {
       )}
       {view === "prompts" && (
         <AgentBottomSheet title="Prompts" onClose={closeView}>
-          {/* Saved prompts (the star under an answer, or New on the Agent page). Tap one to put it in the box. */}
+          {/* Saved prompts (made under Prompts on the Agent page). Tap one to put it in the box. */}
           {chat.prompts.length ? (
             <ul className="agent-sheet-list agent-prompts">
               {chat.prompts.map((prompt) => (
@@ -207,7 +208,7 @@ export function AgentSheet({ onClose }) {
               ))}
             </ul>
           ) : (
-            <p className="agent-sheet-none">{chat.promptsLoaded ? "No saved prompts yet. Tap the star under an answer to save the question you asked." : "Loading…"}</p>
+            <p className="agent-sheet-none">{chat.promptsLoaded ? "No saved prompts yet. Save the questions you ask often under Prompts on the Agent page." : "Loading…"}</p>
           )}
         </AgentBottomSheet>
       )}

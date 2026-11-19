@@ -1162,9 +1162,10 @@ function Thinking() {
 
 // The conversation. `empty` is the new-chat screen. The rest act on a turn: onRetry(question), onEdit(question, text),
 // onRate(answer, "up" | "down"), onStar(question text); `starred(text)` says whether a question is already a prompt.
-// They only show on messages the server has saved (and not while an answer is coming).
+// They only show on messages the server has saved (and not while an answer is coming). `memos`: Download as PDF under
+// answers (the Agent page; the phone leaves it out, with Star).
 // `threadId` and `title`: the open chat, for Download as PDF.
-export function AgentMessages({ rows, streaming, empty = null, threadId = "", title = "", onRetry, onEdit, onRate, onExplain = null, onStar, starred = () => false, onMemory = null }) {
+export function AgentMessages({ rows, streaming, empty = null, threadId = "", title = "", onRetry, onEdit, onRate, onExplain = null, onStar = null, starred = () => false, onMemory = null, memos = true }) {
   const endRef = useRef(null)
 
   useEffect(() => {
@@ -1209,7 +1210,7 @@ export function AgentMessages({ rows, streaming, empty = null, threadId = "", ti
               {!live && finalRow && (
                 <ReplyActions
                   row={finalRow}
-                  memo={threadId && savedMessage(finalRow.id) && !finalRow.error ? { href: `/api/agent/threads/${threadId}/messages/${finalRow.id}/memo`, name: `${(title || "Agent answer").replace(/[\\/:*?"<>|]+/g, " ").trim()} - Agent memo.pdf` } : null}
+                  memo={memos && threadId && savedMessage(finalRow.id) && !finalRow.error ? { href: `/api/agent/threads/${threadId}/messages/${finalRow.id}/memo`, name: `${(title || "Agent answer").replace(/[\\/:*?"<>|]+/g, " ").trim()} - Agent memo.pdf` } : null}
                   onRetry={acts && onRetry ? () => onRetry(question) : null}
                   onRate={acts && onRate && savedMessage(finalRow.id) && !finalRow.error ? (value) => onRate(finalRow, value) : null}
                   onExplain={acts && onExplain && savedMessage(finalRow.id) && !finalRow.error ? (details) => onExplain(finalRow, details) : null}
