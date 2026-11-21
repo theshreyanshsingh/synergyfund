@@ -13,6 +13,8 @@ import { TaskPanel } from "./TaskPanel"
 import { Avatar, LabelOptions, PeopleOptions, PickerCell, PriorityOptions, PriorityPill, PropertyOptions, StatusOptions, StatusPill } from "./TaskPickers"
 import { COLUMNS, COMPLETED_KEY, DUE_FILTERS, GROUPS, SORTS, STATUS_TONE, PRIORITY_TONE, TASK_PRIORITIES, TASK_STATUSES, dueLabel, filterTasks, groupTasks, isOverdue, sortTasks, todayKey } from "./taskFormat"
 
+// Cards on a phone, and on a touch tablet, where the table's Due, Priority and Labels would start off screen.
+const TASK_CARDS = "(max-width: 760px), (max-width: 1180px) and (pointer: coarse)"
 const SAVE_DELAY = 600
 // Completing: the tick and strike-through first, then the row slides out, then it is in Completed.
 const LEAVE_AFTER = 500
@@ -62,7 +64,7 @@ export function TaskBoard({ propertyId = "" }) {
   const saving = useRef({})
   const toastTimer = useRef(null)
   const firstView = useRef(true)
-  const phone = usePhone()
+  const phone = usePhone(TASK_CARDS)
 
   useEffect(() => {
     if (!list.data) return

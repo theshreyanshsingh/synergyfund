@@ -126,7 +126,6 @@ export default function PaymentsPage() {
     <>
       <WorkspacePage
         views={false}
-        selectable={false}
         compact
         customize={false}
         loading={(!list.data && !list.error) || (!expenses.data && !expenses.error)}

@@ -11,7 +11,7 @@ const PHONE = "(max-width: 760px)"
 // opens it straight away.
 // `phoneLine`: on phones and tablets each row is one line (its name, any `peek` columns and a chevron) and a tap opens it, for a
 // short list with little else to show (a contractor's properties).
-export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loading, selectable = true, compact = false, onMove, collapsible = false, phoneLine = false, openLabel = "Open", sort = null, onSort = null }) {
+export function DataTable({ columns, rows, selected, onToggle, onRow, empty, loading, selectable = false, compact = false, onMove, collapsible = false, phoneLine = false, openLabel = "Open", sort = null, onSort = null }) {
   const [expanded, setExpanded] = useState("")
   // Only a row that opens something can fold; otherwise its details would be out of reach.
   const folding = collapsible && Boolean(onRow)

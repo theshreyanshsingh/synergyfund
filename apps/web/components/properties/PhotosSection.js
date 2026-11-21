@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react"
 import { FormSheet } from "../ui/FormSheet"
+import { PhotoViewer } from "../ui/PhotoViewer"
 import { CameraCapture, prepareFile } from "../photos/CameraCapture"
 import { api } from "../../lib/api"
 
@@ -15,22 +16,26 @@ export function addedLabel(day) {
 
 const photoCount = (count) => `${count} ${count === 1 ? "photo" : "photos"}`
 
-// A property's photos, newest first, each with the day it was added.
+// A property's photos, newest first, each with the day it was added. A tap opens it full screen, inside the app.
 export function FiledPhotos({ photos }) {
+  const [viewing, setViewing] = useState(-1)
   if (!photos.length) return <p className="property-missing">No photos yet.</p>
+  const shown = photos.map((photo) => ({ id: photo.id, url: photo.url || `/api/documents/${photo.id}/raw`, name: photo.name, download: `/api/documents/${photo.id}/download` }))
   return (
     <div className="property-photos">
-      {photos.map((photo) => {
-        const href = photo.url || `/api/documents/${photo.id}/raw`
-        return (
-          <figure key={photo.id} className="property-photo" data-photo={photo.id}>
-            <a href={href} target="_blank" rel="noreferrer">
-              <img src={href} alt={photo.name} loading="lazy" />
-            </a>
-            {photo.addedOn && <figcaption>Added {addedLabel(photo.addedOn)}</figcaption>}
-          </figure>
-        )
-      })}
+      {viewing >= 0 && <PhotoViewer photos={shown} index={viewing} onIndex={setViewing} onClose={() => setViewing(-1)} />}
+      {photos.map((photo, index) => (
+        <figure key={photo.id} className="property-photo" data-photo={photo.id}>
+          <a href={shown[index].url} target="_blank" rel="noreferrer" onClick={(event) => {
+            if (event.metaKey || event.ctrlKey || event.shiftKey) return
+            event.preventDefault()
+            setViewing(index)
+          }}>
+            <img src={shown[index].url} alt={photo.name} loading="lazy" />
+          </a>
+          {photo.addedOn && <figcaption>Added {addedLabel(photo.addedOn)}</figcaption>}
+        </figure>
+      ))}
     </div>
   )
 }

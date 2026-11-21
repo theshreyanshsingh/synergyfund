@@ -11,7 +11,6 @@ export default function ActivityPage() {
       views={false}
       loading={!list.data && !list.error}
       title="Team activity"
-      selectable={false}
       compact
       filters={[
         { key: "actor", label: "Person", value: (row) => row.actorName },

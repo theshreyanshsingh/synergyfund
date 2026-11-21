@@ -126,7 +126,6 @@ function PropertiesScreen() {
             )}
           </>
         )}
-        selectable={false}
         compact
         filters={[
           { key: "stage", label: "Status", options: STAGES, value: (row) => row.stage },

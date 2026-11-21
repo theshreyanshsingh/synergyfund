@@ -4,7 +4,8 @@ import { Fragment, createContext, useContext, useEffect, useRef, useState } from
 import Link from "next/link"
 import { Icon } from "../ui/Icon"
 import { Modal } from "../ui/Modal"
-import { Avatar } from "./ChatComposer"
+import { PhotoViewer } from "../ui/PhotoViewer"
+import { Avatar, touchScreen } from "./ChatComposer"
 import { ChatText } from "./ChatMarkdown"
 import { QUICK_EMOJI, clock, dayLabel, fileSize, fromEditable, nameOf, plain, sameDay, toEditable } from "./chatFormat"
 
@@ -14,11 +15,16 @@ const GROUP_GAP = 5 * 60 * 1000
 export const ChatSafety = createContext({ blocked: new Set(), onReport: null, onBlock: null, onUnblock: null })
 
 export function ChatMessages({ messages, people, me, isAdmin, online, unreadAfter, inThread, onReact, onReply, onEdit, onDelete }) {
+  // The photo open full screen, among every photo in the messages loaded here (swipe between them).
+  const [viewing, setViewing] = useState(-1)
+  const photos = messages.flatMap((message) => (message.deleted ? [] : (message.attachments || []).filter(isImage).map((file) => ({ id: file.id, url: file.url, name: file.name, download: `${file.url}?download=1` }))))
+  const openPhoto = (file) => setViewing(photos.findIndex((photo) => photo.id === file.id))
   let lastAuthor = ""
   let lastAt = 0
   let shownUnread = false
   return (
     <div className="chat-messages">
+      {viewing >= 0 && photos[viewing] && <PhotoViewer photos={photos} index={viewing} onIndex={setViewing} onClose={() => setViewing(-1)} />}
       {messages.map((message, index) => {
         const previous = messages[index - 1]
         const newDay = !previous || !sameDay(previous.createdAt, message.createdAt)
@@ -46,6 +52,7 @@ export function ChatMessages({ messages, people, me, isAdmin, online, unreadAfte
               onReply={onReply}
               onEdit={onEdit}
               onDelete={onDelete}
+              onPhoto={openPhoto}
             />
           </Fragment>
         )
@@ -54,7 +61,9 @@ export function ChatMessages({ messages, people, me, isAdmin, online, unreadAfte
   )
 }
 
-function ChatMessage({ message, people, me, compact, canDelete, online, inThread, onReact, onReply, onEdit, onDelete }) {
+const isImage = (file) => String(file.mime).startsWith("image/")
+
+function ChatMessage({ message, people, me, compact, canDelete, online, inThread, onReact, onReply, onEdit, onDelete, onPhoto }) {
   const [editing, setEditing] = useState(false)
   const [picking, setPicking] = useState(false)
   const [revealed, setRevealed] = useState(false)
@@ -142,8 +151,13 @@ function ChatMessage({ message, people, me, compact, canDelete, online, inThread
         {message.attachments.length > 0 && (
           <div className="chat-attachments">
             {message.attachments.map((file) => (
-              String(file.mime).startsWith("image/") ? (
-                <a key={file.id} className="chat-image" href={file.url} target="_blank" rel="noreferrer">
+              isImage(file) ? (
+                // A tap opens it full screen here; a new tab (Cmd-click on a computer) still opens the file itself.
+                <a key={file.id} className="chat-image" href={file.url} target="_blank" rel="noreferrer" onClick={(event) => {
+                  if (event.metaKey || event.ctrlKey || event.shiftKey || !onPhoto) return
+                  event.preventDefault()
+                  onPhoto(file)
+                }}>
                   <img src={file.url} alt={file.name} loading="lazy" />
                 </a>
               ) : (
@@ -255,7 +269,7 @@ function EditBox({ message, people, onCancel, onSave }) {
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Escape") onCancel()
-          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !touchScreen()) {
             event.preventDefault()
             save()
           }
@@ -263,7 +277,7 @@ function EditBox({ message, people, onCancel, onSave }) {
       />
       <div className="chat-edit-foot">
         {error && <span className="chat-composer-error">{error}</span>}
-        <span>Escape to cancel · Enter to save</span>
+        <span className="chat-edit-hint">Escape to cancel · Enter to save</span>
         <button type="button" className="import-button" onClick={onCancel}>Cancel</button>
         <button type="button" className="primary" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save"}</button>
       </div>

@@ -30,6 +30,13 @@ import { CostSheet } from "../../../../components/expenses/CostSheet"
 import { AddReceipt } from "../../../../components/receipts/AddReceipt"
 import { TaskBoard } from "../../../../components/tasks/TaskBoard"
 
+// The Monday of the week `date` falls in, as YYYY-MM-DD: the weekly photos' "Week of" to start from.
+function mondayOf(date) {
+  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  day.setDate(day.getDate() - ((day.getDay() + 6) % 7))
+  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`
+}
+
 export default function PropertyDetailPage({ params }) {
   const { id } = use(params)
   const router = useRouter()
@@ -42,6 +49,8 @@ export default function PropertyDetailPage({ params }) {
   const openFolder = section === "documents" ? search.get("folder") || "" : ""
   const [note, setNote] = useState("")
   const [message, setMessage] = useState("")
+  // The weekly photos' message is an error (shown as one) rather than progress.
+  const [failed, setFailed] = useState(false)
   const [termsMessage, setTermsMessage] = useState("")
   const [editing, setEditing] = useState(null)
   const [reporting, setReporting] = useState(false)
@@ -126,6 +135,53 @@ export default function PropertyDetailPage({ params }) {
           </section>
         )}
         <section className="panel property-card">
+          <h2>Weekly photos</h2>
+          <p className="property-missing">Take this week’s photos on site. Photos from the library are not accepted.</p>
+          <FiledPhotos photos={detail.data.photos || []} />
+          {session?.user && can(session.user, "photos.write") && (
+            <form className="photo-form" onSubmit={async (event) => {
+              event.preventDefault()
+              if (uploading) return
+              const element = event.currentTarget
+              setFailed(false)
+              if (!shots.length) {
+                setMessage("Take at least one photo with the camera.")
+                setFailed(true)
+                return
+              }
+              const form = new FormData(element)
+              form.set("propertyId", id)
+              for (const shot of shots) form.append("photos", shot.file, shot.file.name)
+              setUploading(true)
+              setMessage(`Uploading ${shots.length} ${shots.length === 1 ? "photo" : "photos"}…`)
+              try {
+                const result = await api("/photo-sets", { method: "POST", body: form })
+                setMessage(`${result.count} ${result.count === 1 ? "photo" : "photos"} filed.`)
+                for (const shot of shots) URL.revokeObjectURL(shot.url)
+                setShots([])
+                element.reset()
+                // (A typed field the reset doesn't clear: next week's photos start with an empty note.)
+                setNote("")
+                detail.reload()
+              } catch (err) {
+                setMessage(err.message)
+                setFailed(true)
+              } finally {
+                setUploading(false)
+              }
+            }}>
+              <label className="field"><span>Week of</span><input name="weekOf" type="date" defaultValue={mondayOf(new Date())} required /></label>
+              <div className="field">
+                <span>Photos</span>
+                <CameraCapture shots={shots} onChange={setShots} />
+              </div>
+              <label className="field wide"><span>What changed on site</span><input name="note" value={note} onChange={(event) => setNote(event.target.value)} /></label>
+              <div className="photo-form-actions"><button className="primary" type="submit" disabled={uploading || !shots.length}>{uploading ? `Uploading ${shots.length}…` : shots.length ? `Upload ${shots.length} ${shots.length === 1 ? "photo" : "photos"}` : "File this week"}</button></div>
+            </form>
+          )}
+          {message && <p className={failed ? "banner" : "property-missing"} role={failed ? "alert" : "status"}>{message}</p>}
+        </section>
+        <section className="panel property-card">
           <div className="property-card-head">
             <div>
               <h2>Scope of work</h2>
@@ -156,50 +212,6 @@ export default function PropertyDetailPage({ params }) {
             <AddReceipt propertyId={id} label="Add a receipt" onFiled={() => detail.reload()} />
           </section>
         )}
-        <section className="panel property-card">
-          <h2>Weekly photos</h2>
-          <p className="property-missing">Take this week’s photos on site. Photos from the library are not accepted.</p>
-          <FiledPhotos photos={detail.data.photos || []} />
-          {session?.user && can(session.user, "photos.write") && (
-            <form className="photo-form" onSubmit={async (event) => {
-              event.preventDefault()
-              if (uploading) return
-              const element = event.currentTarget
-              if (!shots.length) {
-                setMessage("Take at least one photo with the camera.")
-                return
-              }
-              const form = new FormData(element)
-              form.set("propertyId", id)
-              for (const shot of shots) form.append("photos", shot.file, shot.file.name)
-              setUploading(true)
-              setMessage(`Uploading ${shots.length} ${shots.length === 1 ? "photo" : "photos"}…`)
-              try {
-                const result = await api("/photo-sets", { method: "POST", body: form })
-                setMessage(`${result.count} ${result.count === 1 ? "photo" : "photos"} filed.`)
-                for (const shot of shots) URL.revokeObjectURL(shot.url)
-                setShots([])
-                element.reset()
-                // (A typed field the reset doesn't clear: next week's photos start with an empty note.)
-                setNote("")
-                detail.reload()
-              } catch (err) {
-                setMessage(err.message)
-              } finally {
-                setUploading(false)
-              }
-            }}>
-              <label className="field"><span>Week of</span><input name="weekOf" type="date" required /></label>
-              <div className="field">
-                <span>Photos</span>
-                <CameraCapture shots={shots} onChange={setShots} />
-              </div>
-              <label className="field wide"><span>What changed on site</span><input name="note" value={note} onChange={(event) => setNote(event.target.value)} /></label>
-              <div className="photo-form-actions"><button className="primary" type="submit" disabled={uploading || !shots.length}>{uploading ? `Uploading ${shots.length}…` : shots.length ? `Upload ${shots.length} ${shots.length === 1 ? "photo" : "photos"}` : "File this week"}</button></div>
-            </form>
-          )}
-          {message && <p className="property-missing">{message}</p>}
-        </section>
       </DetailFrame>
     )
   }

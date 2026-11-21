@@ -447,6 +447,9 @@ a { color: inherit; text-decoration: none; }
 .check.on { background: var(--ink); border-color: var(--ink); box-shadow: inset 0 0 0 2px var(--white); }
 .person { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .person-copy { display: grid; line-height: 1.25; }
+/* A second line under a row's name that only one-line phone rows show (the columns say it on a wider screen). */
+.line-sub { display: none; }
+@media (max-width: 1100px) { .grid.is-line .line-sub { display: block; margin-top: 2px; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
 .person-copy small { font-weight: 400; color: var(--muted); }
 .empty { text-align: center; color: var(--muted); padding: 48px 12px !important; }
 .spinner { display: inline-block; flex: none; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--text); }
@@ -578,7 +581,7 @@ a { color: inherit; text-decoration: none; }
 .member-sheet { width: min(520px, 100%); height: 100%; background: var(--white); display: flex; flex-direction: column; box-shadow: var(--shadow); }
 .member-sheet.issued { width: min(420px, 100%); }
 .member-sheet header, .member-sheet footer { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
-.member-sheet footer { border-bottom: 0; border-top: 1px solid var(--line); align-items: center; }
+.member-sheet footer { border-bottom: 0; border-top: 1px solid var(--line); align-items: center; padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
 .member-sheet header p { margin: 0; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
 .member-sheet header h2 { margin: 4px 0; font-size: 20px; letter-spacing: -0.03em; }
 .member-sheet header span, .member-id small { color: var(--muted); display: block; }
@@ -2343,6 +2346,7 @@ a.agent-action { text-decoration: none; }
 @media (display-mode: standalone) and (max-width: 900px) {
   .chat-composer, .chat-panel .chat-composer { padding-bottom: max(calc(10px + env(safe-area-inset-bottom)), 30px); }
   .agent-composer { padding-bottom: max(calc(4px + env(safe-area-inset-bottom)), 26px); }
+  .member-sheet footer { padding-bottom: max(calc(18px + env(safe-area-inset-bottom)), 34px); }
 }
 
 /* No zooming on phones and tablets: scrolling still works, pinch and double-tap zoom do not. */
@@ -2532,7 +2536,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
 /* Property report (screen + print) */
 .main:has(.report-page) { background: #e9ebef; }
-.report-page { display: grid; gap: 14px; justify-items: center; padding-bottom: 32px; }
+.report-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; justify-items: center; padding-bottom: 32px; }
 .report-toolbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; width: min(820px, 100%); padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--white); color: var(--text); }
 .report-toolbar span { flex: 1; min-width: 200px; color: var(--muted); font-size: 13px; }
 .report-doc { width: min(820px, 100%); padding: 40px 44px; border-radius: 4px; background: #fff; color: #111827; box-shadow: 0 6px 24px rgba(15, 23, 42, .12); font-size: 12.5px; line-height: 1.45; }
@@ -4274,6 +4278,9 @@ button.call-info-person-row:hover strong { color: var(--accent); }
   .grid.is-line tr > td.peek-col[data-label]::before { display: none; }
   .grid.is-line tr > td.line-col { display: grid; place-items: center; flex: none; color: var(--faint); }
   .grid.is-line tr > td.line-col svg { transform: rotate(-90deg); }
+  /* One line: an actions cell with nothing to show takes no room, so the chevron stays on it. */
+  .grid.is-line tr { flex-wrap: nowrap; }
+  .grid.is-line tr > td.pin-right:not(:has(button, a)) { display: none; }
 }
 
 /* Home: each person's own start page. The greeting under the title, Needs attention when something is overdue, then
@@ -4924,14 +4931,15 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
   .tracking-thumb, .comp-photo-add, .import-row, .quick-row, .back-link, .crumbs-link, .crumbs-back, .doc-open, .doc-head-link, .company-file-link,
   .cost-line-file, .table-link, .report-doc, .agent-doc-name, .agent-download, .agent-spend-day, .call-round, .call-control, .call-pill, .call-icon-button, .call-mini-icon, .calls-fab, .calls-item, .calls-icon-button, .calls-text-button, .calls-chips button, .calls-pick-row,
   .call-info-back, .call-info-tiles button, .call-info-person-row, .agent-round, .agent-go, .agent-action, .agent-chip, .agent-pill-button, .agent-talk-bars, .agent-talk-end,
-  .agent-suggest button, .agent-attach-tiles button, .agent-sheet-row, .agent-bottom-scrim, .agent-prompts button, .camera-shutter, .skip-link,
+  .agent-suggest button, .agent-attach-tiles button, .agent-sheet-row, .agent-bottom-scrim, .agent-prompts button, .photo-viewer-button, .photo-viewer-step, .camera-shutter, .skip-link,
   .refi-banner, .multi-option, [role="menuitem"], [role="option"], [role="switch"], [role="menu"] *, [role="listbox"] *, .pop > *,
   .date-picker-grid *, .paycal-mini-grid *, .task-pick-list *, p button
 ) {
   padding: var(--control-y) var(--control-x) !important;
   border-radius: var(--control-radius) !important;
 }
-/* (A button with words is as tall as they are; one with only an icon, a floating one, or Talk mode's Stop and End, keeps its size.) */
+/* (A button with words is as tall as they are; one with only an icon, a floating one, or Talk mode's Stop and End, keeps its size.
+   With a mouse or trackpad they may be shorter than 44px; on a touch screen the touch rules' minimum heights hold.) */
 :is(button, a.primary, a.ghost, a.tool, a.import-button, .chat-switch a, .doc-actions a):not([aria-label], .icon-btn, .agent-icon-button, .agent-round, .agent-go, .agent-talk-bars, .agent-talk-end,
   .agent-action, .agent-attach-tiles button, .agent-bottom-scrim, .row-menu-button, .sidebar-dismiss, .title-copy, .chat-nav-add, .chat-send, .home-customize, .nav-toggle, .multi-toggle,
   .call-icon-button, .call-mini-icon, .calls-item, .calls-icon-button, .call-info-back, .call-info-tiles button, .call-info-person-row,
@@ -4939,7 +4947,16 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
   .menu-backdrop, .more-scrim, .agent-panel-scrim, [role="menuitem"], [role="option"], [role="switch"], [role="menu"] *, .pop > *,
   .date-picker-grid *, .paycal-mini-grid *, .chat-nav-heading > button:first-child, p button) {
   height: auto !important;
-  min-height: 0 !important;
+}
+@media (pointer: fine) {
+  :is(button, a.primary, a.ghost, a.tool, a.import-button, .chat-switch a, .doc-actions a):not([aria-label], .icon-btn, .agent-icon-button, .agent-round, .agent-go, .agent-talk-bars, .agent-talk-end,
+    .agent-action, .agent-attach-tiles button, .agent-bottom-scrim, .row-menu-button, .sidebar-dismiss, .title-copy, .chat-nav-add, .chat-send, .home-customize, .nav-toggle, .multi-toggle,
+    .call-icon-button, .call-mini-icon, .calls-item, .calls-icon-button, .call-info-back, .call-info-tiles button, .call-info-person-row,
+    .cal-create-button, .calls-fab, .dock-link, .more-switch, .check, .task-check, .drag-handle, .overview-handle, .paycal-num,
+    .menu-backdrop, .more-scrim, .agent-panel-scrim, [role="menuitem"], [role="option"], [role="switch"], [role="menu"] *, .pop > *,
+    .date-picker-grid *, .paycal-mini-grid *, .chat-nav-heading > button:first-child, p button) {
+    min-height: 0 !important;
+  }
 }
 
 /* Fields, and the frames that hold a bare search box. */
@@ -4958,8 +4975,55 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
 ),
 .palette-search, .agent-panel-search, .agent-list-search, .draws-search, .chat-nav-search, .folders-search, .agent-sheet-search, .tasks-search, .task-pick-search {
   height: auto !important;
-  min-height: 0 !important;
 }
+@media (pointer: fine) {
+  :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"], [type="hidden"], [type="button"], [type="submit"], [type="reset"], [type="image"]), select):not(
+    :is(.search, .palette-search, .agent-panel-search, .agent-list-search, .draws-search, .chat-nav-search, .folders-search, .agent-sheet-search, .tasks-search,
+      .task-pick-search, .multi-box, .agent-box, .chat-box, .tasks-cell, .calls-find) *, .tasks-add-input, .task-panel-title, .cal-editor-title
+  ),
+  .palette-search, .agent-panel-search, .agent-list-search, .draws-search, .chat-nav-search, .folders-search, .agent-sheet-search, .tasks-search, .task-pick-search {
+    min-height: 0 !important;
+  }
+}
+
+/* Touch screens: tabs, switches and the buttons in rows and forms that the touch rules above don't name, 40–44px to a
+   thumb. A link styled as a button keeps its words in the middle of its height. */
+@media (pointer: coarse) {
+  .property-switch > button, .paycal-scope > button, .cal-views > button, .paycal-head > button, .cal-day-actions > button,
+  .overview-controls > button, .seg > button { min-height: 40px; }
+  .row-actions > button, .row-actions > a, .header-actions-toggle, .danger, .settings-actions > button, .photo-form-actions > button,
+  .house-summary-actions > button, .draws-actions > button, .sort-menu-button, select { min-height: 44px; }
+  /* (At no specificity, so a rule that hides one, like the chat header's Open property on a phone, still does.) */
+  :where(a.import-button) { display: inline-flex; align-items: center; justify-content: center; }
+  .contractor-brand { min-height: 44px; }
+  .agent-action { width: 40px; height: 40px; }
+  .agent-file button { position: relative; }
+  .agent-file button::after { content: ""; position: absolute; inset: -8px; }
+  .fold-open { min-height: 40px; }
+  /* (No Escape or Shift + Enter on a phone's keyboard: Save and Cancel are the buttons.) */
+  .chat-edit-hint { display: none; }
+  .photo-pick { min-height: 44px; }
+  .password-input button { height: 40px; }
+  /* Pills that keep their look, with a larger invisible place to tap. */
+  .task-card-status, .calls-chips button { position: relative; }
+  .task-card-status::after, .calls-chips button::after { content: ""; position: absolute; inset: -9px -4px; }
+}
+
+/* A photo full screen (PhotoViewer): black, the photo as large as fits, × and Save along the top, ‹ › at the sides. */
+.photo-viewer { position: fixed; inset: 0; z-index: 400; display: grid; grid-template-rows: auto minmax(0, 1fr); background: #000; color: #fff; touch-action: pan-y; animation: agent-fade .18s ease-out both; }
+.photo-viewer-bar { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 8px; padding: calc(8px + env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 8px max(10px, env(safe-area-inset-left)); background: linear-gradient(rgba(0, 0, 0, .6), transparent); position: relative; z-index: 1; }
+.photo-viewer-name { overflow: hidden; color: rgba(255, 255, 255, .85); font-size: 14px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.photo-viewer-button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .12); color: #fff; text-decoration: none; cursor: pointer; }
+.photo-viewer-button:hover { background: rgba(255, 255, 255, .22); }
+.photo-viewer-stage { display: grid; place-items: center; min-height: 0; padding: 0 0 calc(12px + env(safe-area-inset-bottom)); overflow: hidden; }
+.photo-viewer-stage img { max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; -webkit-user-select: none; }
+.photo-viewer-step { position: absolute; top: 50%; display: grid; place-items: center; width: 44px; height: 44px; margin-top: -22px; padding: 0; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .45); color: #fff; cursor: pointer; }
+.photo-viewer-step.is-back { left: max(10px, env(safe-area-inset-left)); }
+.photo-viewer-step.is-next { right: max(10px, env(safe-area-inset-right)); }
+.photo-viewer-step.is-next svg { transform: rotate(180deg); }
+.photo-viewer-button:focus-visible, .photo-viewer-step:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+/* On a phone, swipe: the arrows would sit on the photo. */
+@media (pointer: coarse) { .photo-viewer-step { display: none; } }
 /* The password box keeps room at its right for Show. */
 .password-input input { padding-right: 56px !important; }
 

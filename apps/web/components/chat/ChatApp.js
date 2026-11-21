@@ -109,6 +109,11 @@ export function ChatApp({ mode = "channels" }) {
   const visibleRef = useRef(visible)
   const threadRef = useRef(threadId)
   const channelsRef = useRef(channels)
+  // A conversation opened from the list in this visit: ← goes back to the list as Back does, instead of adding the list
+  // again to the history (where the phone's Back would then reopen the conversation).
+  const fromList = useRef(false)
+  const openRef = useRef(activeId)
+  openRef.current = activeId
   channelsRef.current = channels
   const me = boot?.me || session?.user?.id || ""
   const isAdmin = session?.user?.role === "admin"
@@ -184,9 +189,17 @@ export function ChatApp({ mode = "channels" }) {
     const url = id ? `${base}?c=${id}${nextThread ? `&t=${nextThread}` : ""}` : base
     setSearch(null)
     setError("")
+    if (id && !replace && !openRef.current) fromList.current = true
     if (replace) router.replace(url, { scroll: false })
     else router.push(url, { scroll: false })
   }, [router, direct])
+
+  const backToList = useCallback(() => {
+    if (fromList.current) {
+      fromList.current = false
+      router.back()
+    } else open("", { replace: true })
+  }, [router, open])
 
   useEffect(() => {
     loadBoot()
@@ -532,7 +545,7 @@ export function ChatApp({ mode = "channels" }) {
             typingNames={typingHere}
             error={error}
             onDismissError={() => setError("")}
-            onBack={() => open("")}
+            onBack={backToList}
             onDetails={() => { setDetails((current) => !current); if (threadId) open(active.id, { replace: true }) }}
             onLoadOlder={() => loadOlder(active.id)}
             onSend={(body) => send(active.id, "", body)}

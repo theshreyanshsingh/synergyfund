@@ -8,7 +8,15 @@ import { EMOJI, fileSize, fromEditable } from "./chatFormat"
 const MAX = 8000
 const TYPING_GAP = 3000
 
+// Phones and tablets (no Shift + Enter on their keyboards).
+export function touchScreen() {
+  return typeof window !== "undefined" && Boolean(window.matchMedia?.("(pointer: coarse)").matches)
+}
+
 export const ChatComposer = forwardRef(function ChatComposer({ placeholder, members, allowChannel, draft, onDraft, onSend, onTyping, onUpload, disabled, autoFocus }, ref) {
+  // (Known after the first render: the server can't tell. It names the keyboard's return key.)
+  const [touch, setTouch] = useState(false)
+  useEffect(() => setTouch(touchScreen()), [])
   const [text, setText] = useState(draft?.text || "")
   const [files, setFiles] = useState([])
   const [mention, setMention] = useState(null)
@@ -165,7 +173,8 @@ export const ChatComposer = forwardRef(function ChatComposer({ placeholder, memb
         return
       }
     }
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    // A phone or tablet has no Shift + Enter: there Return adds a line and the arrow sends.
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !touchScreen()) {
       event.preventDefault()
       send()
     }
@@ -228,6 +237,7 @@ export const ChatComposer = forwardRef(function ChatComposer({ placeholder, memb
           placeholder={placeholder}
           onChange={change}
           onKeyDown={keyDown}
+          enterKeyHint={touch ? "enter" : "send"}
           onPaste={paste}
           onBlur={() => setTimeout(() => setMention(null), 120)}
           onClick={(event) => { setMention(findMention(event.currentTarget.value, event.currentTarget.selectionStart)); setActive(0) }}

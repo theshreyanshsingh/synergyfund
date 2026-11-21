@@ -23,7 +23,8 @@ export function WorkspacePage({
   filters = [],
   empty,
   loading = false,
-  selectable = true,
+  // A tick box on each row: off, since nothing on these pages acts on the rows picked.
+  selectable = false,
   compact = false,
   collapsible = false,
   phoneLine = false,

@@ -90,7 +90,6 @@ function CompaniesScreen() {
       <WorkspacePage
         views={false}
         customize={false}
-        selectable={false}
         loading={!list.data && !list.error}
         title="Companies"
         action={writable ? { label: "New company", onClick: () => startCreate() } : null}

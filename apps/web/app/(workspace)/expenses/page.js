@@ -144,6 +144,8 @@ export default function ExpensesPage() {
       <WorkspacePage
         views={false}
         loading={!list.data && !list.error}
+        // A contractor's phone or tablet: one line per expense (what it was, the amount and its status); a tap opens it.
+        phoneLine={camera}
         title="Expenses"
         underTitle={staff ? (
           <div className="property-switch expenses-tabs" role="tablist" aria-label="Expenses views">
@@ -187,15 +189,21 @@ export default function ExpensesPage() {
           { label: "Unassigned", value: String(posted.filter((item) => !item.propertyId && item.category === "Materials").length), hint: "Materials without a property" },
         ]}
         columns={[
-          { key: "title", label: "Name", avatar: (row) => row.title, render: (row) => row.title },
+          { key: "title", label: "Name", avatar: (row) => row.title, render: (row) => camera ? (
+            <span className="person-copy">
+              <span>{row.title}</span>
+              <small className="line-sub">{[row.vendor, names.get(row.propertyId) || "Company"].filter(Boolean).join(" · ")}</small>
+            </span>
+          ) : row.title },
           { key: "book", label: "Book" },
           { key: "vendor", label: "Vendor" },
           { key: "property", label: "Property", render: (row) => names.get(row.propertyId) || "Company" },
-          { key: "amount", label: "Amount", render: (row) => dollars(row.amount) },
-          { key: "status", label: "Status", render: (row) => <StatusPill>{row.status}</StatusPill> },
+          { key: "amount", label: "Amount", peek: camera, render: (row) => dollars(row.amount) },
+          { key: "status", label: "Status", peek: camera, render: (row) => <StatusPill>{row.status}</StatusPill> },
           { key: "actions", label: "", pin: "right", render: (row) => (
             <span className="row-actions">
-              <button type="button" onClick={(event) => { event.stopPropagation(); setSelected(row) }}>Open</button>
+              {/* (A contractor's row opens with a tap.) */}
+              {!camera && <button type="button" onClick={(event) => { event.stopPropagation(); setSelected(row) }}>Open</button>}
               {canReapply(row) && <button type="button" onClick={(event) => { event.stopPropagation(); reapply(row) }}>Reapply</button>}
               {canApprove && row.book === "Request" && !["Approved", "Rejected"].includes(row.status) && (
                 <>
