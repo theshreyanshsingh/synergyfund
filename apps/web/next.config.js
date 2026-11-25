@@ -28,6 +28,11 @@ const nextConfig = {
   async redirects() {
     return [{ source: "/verify", destination: "/tasks", permanent: false }]
   },
+  // Browsers that have opened the site over https use only https here for the next year (they ignore this over
+  // plain http, which the middleware sends to https).
+  async headers() {
+    return [{ source: "/:path*", headers: [{ key: "Strict-Transport-Security", value: "max-age=31536000" }] }]
+  },
 }
 
 export default nextConfig
