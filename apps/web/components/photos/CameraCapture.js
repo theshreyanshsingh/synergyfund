@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
+import { placeNow, watchPlace } from "../../lib/photoPlace"
 
 const MAX_SIDE = 2000
 const QUALITY = 0.85
@@ -50,11 +51,22 @@ function cameraSupported() {
   return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia) && typeof window !== "undefined" && window.isSecureContext
 }
 
-export function CameraCapture({ shots, onChange, max = 60, actions = null, emptyText = "No photos yet. Take them with the camera." }) {
+// `locate`: site photos. Each photo taken keeps the time and where the phone was (lib/photoPlace.js), for staff to see;
+// the phone asks for location the first time the camera opens, and photos are taken whatever the answer.
+export function CameraCapture({ shots, onChange, max = 60, actions = null, emptyText = "No photos yet. Take them with the camera.", locate = false }) {
   const [open, setOpen] = useState(false)
   const nativeInput = useRef(null)
   const live = useRef(shots)
   live.current = shots
+  const stopPlace = useRef(null)
+
+  useEffect(() => () => stopPlace.current?.(), [])
+  // Nothing waiting to be filed and the camera shut: stop asking the phone where it is.
+  useEffect(() => {
+    if (shots.length || open || !stopPlace.current) return
+    stopPlace.current()
+    stopPlace.current = null
+  }, [shots.length, open])
 
   function remove(shot) {
     URL.revokeObjectURL(shot.url)
@@ -66,11 +78,16 @@ export function CameraCapture({ shots, onChange, max = 60, actions = null, empty
     event.target.value = ""
     const room = Math.max(0, max - live.current.length)
     const made = []
-    for (const file of files.slice(0, room)) made.push(await fileToShot(file))
+    for (const file of files.slice(0, room)) {
+      const shot = await fileToShot(file)
+      if (locate) shot.place = placeNow()
+      made.push(shot)
+    }
     onChange([...live.current, ...made])
   }
 
   function start() {
+    if (locate && !stopPlace.current) stopPlace.current = watchPlace()
     if (cameraSupported()) setOpen(true)
     else nativeInput.current?.click()
   }
@@ -102,6 +119,7 @@ export function CameraCapture({ shots, onChange, max = 60, actions = null, empty
         <CameraSession
           initial={shots}
           max={max}
+          locate={locate}
           onCancel={() => setOpen(false)}
           onDone={(next) => {
             const kept = new Set(next.map((shot) => shot.id))
@@ -128,7 +146,7 @@ function CameraIcon() {
   )
 }
 
-function CameraSession({ initial, max, onCancel, onDone, onFallback }) {
+function CameraSession({ initial, max, locate = false, onCancel, onDone, onFallback }) {
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const created = useRef([])
@@ -195,6 +213,7 @@ function CameraSession({ initial, max, onCancel, onDone, onFallback }) {
     try {
       const shot = await canvasToShot(canvas)
       if (!shot) return
+      if (locate) shot.place = placeNow()
       created.current.push(shot)
       setShots((current) => [...current, shot])
     } finally {

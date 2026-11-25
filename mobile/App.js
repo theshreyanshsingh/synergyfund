@@ -299,6 +299,8 @@ function Shell() {
             allowsInlineMediaPlayback
             mediaPlaybackRequiresUserAction={false}
             mediaCapturePermissionGrantType="grantIfSameHostElsePrompt"
+            // Android: let the page ask for the phone's location (site photos note where they were taken).
+            geolocationEnabled
             allowsLinkPreview={false}
             applicationNameForUserAgent={`SynergiFundApp/${VERSION}`}
             webviewDebuggingEnabled={__DEV__}

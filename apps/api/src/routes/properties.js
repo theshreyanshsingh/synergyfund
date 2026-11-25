@@ -12,6 +12,7 @@ import { loanFields } from "../services/loans.js"
 import { clearLoanInsurance, findPolicy, keepEarlierPolicy, POLICY_FIELDS, readPolicy } from "../services/insurance.js"
 import { keepEarlierTaxes, readTaxYears, taxYearChanges } from "../services/taxes.js"
 import { readTitleCompany, titleCompanyChange, titleCompanyChoices } from "../services/titleCompany.js"
+import { presentCapture } from "../services/photoPlace.js"
 import { removePropertyRoom } from "../services/chat.js"
 import { orderProperties } from "../services/propertyOrder.js"
 import { geocode } from "../services/geocode.js"
@@ -514,7 +515,8 @@ propertiesRouter.get(
       rehabSpent,
       pendingExpenses: pending[0]?.total || 0,
       contractors: people.map((person) => ({ id: String(person._id), name: person.name, email: person.email })),
-      photos: photos.map(presentPhoto),
+      // Staff also get who took each photo, and when and where (contractors never do).
+      photos: await presentStaffPhotos(photos),
       expenses: expenseDocs.map(presentCost),
       requests: requestDocs.map(presentCost),
       loans: await presentPropertyLoans(loans),
@@ -1000,6 +1002,19 @@ propertiesRouter.delete(
 // addedOn is the day it was added on the team's clock, so everyone sees the same date.
 function presentPhoto(file) {
   return { id: String(file._id), name: file.name, addedOn: file.createdAt ? teamToday(file.createdAt) : "" }
+}
+
+// A property's photos for staff: each with who added it and, for one taken in the app's camera, when and where it was
+// taken (services/photoPlace.js). Never sent to contractors.
+async function presentStaffPhotos(photos) {
+  const ids = [...new Set(photos.map((file) => String(file.uploadedBy || "")).filter(Boolean))]
+  const people = ids.length ? await User.find({ _id: { $in: ids } }).select("name") : []
+  const names = new Map(people.map((person) => [String(person._id), person.name]))
+  return photos.map((file) => ({
+    ...presentPhoto(file),
+    takenBy: file.uploadedBy ? names.get(String(file.uploadedBy)) || "" : "",
+    capture: presentCapture(file.capture),
+  }))
 }
 
 function presentCost(item) {

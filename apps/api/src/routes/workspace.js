@@ -36,6 +36,7 @@ import { groupByProperty } from "../lib/group.js"
 import { stressRows } from "../services/stress.js"
 import { removeDraftReceipts } from "../services/receiptCleanup.js"
 import { assigneeMap, presentTask } from "./tasks.js"
+import { captureField, readCaptures } from "../services/photoPlace.js"
 
 export const workspaceRouter = Router()
 
@@ -1054,9 +1055,11 @@ workspaceRouter.post(
       sendError(res, 403, "That property is not assigned to you.")
       return
     }
+    // Where and when each photo was taken, as the phone said (for staff only; see services/photoPlace.js).
+    const captures = readCaptures(req.body.places, req.files.length)
     const files = []
-    for (const file of req.files) {
-      files.push(await saveUploadedFile(file, req.user, { propertyId: property._id, kind: "photo" }))
+    for (const [index, file] of req.files.entries()) {
+      files.push(await saveUploadedFile(file, req.user, { propertyId: property._id, kind: "photo", capture: captureField(captures[index]) }))
     }
     const set = await PhotoSet.create({
       propertyId: property._id,

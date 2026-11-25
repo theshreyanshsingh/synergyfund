@@ -3,14 +3,14 @@
     "name": "SynergiFund",
     "slug": "synergifund",
     "scheme": "synergifund",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#111111",
     "ios": {
       "bundleIdentifier": "com.synergifund.app",
-      "buildNumber": "2",
+      "buildNumber": "3",
       "appleTeamId": "8PJ65D3FXP",
       "supportsTablet": true,
       "infoPlist": {
@@ -19,6 +19,7 @@
         "NSSpeechRecognitionUsageDescription": "SynergiFund turns your voice into text when you speak a question to the Agent.",
         "NSPhotoLibraryUsageDescription": "SynergiFund lets you attach photos and files from your library.",
         "NSPhotoLibraryAddUsageDescription": "SynergiFund saves downloaded photos to your library when you ask it to.",
+        "NSLocationWhenInUseUsageDescription": "SynergiFund notes where site photos are taken, so the team can see they were taken at the property.",
         "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": [
           "voip"
@@ -30,7 +31,7 @@
     },
     "android": {
       "package": "com.synergifund.app",
-      "versionCode": 5,
+      "versionCode": 6,
       "adaptiveIcon": {
         "backgroundColor": "#111111",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -39,7 +40,9 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
       ],
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW",

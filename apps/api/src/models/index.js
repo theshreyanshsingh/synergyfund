@@ -9,7 +9,7 @@ const { Schema, model, models } = mongoose
 export const SEALED_FIELDS = {
   Company: ["ein", "wireBankName", "wireRoutingNumber", "wireAccountNumber", "wireEntityName", "wireAddress"],
   Property: ["accessInfo"],
-  Document: ["insight"],
+  Document: ["insight", "capture"],
   HouseSummary: ["summary"],
 }
 
@@ -510,6 +510,9 @@ export const DocumentFile = register(
       insightTries: { type: Number, default: 0 },
       // The person said no to the Agent's filing suggestion for it (documentSuggestion).
       suggestionDismissed: Boolean,
+      // A site photo: when it was taken and where the phone was then, as sealed JSON (services/photoPlace.js). Staff
+      // see it under the photo's Info; contractors are never sent it.
+      capture: String,
     },
     { timestamps: true },
   )

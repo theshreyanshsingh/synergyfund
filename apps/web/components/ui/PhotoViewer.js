@@ -9,8 +9,10 @@ const SWIPE = 50
 // Photos full screen, inside the app: a tap on a photo in a chat or on a house opens it here rather than as a page of
 // its own (which on a phone leaves the app, and ends a call). Swipe or ← → between them, Save to keep one, and × or
 // Escape to close. `photos`: [{ url, name, download }] (`download`: the address that saves it, when there is one).
-export function PhotoViewer({ photos, index, onIndex, onClose }) {
+// `info(photo)`: what Info shows about a photo (when and where it was taken), or null for no Info button.
+export function PhotoViewer({ photos, index, onIndex, onClose, info = null }) {
   const [mounted, setMounted] = useState(false)
+  const [showInfo, setShowInfo] = useState(false)
   const closeRef = useRef(null)
   const swipe = useRef(null)
   const photo = photos[index]
@@ -39,6 +41,7 @@ export function PhotoViewer({ photos, index, onIndex, onClose }) {
   }, [mounted, index, many])
 
   if (!mounted || !photo) return null
+  const details = info ? info(photo) : null
   return createPortal(
     <div
       className="photo-viewer"
@@ -57,8 +60,17 @@ export function PhotoViewer({ photos, index, onIndex, onClose }) {
       <div className="photo-viewer-bar">
         <button ref={closeRef} type="button" className="photo-viewer-button" onClick={onClose} aria-label="Close"><Icon name="close" size={20} /></button>
         <span className="photo-viewer-name">{many ? `${index + 1} of ${photos.length}` : photo.name}</span>
-        {photo.download ? <a className="photo-viewer-button" href={photo.download} aria-label={`Save ${photo.name}`} title="Save"><Icon name="download" size={19} /></a> : <span />}
+        <span className="photo-viewer-tools">
+          {details && (
+            <button type="button" className={showInfo ? "photo-viewer-button is-on" : "photo-viewer-button"} onClick={() => setShowInfo((open) => !open)} aria-label="Info" aria-pressed={showInfo} title="Info">
+              <Icon name="info" size={19} />
+            </button>
+          )}
+          {photo.download && <a className="photo-viewer-button" href={photo.download} aria-label={`Save ${photo.name}`} title="Save"><Icon name="download" size={19} /></a>}
+        </span>
       </div>
+      {/* (Touches inside don't swipe between photos: Info can hold a map to drag.) */}
+      {details && showInfo && <section className="photo-viewer-info" aria-label="Photo info" onTouchStart={(event) => event.stopPropagation()} onTouchEnd={(event) => event.stopPropagation()}>{details}</section>}
       {/* A tap beside the photo closes it, as in Photos. */}
       <div className="photo-viewer-stage" onClick={onClose}>
         <img key={photo.url} src={photo.url} alt={photo.name} onClick={(event) => event.stopPropagation()} />

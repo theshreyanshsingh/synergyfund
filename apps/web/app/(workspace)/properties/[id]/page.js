@@ -24,6 +24,7 @@ import { RowMenu } from "../../../../components/ui/RowMenu"
 import { PageSpinner } from "../../../../components/ui/Spinner"
 import { DetailFrame } from "../../../../components/ui/DetailFrame"
 import { CameraCapture } from "../../../../components/photos/CameraCapture"
+import { shotPlaces } from "../../../../lib/photoPlace"
 import { Icon } from "../../../../components/ui/Icon"
 import { ExpenseTracking } from "../../../../components/expenses/ExpenseTracking"
 import { CostSheet } from "../../../../components/expenses/CostSheet"
@@ -152,6 +153,7 @@ export default function PropertyDetailPage({ params }) {
               const form = new FormData(element)
               form.set("propertyId", id)
               for (const shot of shots) form.append("photos", shot.file, shot.file.name)
+              form.set("places", JSON.stringify(shotPlaces(shots)))
               setUploading(true)
               setMessage(`Uploading ${shots.length} ${shots.length === 1 ? "photo" : "photos"}…`)
               try {
@@ -173,7 +175,7 @@ export default function PropertyDetailPage({ params }) {
               <label className="field"><span>Week of</span><input name="weekOf" type="date" defaultValue={mondayOf(new Date())} required /></label>
               <div className="field">
                 <span>Photos</span>
-                <CameraCapture shots={shots} onChange={setShots} />
+                <CameraCapture shots={shots} onChange={setShots} locate />
               </div>
               <label className="field wide"><span>What changed on site</span><input name="note" value={note} onChange={(event) => setNote(event.target.value)} /></label>
               <div className="photo-form-actions"><button className="primary" type="submit" disabled={uploading || !shots.length}>{uploading ? `Uploading ${shots.length}…` : shots.length ? `Upload ${shots.length} ${shots.length === 1 ? "photo" : "photos"}` : "File this week"}</button></div>
