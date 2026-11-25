@@ -9,7 +9,8 @@
   a higher build number** (or a new version): raise `ios.buildNumber` before building again.
 - Signing is automatic: Xcode signs with Apple's cloud-managed distribution certificate through the Apple ID added in
   Xcode › Settings › Accounts. Nothing to keep in `~/secrets` for iPhone.
-- Speech recognition, camera, microphone and photo library messages are in `ios.infoPlist`. The speech one is needed
+- Speech recognition, camera, microphone, photo library and location (while in use: site photos note where they were
+  taken) messages are in `ios.infoPlist`. The speech one is needed
   because the Agent's voice input uses Apple's Speech framework inside the web view; without it iOS closes the app.
 
 ## Building and uploading on this Mac
@@ -24,10 +25,17 @@ npx expo prebuild --platform ios
 cd ios && xcodebuild -workspace SynergiFund.xcworkspace -scheme SynergiFund -configuration Release -destination 'generic/platform=iOS' -archivePath build/SynergiFund.xcarchive DEVELOPMENT_TEAM=8PJ65D3FXP CODE_SIGNING_ALLOWED=NO archive
 ```
 ```bash
+codesign --force --deep --sign - --timestamp=none --entitlements SynergiFund/SynergiFund.entitlements build/SynergiFund.xcarchive/Products/Applications/SynergiFund.app
+```
+```bash
 xcodebuild -exportArchive -archivePath build/SynergiFund.xcarchive -exportPath build/upload -exportOptionsPlist ../store/ios/ExportOptions.plist -allowProvisioningUpdates
 ```
-The archive is made unsigned on purpose: a signed archive first needs a development profile, and Apple only issues
-those once an iPhone is registered to the team. The export step signs it for the App Store and uploads it to App
+The archive is made unsigned: a signed archive first needs a development profile, which Apple only issues once an
+iPhone is registered to the team, and Xcode 27 refuses an ad hoc ("-") signature in the build. An unsigned app carries
+no entitlements, so the export would drop `aps-environment` and the app would get no push notifications or call rings;
+the `codesign` step puts the app's entitlements back on it before the export. Check the exported app has them
+(unzip the .ipa, then `codesign -d --entitlements :- Payload/SynergiFund.app` shows `aps-environment => production`).
+The export step signs it for the App Store and uploads it to App
 Store Connect (`store/ios/ExportOptions.plist`). Apple then processes the build for 5–30 minutes before it shows in
 TestFlight and can be picked for review. Run it with `EXPO_PUBLIC_APP_URL` unset so the app opens the live site.
 
