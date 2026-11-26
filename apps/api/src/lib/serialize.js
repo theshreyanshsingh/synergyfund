@@ -14,6 +14,8 @@ export function publicUser(user) {
     permissions: permissionsFor(user),
     propertyIds: (user.propertyIds || []).map(String),
     sounds: cleanSounds(user.sounds),
+    // Agreed to the AI notice (the Agent, Talk and receipt reading use outside AI models).
+    aiConsent: Boolean(user.aiConsentAt),
     bot: Boolean(user.bot),
   }
 }

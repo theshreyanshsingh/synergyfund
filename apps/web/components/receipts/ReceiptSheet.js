@@ -5,6 +5,8 @@ import { PAYING_ENTITIES, RECEIPT_CATEGORIES, SALES_TAX, receiptPlan, shareOut, 
 import { api, uploadForm } from "../../lib/api"
 import { dollars } from "../../lib/format"
 import { CameraCapture, prepareFile } from "../photos/CameraCapture"
+import { AiConsent } from "../ui/AiConsent"
+import { useSession } from "../shell/Providers"
 
 // A receipt from photo to filed costs: take (or upload) the photo, the AI reads it, the buyer checks the items, picks
 // the property (one tap) or splits it between several, and submits. The draft is saved as they go, so closing the app
@@ -79,6 +81,10 @@ function evenParts(ids) {
 }
 
 export function ReceiptSheet({ draft = null, properties = [], buyers = [], posts = false, readingAvailable = true, defaultPropertyId = "", onClose, onFiled, onChanged }) {
+  // Receipts are read by an outside AI model only once the person has agreed to the AI notice; until then the notice
+  // shows here, and they can type the items in instead.
+  const aiConsent = Boolean(useSession()?.user?.aiConsent)
+  const [askConsent, setAskConsent] = useState(false)
   const names = useMemo(() => Object.fromEntries(properties.map((property) => [property.id, property.address])), [properties])
   const preset = useMemo(() => {
     if (defaultPropertyId && names[defaultPropertyId]) return [defaultPropertyId]
@@ -215,7 +221,13 @@ export function ReceiptSheet({ draft = null, properties = [], buyers = [], posts
     }
   }
 
-  async function readAgain() {
+  // Read with AI: first the AI notice, if the person hasn't agreed to it yet.
+  function readAgain() {
+    if (aiConsent) readWithAi()
+    else setAskConsent(true)
+  }
+
+  async function readWithAi() {
     const typed = form?.items.some((item) => item.description || item.amount)
     if (typed && !window.confirm("Read the receipt again? The items below are replaced by what the AI reads.")) return
     setError("")
@@ -349,6 +361,8 @@ export function ReceiptSheet({ draft = null, properties = [], buyers = [], posts
                 </ul>
               )}
               {!readingAvailable && <p className="receipt-hint">Receipt reading is not set up, so you'll type the items in after the photo is saved.</p>}
+              {readingAvailable && !aiConsent && <AiConsent what="Receipt reading" compact />}
+              {readingAvailable && !aiConsent && <p className="receipt-hint">Or skip it: you'll type the items in after the photo is saved.</p>}
             </div>
           )}
 
@@ -373,6 +387,7 @@ export function ReceiptSheet({ draft = null, properties = [], buyers = [], posts
                   {receipt.read.status === "unavailable" && <p className="receipt-hint">{receipt.read.error}</p>}
                   {(receipt.read.warnings || []).map((text) => <p key={text} className="receipt-warn">{text}</p>)}
                   {readingAvailable && <button type="button" className="tool" onClick={readAgain}>{receipt.read.status === "done" ? "Read again" : "Read with AI"}</button>}
+                  {askConsent && !aiConsent && <AiConsent what="Receipt reading" compact onAgree={() => { setAskConsent(false); readWithAi() }} />}
                 </div>
               </div>
 
@@ -490,7 +505,7 @@ export function ReceiptSheet({ draft = null, properties = [], buyers = [], posts
           ) : stage === "capture" ? (
             <>
               <button type="button" className="tool" onClick={close}>Cancel</button>
-              <button className="primary" type="submit" disabled={pending || !shots.length}>{pending ? (progress != null && progress < 1 ? `Uploading ${Math.round(progress * 100)}%` : "Saving…") : readingAvailable ? "Read receipt" : "Continue"}</button>
+              <button className="primary" type="submit" disabled={pending || !shots.length}>{pending ? (progress != null && progress < 1 ? `Uploading ${Math.round(progress * 100)}%` : "Saving…") : readingAvailable && aiConsent ? "Read receipt" : "Continue"}</button>
             </>
           ) : (
             <>

@@ -32,6 +32,7 @@ export const TEMPORARY_CHAT_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_TITLE = 80
 const MAX_PROMPTS = 200
 const FEEDBACK = ["up", "down", ""]
+export const AI_CONSENT_NEEDED = "Agree to the AI notice first: the Agent's answers come from outside AI models."
 
 async function checkModel(id) {
   if (!MODEL_ID.test(id)) return "Enter an OpenRouter model id such as anthropic/claude-sonnet-5.5."
@@ -813,6 +814,7 @@ agentRouter.post(
   "/run",
   receiveAttachments,
   asyncHandler(async (req, res) => {
+    if (!req.user.aiConsentAt) return sendError(res, 403, AI_CONSENT_NEEDED)
     const prompt = String(req.body.prompt || "").trim()
     const files = req.files || []
     if (!prompt && !files.length && !req.body.replaceFrom) {

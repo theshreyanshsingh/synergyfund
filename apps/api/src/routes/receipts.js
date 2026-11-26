@@ -198,7 +198,7 @@ receiptsRouter.post(
       }))
       throw error
     }
-    const reading = receiptReadingAvailable() && req.body.read !== "0"
+    const reading = receiptReadingAvailable() && req.body.read !== "0" && Boolean(req.user.aiConsentAt)
     const receipt = await Receipt.create({
       createdBy: req.user._id,
       boughtBy: req.user._id,
@@ -243,6 +243,7 @@ receiptsRouter.post(
     const receipt = await ownDraft(req, res)
     if (!receipt) return
     if (!receiptReadingAvailable()) return sendError(res, 400, "Receipt reading needs an AI model. An admin can add OPENROUTER_API_KEY to the server settings.")
+    if (!req.user.aiConsentAt) return sendError(res, 403, "Agree to the AI notice first: receipts are read by an outside AI model.")
     receipt.read = { status: "reading", at: new Date(), warnings: [], error: "", model: "" }
     await receipt.save()
     readReceiptInBackground(receipt._id)

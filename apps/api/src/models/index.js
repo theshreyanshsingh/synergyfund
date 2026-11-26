@@ -31,6 +31,9 @@ export const User = register(
       passwordHash: { type: String, required: true },
       // Goes up when the password is reset or changed, which signs out every session made before.
       sessionVersion: { type: Number, default: 0 },
+      // When this person agreed that the Agent, Talk and receipt reading send what they need to outside AI models
+      // (through OpenRouter). Until then none of those run for them (Apple's rule on sharing with third-party AI).
+      aiConsentAt: Date,
       role: { type: String, required: true },
       title: String,
       company: { type: String, default: "SynergiFund" },

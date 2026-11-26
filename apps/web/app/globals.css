@@ -1211,6 +1211,18 @@ a.agent-action { text-decoration: none; }
 .agent-spark.is-live { animation: agent-spark-live 1.7s cubic-bezier(.45, 0, .55, 1) infinite; }
 .agent-disclaimer { margin: -4px 0 0; color: var(--faint); font-size: 12px; line-height: 1.4; }
 
+/* The AI notice (AiConsent): what goes to outside AI models, and Agree, in place of the Agent's box until agreed. */
+.ai-consent { display: grid; gap: 10px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 20px; background: var(--white); box-shadow: 0 8px 28px rgba(15, 18, 24, .08); }
+.ai-consent h3 { margin: 0; color: var(--text); font-size: 16px; font-weight: 650; text-transform: none; }
+.ai-consent p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.ai-consent-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.ai-consent-actions a { color: var(--accent); font-size: 14px; }
+.ai-consent-actions .primary { margin-left: 0; }
+.ai-consent-error { color: var(--bad) !important; }
+.ai-consent.is-compact { padding: 12px 14px; border-radius: 14px; box-shadow: none; }
+.ai-consent.is-compact h3 { font-size: 14.5px; }
+.ai-consent.is-compact p { font-size: 13px; }
+
 /* Sheets over the Agent: Chats, Prompts, Knowledge, Add, Feedback, Voice settings. */
 .agent-bottom { position: fixed; inset: 0; z-index: 70; display: flex; align-items: flex-end; justify-content: center; }
 .agent-bottom-scrim { position: absolute; inset: 0; width: 100%; padding: 0; border: 0; border-radius: 0; background: rgba(8, 10, 14, .34); cursor: default; animation: agent-fade .22s ease-out both; }
@@ -5006,6 +5018,11 @@ a.task-file-chip:hover { border-color: var(--accent); color: var(--accent); }
   .fold-open { min-height: 40px; }
   /* (No Escape or Shift + Enter on a phone's keyboard: Save and Cancel are the buttons.) */
   .chat-edit-hint { display: none; }
+  /* A tapped message shows its actions, a thumb's size each. */
+  .chat-message.is-tapped { background: var(--hover); }
+  .chat-actions > button { width: 40px; height: 40px; }
+  /* Above the message rather than over its words, which a phone's larger buttons would cover. */
+  .chat-actions { top: auto; bottom: calc(100% - 4px); }
   .photo-pick { min-height: 44px; }
   .password-input button { height: 40px; }
   /* Pills that keep their look, with a larger invisible place to tap. */

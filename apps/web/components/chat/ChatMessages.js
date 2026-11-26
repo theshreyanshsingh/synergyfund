@@ -67,6 +67,16 @@ function ChatMessage({ message, people, me, compact, canDelete, online, inThread
   const [editing, setEditing] = useState(false)
   const [picking, setPicking] = useState(false)
   const [revealed, setRevealed] = useState(false)
+  // A phone or tablet has no hover: a tap on a message shows its actions (react, reply, edit, report, delete) until a
+  // tap somewhere else.
+  const [tapped, setTapped] = useState(false)
+  const box = useRef(null)
+  useEffect(() => {
+    if (!tapped) return undefined
+    const away = (event) => { if (!box.current?.contains(event.target)) setTapped(false) }
+    document.addEventListener("pointerdown", away)
+    return () => document.removeEventListener("pointerdown", away)
+  }, [tapped])
   const safety = useContext(ChatSafety)
   const author = people.get(message.userId)?.name || message.userName || "Someone"
   const mine = message.userId === me
@@ -129,7 +139,15 @@ function ChatMessage({ message, people, me, compact, canDelete, online, inThread
   }
 
   return (
-    <div className={`chat-message${compact ? " is-compact" : ""}${mentioned && !mine ? " is-mentioned" : ""}${editing ? " is-editing" : ""}`} id={`message-${message.id}`}>
+    <div
+      ref={box}
+      className={`chat-message${compact ? " is-compact" : ""}${mentioned && !mine ? " is-mentioned" : ""}${editing ? " is-editing" : ""}${tapped ? " is-tapped" : ""}`}
+      id={`message-${message.id}`}
+      onClick={(event) => {
+        if (editing || !touchScreen() || event.target.closest("a, button, input, textarea, .chat-actions")) return
+        setTapped((current) => !current)
+      }}
+    >
       <div className="chat-gutter">
         {compact ? <time className="chat-gutter-time">{clock(message.createdAt)}</time> : <Avatar name={author} online={online} />}
       </div>
@@ -194,7 +212,7 @@ function ChatMessage({ message, people, me, compact, canDelete, online, inThread
         {!inThread && message.replyCount > 0 && <ThreadSummary message={message} people={people} onOpen={() => onReply(message)} />}
       </div>
       {!editing && (
-        <div className={picking ? "chat-actions is-open" : "chat-actions"}>
+        <div className={picking || tapped ? "chat-actions is-open" : "chat-actions"}>
           {QUICK_EMOJI.slice(0, 3).map((emoji) => (
             <button key={emoji} type="button" title={`React ${emoji}`} onClick={() => onReact(message, emoji)}>{emoji}</button>
           ))}

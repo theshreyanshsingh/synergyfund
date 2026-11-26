@@ -7,7 +7,7 @@ import { api, SIGNED_OUT } from "../../lib/api"
 import { disablePush } from "../../lib/pwa"
 
 const SessionContext = createContext(null)
-const PUBLIC_PAGES = ["/privacy"]
+const PUBLIC_PAGES = ["/privacy", "/support"]
 
 export function useSession() {
   return useContext(SessionContext)

@@ -29,7 +29,7 @@ const { ABOUT_LINE, GREETING_LINE, HOLD_LINE, STILL_LINE, ON_SCREEN_LINE, FAILED
 // What is said of WRITTEN when it is said from its opening paragraph (short and plain, so as written).
 const OPENING = `You have 3 houses. ${voice.DETAILS_LINE}`
 
-const sam = { _id: new mongoose.Types.ObjectId(), name: "Sam Taylor", role: "admin" }
+const sam = { _id: new mongoose.Types.ObjectId(), name: "Sam Taylor", role: "admin", aiConsentAt: new Date() }
 const SETTINGS = { voice: "cedar", accent: "australian" }
 const TURN = voice.wavFile(Buffer.alloc(16000 * 2, 1), 16000) // one second
 
@@ -43,7 +43,7 @@ before(async () => {
   // Signed in as whoever the test says (the real app's requireAuth does this from the session cookie).
   app.use((req, res, next) => {
     const role = req.headers["x-role"] || "admin"
-    req.user = role === "admin" ? sam : { _id: new mongoose.Types.ObjectId(), name: "Roman Diaz", role }
+    req.user = role === "admin" ? sam : { _id: new mongoose.Types.ObjectId(), name: "Roman Diaz", role, aiConsentAt: new Date() }
     req.permissions = req.headers["x-no-agent"] ? [] : permissionsFor({ role })
     next()
   })

@@ -66,7 +66,8 @@ TestFlight and can be picked for review. Run it with `EXPO_PUBLIC_APP_URL` unset
   Accounts are created by your workspace administrator.
 
 - **Keywords** (92 of 100): real estate,investor,rehab,draws,receipts,expenses,property,flip,contractor,construction,CRM
-- **Support URL** and **Marketing URL**: https://admin.synergifund.com
+- **Support URL**: https://admin.synergifund.com/support (contact details, accounts, deleting an account).
+  **Marketing URL**: https://admin.synergifund.com
 - **Privacy Policy URL**: https://admin.synergifund.com/privacy
 - **Category**: Business (secondary: Productivity). **Price**: Free.
 - **Copyright**: 2026 Candid Promotions LLC
@@ -79,8 +80,10 @@ TestFlight and can be picked for review. Run it with `EXPO_PUBLIC_APP_URL` unset
 - **First review (October 2026)**: Apple asked for more information (Guideline 2.1, usual for a new developer
   account): a screen recording on a real iPhone starting from launching the app, the app's purpose and audience,
   review instructions with the demo login, the outside services it uses, regional differences and any regulation.
-  The full reply, what to record and how to set up the reviewer account are in
-  `~/Desktop/SynergiFund App Store/App Review reply.txt`; keep the same text in App Review Information › Notes.
+  The answers (Notes, the reply, App Privacy) are in [APP_REVIEW.md](APP_REVIEW.md); how to set up the reviewer
+  account and what to record are in `~/Desktop/SynergiFund App Store/App Review reply.txt`.
+- **Outside AI (Guideline 5.1.2)**: before anything of theirs goes to an AI model (the Agent, Talk, receipt reading,
+  call notes), each person sees a notice and taps Agree and continue, once per account (`aiConsentAt`).
 - **Chat safety (Guideline 1.2)**: anyone can report a message (the admins are notified at once with a link to it)
   and block a person (their messages are hidden; no direct messages either way). Admins can delete any message and
   remove people.
@@ -89,12 +92,13 @@ TestFlight and can be picked for review. Run it with `EXPO_PUBLIC_APP_URL` unset
 
 ## App Privacy (App Store Connect › App Privacy)
 
-Suggested answers based on what the app does; check them before you publish. No tracking, no third-party ads.
-Data is linked to the person's account and used for **App Functionality** only:
-- Contact Info: Name, Email Address. Identifiers: User ID.
-- User Content: Photos or Videos, Audio Data (calls and voice input), Customer Support, Other User Content (chat,
-  documents, receipts).
-- Financial Info: Other Financial Info (purchase prices, loans, expenses).
+No tracking, no ads, no analytics SDKs. Data is linked to the person's account and used for **App Functionality**
+only (the full list is in [APP_REVIEW.md](APP_REVIEW.md)):
+- Contact Info: Name, Email Address. Identifiers: User ID. Usage Data: Product Interaction (activity log).
+- Location: Precise Location (where site photos are taken, from 1.0.5).
+- User Content: Emails or Text Messages (chat), Photos or Videos, Audio Data (Talk and call notes), Other User
+  Content (documents, receipts, tasks).
+- Financial Info: Other Financial Info (expenses, loans, costs).
 
 ## Calls and notifications on iPhone
 

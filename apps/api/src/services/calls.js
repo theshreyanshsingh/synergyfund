@@ -7,6 +7,8 @@ import { isApplePush, pushToUsers, sendPush, subscriptionsFor } from "./push.js"
 import { addNoteParticipant, notesAvailable, startNotes, stopNotes } from "./callNotes.js"
 import { budgetMessage, budgetState } from "./agent/llm.js"
 
+export const AI_NOTES_CONSENT = "AI notes are written by an outside AI model. Open the Agent and agree to the AI notice first."
+
 // Everyone in a call connects to everyone else (a mesh), which stays smooth up to about eight people.
 export const MAX_PEERS = 8
 const RING_MS = Number(process.env.CALL_RING_MS) || 45000
@@ -748,6 +750,9 @@ export function registerCallHandlers(socket) {
     if (on) {
       if (state.notes) return reply({ notes: summary(state).notes })
       if (!notesAvailable()) return reply({ error: "AI notes need an AI model. An admin can add OPENROUTER_API_KEY to the server settings." })
+      // Notes are written by an outside AI model: only someone who has agreed to the AI notice can turn them on.
+      const agreed = await User.exists({ _id: user._id, aiConsentAt: { $ne: null } })
+      if (!agreed) return reply({ error: AI_NOTES_CONSENT })
       const budget = await budgetState()
       if (budget.reached) return reply({ error: budgetMessage(budget) })
       if (state.notesStarting) return reply({ error: "AI notes are already turning on." })

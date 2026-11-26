@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { useSession } from "../shell/Providers"
 import { AgentComposer } from "./AgentComposer"
 import { AgentMessages } from "./AgentMessages"
 import { AgentBottomSheet, AgentToasts } from "./AgentSheets"
@@ -22,6 +23,8 @@ const DELETE_WIDTH = 88
 // the whole sheet; closing the sheet ends it.
 export function AgentSheet({ onClose }) {
   const chat = useAgentChat()
+  // (Suggested questions wait until the person has agreed to the AI notice.)
+  const aiConsent = Boolean(useSession()?.user?.aiConsent)
   const voice = useAgentVoice({ threadId: chat.threadId, temporary: chat.temporary, streaming: chat.streaming, onThread: chat.adoptThread, onRefresh: chat.refreshThread, onSpoken: chat.showSpoken })
   // The sheet over the chat: "chats", "prompts", "knowledge" or "".
   const [view, setView] = useState("")
@@ -173,7 +176,7 @@ export function AgentSheet({ onClose }) {
             streaming={chat.streaming || voice.working}
             threadId={chat.threadId}
             title={chat.chatTitle}
-            empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} onSuggest={voice.on ? null : suggest} />}
+            empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} onSuggest={voice.on || !aiConsent ? null : suggest} />}
             onRetry={voice.on ? null : chat.retry}
             onEdit={voice.on ? null : chat.edit}
             onMemory={() => { setKnowing("you"); setView("knowledge") }}

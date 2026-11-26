@@ -1,6 +1,7 @@
 "use client"
 
 import { Suspense, useEffect, useRef, useState } from "react"
+import { useSession } from "../../../components/shell/Providers"
 import { useRouter, useSearchParams } from "next/navigation"
 import { AgentComposer } from "../../../components/agent/AgentComposer"
 import { AgentMessages } from "../../../components/agent/AgentMessages"
@@ -37,6 +38,8 @@ function Agent() {
   const router = useRouter()
   const linked = useSearchParams().get("chat") || ""
   const chat = useAgentChat({ openId: linked })
+  // (Suggested questions wait until the person has agreed to the AI notice.)
+  const aiConsent = Boolean(useSession()?.user?.aiConsent)
   const voice = useAgentVoice({ threadId: chat.threadId, temporary: chat.temporary, streaming: chat.streaming, onThread: chat.adoptThread, onRefresh: chat.refreshThread, onSpoken: chat.showSpoken })
   const [view, setView] = useState("chat")
   // Knowledge's tab: "team", or "you" (what the Agent remembers about this person).
@@ -164,7 +167,7 @@ function Agent() {
                     streaming={chat.streaming || voice.working}
                     threadId={chat.threadId}
                     title={chat.chatTitle}
-                    empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} onSuggest={voice.on ? null : suggest} />}
+                    empty={<AgentWelcome key={`${chat.threadId}-${chat.temporary}`} temporary={chat.temporary} onSuggest={voice.on || !aiConsent ? null : suggest} />}
                     onRetry={voice.on ? null : chat.retry}
                     onEdit={voice.on ? null : chat.edit}
                     onMemory={() => go("knowledge", "you")}

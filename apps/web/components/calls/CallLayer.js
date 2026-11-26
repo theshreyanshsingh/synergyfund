@@ -43,8 +43,8 @@ export function CallLayer({ user }) {
   useAutoPip(Boolean(calls.current), user?.name || "You")
 
   useEffect(() => {
-    setCallUser(user?.id || "")
-  }, [user?.id])
+    setCallUser(user?.id || "", Boolean(user?.aiConsent))
+  }, [user?.id, user?.aiConsent])
 
   useEffect(() => {
     // A tap, click or key press unlocks sound so the next incoming call can ring (phones need a real tap, not a touch-down).

@@ -1,15 +1,16 @@
 import Link from "next/link"
+import { supportEmail } from "../../lib/contact"
 
 export const metadata = {
   title: "Privacy Policy · SynergiFund",
   description: "How SynergiFund and its phone app handle your information.",
 }
 
-const UPDATED = "October 22, 2026"
+const UPDATED = "November 26, 2026"
 
 // Public: the Play Store and App Store listings link here, and it opens without signing in.
 export default function PrivacyPage() {
-  const contact = String(process.env.PRIVACY_CONTACT_EMAIL || "").trim()
+  const contact = supportEmail()
   return (
     <main className="legal-page">
       <article className="legal-card">
@@ -36,15 +37,16 @@ export default function PrivacyPage() {
           <li><b>Work you and your team add:</b> property details, loans, draws, expenses and receipts, documents, site photos and videos, tasks, calendar events, chat messages and shared files.</li>
           <li><b>Calls:</b> audio and video travel between the people on the call while it lasts, sometimes through a relay server when a direct connection is not possible. Calls are not recorded. Anyone on a call can turn on AI call notes, and everyone on the call sees when they are on. While they are on, what people say is transcribed, each piece of audio is discarded as soon as it is transcribed, and the written notes are saved in the conversation.</li>
           <li><b>Activity:</b> a log of actions in the workspace (for example, who added a cost or signed in, and when) so the team can see what changed.</li>
+          <li><b>Where site photos were taken:</b> when you take weekly site photos with the app's camera, the app asks your phone for its location (only while the camera is open, and only if you allow it) and keeps the time and place each photo was taken. Your company's staff see it with the photo, to confirm the work was done at the property; contractors don't see it. If you don't allow location, the photos are filed without it.</li>
           <li><b>Notification settings:</b> if you turn on notifications, the address your browser or phone gives us for delivering them.</li>
           <li><b>Sign-in cookie:</b> one cookie keeps you signed in. Display preferences such as dark mode are stored on your device.</li>
         </ul>
-        <p>We do not use advertising or analytics trackers, and we do not collect your location or contacts.</p>
+        <p>We do not use advertising or analytics trackers, and we do not track your location or collect your contacts. Your location is read only for site photos, as above.</p>
 
         <h2>Camera, microphone and files in the phone apps</h2>
         <p>
           The phone apps ask for the camera and microphone only for what you choose to do: take site photos or receipt
-          photos, record video, or join a call. Files you pick come in through your phone's own file picker. Files you
+          photos, record video, or join a call. They ask for your location only while you take site photos (see above). Files you pick come in through your phone's own file picker. Files you
           download are handed to your phone's share sheet so you can save or send them where you choose.
         </p>
 
@@ -61,7 +63,7 @@ export default function PrivacyPage() {
         <p>We do not sell personal information or share it for advertising. We use service providers who process it for us:</p>
         <ul>
           <li><b>Hosting and file storage</b> for the workspace and its files.</li>
-          <li><b>AI model providers</b> (through OpenRouter) when you ask the Agent a question, when the AI teammate reviews a property chat and its photos, when a receipt photo is read, and for AI call notes. Only what is needed for that request is sent.</li>
+          <li><b>AI model providers</b> (through OpenRouter) when you ask the Agent a question or talk with it, when the AI teammate reviews a property chat and its photos, when a receipt photo is read, and for AI call notes. Only what is needed for that request is sent. The app asks you to agree to this before you first use the Agent, Talk, receipt reading or AI call notes. Call notes run only while someone on the call has turned them on, which everyone on the call sees, and only the speech of people who have agreed is sent.</li>
           <li><b>Web search</b> (Firecrawl) when the Agent looks up public information such as listings or comparable sales. Searches use public terms like addresses, not your private figures.</li>
           <li><b>Email delivery</b> (Resend) for notification and invitation emails.</li>
           <li><b>Push notification services</b> run by Google, Apple and browser makers, which deliver notifications to your device.</li>
@@ -82,8 +84,7 @@ export default function PrivacyPage() {
           in and your sign-in details are deleted; records you added for the business, such as costs or documents, stay
           with the workspace. Daily backups are kept for 7 to 90 days (30 unless your administrator changes it), so
           something deleted can stay in a backup until that backup is removed. To have your account deleted, ask your
-          workspace administrator
-          {contact ? <> or write to <a href={`mailto:${contact}`}>{contact}</a></> : null}.
+          workspace administrator or write to <a href={`mailto:${contact}`}>{contact}</a>.
         </p>
 
         <h2>Security</h2>
@@ -95,7 +96,8 @@ export default function PrivacyPage() {
         <h2>Changes and contact</h2>
         <p>
           We will update this page when our practices change and show the date at the top. For questions about this policy
-          or your information, contact your workspace administrator{contact ? <> or <a href={`mailto:${contact}`}>{contact}</a></> : null}.
+          or your information, contact your workspace administrator or <a href={`mailto:${contact}`}>{contact}</a>. Help with
+          the app is on our <Link href="/support">Support</Link> page.
         </p>
       </article>
     </main>

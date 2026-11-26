@@ -5,7 +5,7 @@ import { Call, CallNote, ChatChannel, ChatMessage, PushSubscription } from "../m
 import { asyncHandler, sendError } from "../lib/http.js"
 import { configurePush, isApplePush, sendPush } from "../services/push.js"
 import { audience, presentChannel, presentMessage, propertyFor, usesChat, visibleChannels } from "../services/chat.js"
-import { declineCallFor, liveCall, liveCallsFor, network, relayProvider, silenceCallFor } from "../services/calls.js"
+import { AI_NOTES_CONSENT, declineCallFor, liveCall, liveCallsFor, network, relayProvider, silenceCallFor } from "../services/calls.js"
 import { emitToUsers } from "../services/chatHub.js"
 import { recordActivity } from "../services/notify.js"
 import { MAX_PIECE_BYTES, acceptPiece, presentNote, retryNotes } from "../services/callNotes.js"
@@ -127,6 +127,8 @@ callsRouter.post(
   (req, res, next) => notesUpload.single("audio")(req, res, (error) => (error ? sendError(res, 413, "That piece of audio is too long.") : next())),
   asyncHandler(async (req, res) => {
     if (!mongoose.isValidObjectId(req.params.id)) return sendError(res, 404, "Those call notes were not found.")
+    // Someone who hasn't agreed to the AI notice has their speech left out of the notes.
+    if (!req.user.aiConsentAt) return sendError(res, 403, AI_NOTES_CONSENT)
     const audio = req.file?.buffer
     if (!audio || audio.length < 44 || audio.toString("ascii", 0, 4) !== "RIFF" || audio.toString("ascii", 8, 12) !== "WAVE") return sendError(res, 400, "Send the audio as a WAV file.")
     const result = await acceptPiece({ user: req.user, noteId: req.params.id, audio, durationMs: req.body?.durationMs, endedAgoMs: req.body?.endedAgoMs })

@@ -113,10 +113,12 @@ function setCurrent(patch) {
   if ("call" in patch) syncNotes()
 }
 
-// AI notes: while they are on in this call, your own speech is sent to be transcribed (see notesRecorder.js).
+// AI notes: while they are on in this call, your own speech is sent to be transcribed (see notesRecorder.js), but only
+// once you have agreed to the AI notice; until then your words are left out of the notes.
+let aiConsent = false
 function syncNotes() {
   const noteId = state.current?.call?.notes?.id || ""
-  if (noteId && micTrack && micTrack.readyState === "live") startNotesRecording(noteId, micTrack)
+  if (noteId && aiConsent && micTrack && micTrack.readyState === "live") startNotesRecording(noteId, micTrack)
   else if (notesRecording()) stopNotesRecording()
 }
 
@@ -146,8 +148,12 @@ export function useCalls() {
   return useSyncExternalStore(subscribe, () => state, () => EMPTY)
 }
 
-export function setCallUser(id) {
+export function setCallUser(id, agreedToAi = false) {
   if (state.me !== id) set({ me: id || "" })
+  if (aiConsent !== Boolean(agreedToAi)) {
+    aiConsent = Boolean(agreedToAi)
+    syncNotes()
+  }
 }
 
 export function callTitle(call, me) {

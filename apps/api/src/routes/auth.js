@@ -112,6 +112,22 @@ authRouter.patch(
   }),
 )
 
+// The AI notice: this person agrees that the Agent, Talk and receipt reading send what they need (their question, files
+// they attach, the records looked up, a receipt's photo) to outside AI models through OpenRouter. Asked once, the first
+// time one of them is used.
+authRouter.post(
+  "/me/ai-consent",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    if (req.body?.agree !== true) return sendError(res, 400, "Send agree: true to agree to the AI notice.")
+    if (!req.user.aiConsentAt) {
+      req.user.aiConsentAt = new Date()
+      await req.user.save()
+    }
+    res.json({ user: publicUser(req.user) })
+  }),
+)
+
 authRouter.post(
   "/password",
   requireAuth,

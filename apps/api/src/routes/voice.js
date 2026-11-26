@@ -7,13 +7,18 @@ import { asyncHandler, requirePermission, sendError } from "../lib/http.js"
 import { budgetMessage, budgetState } from "../services/agent/llm.js"
 import { SSE_HEADERS } from "../services/agent/stream.js"
 import { MAX_TURN_BYTES, greet, lateAnswer, problemText, readTurn, sayLateAnswer, voiceAvailable, voiceOn, voiceSettings, voiceStream, voiceTurn } from "../services/agent/voice.js"
-import { TEMPORARY_CHAT_TTL_MS } from "./agent.js"
+import { AI_CONSENT_NEEDED, TEMPORARY_CHAT_TTL_MS } from "./agent.js"
 
 // Talking with the Agent (services/agent/voice.js). The page sends each spoken turn as a recording and plays the
 // speech that streams back; the conversation is saved in the person's Agent chats like a typed one.
 export const voiceRouter = Router()
 
 voiceRouter.use(requirePermission("agent.ask"))
+// Talk sends what is said to outside AI models: only once the person has agreed to the AI notice.
+voiceRouter.use((req, res, next) => {
+  if (req.method !== "GET" && !req.user.aiConsentAt) return sendError(res, 403, AI_CONSENT_NEEDED)
+  next()
+})
 
 const turnUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_TURN_BYTES, files: 1 } })
 

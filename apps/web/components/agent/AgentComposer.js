@@ -2,6 +2,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Icon } from "../ui/Icon"
+import { AiConsent } from "../ui/AiConsent"
+import { useSession } from "../shell/Providers"
 import { prepareFile } from "../photos/CameraCapture"
 import { AgentBottomSheet } from "./AgentSheets"
 import { AgentTalk } from "./AgentTalk"
@@ -41,6 +43,9 @@ const joinWords = (current, text) => `${current}${current && !/\s$/.test(current
 // ({ text, key }) puts a prompt in the box to send or edit. `blocked`: why the Agent can't answer now (this month's AI
 // budget is used up). `voice` (useAgentVoice): while Talk is on it has the screen (AgentTalk) and what was typed waits.
 export function AgentComposer({ onSend, streaming, connected, temporary = false, autoFocus = false, fill = null, placeholder = "Ask Agent anything…", blocked = "", voice = null, onPrompts = null }) {
+  // Until the person agrees to the AI notice, it takes the box's place (the server won't answer before that either).
+  const session = useSession()
+  const consented = Boolean(session?.user?.aiConsent)
   const [message, setMessage] = useState("")
   const [files, setFiles] = useState([])
   const [menu, setMenu] = useState(false)
@@ -215,6 +220,7 @@ export function AgentComposer({ onSend, streaming, connected, temporary = false,
       {note && <p className="agent-composer-note">{note}</p>}
       {voice?.error && !talking && !blocked && <p className="agent-composer-note">{voice.error}</p>}
       {talking && <AgentTalk voice={voice} />}
+      {!consented ? <AiConsent /> : (
       <div
         className={["agent-box", dragging ? "is-dropping" : "", dictating ? "is-dictating" : ""].filter(Boolean).join(" ")}
         onDragOver={(event) => {
@@ -310,6 +316,7 @@ export function AgentComposer({ onSend, streaming, connected, temporary = false,
           </div>
         )}
       </div>
+      )}
       {menu && touch && (
         <AgentBottomSheet title="Add" className="agent-attach-sheet" onClose={() => setMenu(false)}>
           {(close) => (
