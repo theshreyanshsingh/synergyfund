@@ -7,6 +7,7 @@ import { clientResult, executeTool, toolContent, toolSpecs, toolsFor } from "./t
 import { readAttachments } from "./attachments.js"
 import { CHANGE_TOOL, LOAN_CHANGE_TOOL } from "./proposals.js"
 import { RENAME_TOOL } from "./renames.js"
+import { TASK_TOOL } from "./taskDrafts.js"
 import { learnFromMessage, memoriesFor, memoryOn, memoryPrompt, memoryRule } from "./memory.js"
 import { makePdfs, withPdfSources } from "./pdfs.js"
 import { TEAM_NOTE_TOOL, houseList, seesKnowledge, teamNotesPrompt } from "./knowledge.js"
@@ -32,7 +33,7 @@ const QUICK = { reasoning: { effort: "low" } }
 const WEIGHED = new Set(["arv_analysis", "stress_test", "check_records", "portfolio_summary", "web_search", "read_webpage"])
 // Lookups that prepare something for the person to confirm on a card: an answer that tells of one is said from the
 // whole of it (where it says to tap Confirm), never from its opening alone.
-const PREPARES = new Set([CHANGE_TOOL, LOAN_CHANGE_TOOL, RENAME_TOOL, TEAM_NOTE_TOOL])
+const PREPARES = new Set([CHANGE_TOOL, LOAN_CHANGE_TOOL, RENAME_TOOL, TEAM_NOTE_TOOL, TASK_TOOL])
 
 // A line that begins a list, table, heading, quote or block rather than a paragraph ("**Bold**" is a paragraph).
 const BLOCK_START = /^\s*(?:[-*•+]\s|>|\||#{1,6}\s|\d+[.)]\s|```)/
@@ -146,7 +147,8 @@ ${canStress ? "- If the person asks what could go wrong, a what-if (values, rent
 - If the person wants documents gathered, collected, bundled, zipped, downloaded or exported (for example "zip the closing docs for 3318 Nolan", "export the purchase contract for 88 Demo Rd"), plan two steps: find the documents, then make the download with zip_documents (one file downloads as itself; exportAs names it as they asked).
 ${tools.some((tool) => tool.name === "rename_document") ? `- If the person wants a document renamed (for example "rename the 88 Demo Rd contract to 88 Demo Rd - Purchase Contract"), plan two steps: find the document, then prepare the rename with rename_document and the new name as they gave it. If they gave no new name, ask for it and do not call a tool.
 ` : ""}
-- If the person asks what looks wrong, what to clean up, or whether the records can be trusted, plan one step: check_records. For a business review, add it to the plan too.
+${tools.some((tool) => tool.name === TASK_TOOL) ? `- If the person wants a task created or something put on someone's list (for example "add a task for Mel to call the plumber about 88 Demo Rd by Friday"), plan one step: prepare it with propose_task (look the person up with list_team first only if the name may be unclear). If it is unclear what the task is, ask one short question and do not call a tool.
+` : ""}- If the person asks what looks wrong, what to clean up, or whether the records can be trusted, plan one step: check_records. For a business review, add it to the plan too.
 ${tools.some((tool) => tool.name === "propose_loan_change") ? `- If the person wants a loan's balance, payment, original amount or rate updated (to a figure they gave, or "fix it from the statement"), plan: look up the loan, read the statement if they named one, then prepare the update with propose_loan_change.
 ` : ""}- If the person asks how the business is doing, what to focus on, or for an analysis and recommended next steps, plan the lookups that show it: portfolio_summary, upcoming payments and loans coming due, overdue tasks, open draws${canStress ? ", and stress_test" : ""}, plus anything specific they named.
 - If the person wants an email, message, letter or note written (or a reply, or a change to an earlier draft) and it is about a property, loan, lender, draw, payment, task, document or a person on the team, plan steps to look up those facts first, plus a step to find the recipient's email address with list_team when they are on the team. If it needs no records, write it now by the writing rules below and do not call a tool.
@@ -162,7 +164,7 @@ ${describeTools(tools)}
 ${writingRules(user)}`
 }
 
-function gatherPrompt(user, webAllowed, canPropose, memory, knowledge) {
+function gatherPrompt(user, webAllowed, canPropose, memory, knowledge, canTask = false) {
   return `You are the data step of the SynergiFund agent. Today is ${today()}. You are working for ${who(user)} and you can only see what this person is allowed to see.
 ${memory.text ? `\n${memory.text}\n` : ""}${knowledgeText(knowledge)}
 Gather the facts needed to answer the question by calling tools. Do not write the final answer.
@@ -180,7 +182,7 @@ ${canPropose ? `Preparing a change:
 - If it found none, try once more without the folder or with the property spelled another way. Then stop: the answer says it is not there and what comes closest.
 - To answer from inside a document (a date, a figure, a clause, who signed), find it, then call read_document with its id and the question.
 - When a loan lookup gives checks (figures on the loan that don't add up) on what the person asked about, such as its payment, balance or payoff, look for the property's latest loan statement or payoff letter with find_documents (request "loan statement" or "payoff letter") and read it with read_document for that figure. If the document shows the loan's figures and the record differs, prepare the correction with propose_loan_change: the loan's id, the figures exactly as the document writes them, and the document's id as source. The person confirms it on a card.
-- To rename a document, find it, then call rename_document with its id and the new name exactly as the person gave it. It saves nothing; the person confirms it on a card. Only when they asked for the rename in their own message.
+- To rename a document, find it, then call rename_document with its id and the new name exactly as the person gave it. It saves nothing; the person confirms it on a card. Only when they asked for the rename in their own message.${canTask ? "\n- To create a task, call propose_task with what needs doing in the person's words, and the property, the person it is for and the due date (YYYY-MM-DD from today's date) only when they said them. It saves nothing; the person confirms it on a card. Only when they asked for the task in their own message." : ""}
 - To export a document (download it), find it, then call zip_documents with its id. When they want it under another name without renaming it ("export it as 88 Demo PSA"), pass exportAs.
 - To gather or zip everything in a place, call find_documents without request, with the property, company, folder and dates. If it shows fewer than its total, call it again with a higher limit (up to 150) before zipping. Then call zip_documents with their ids (all of them, up to 150) and a short descriptive name. Zip only when the person asked for a zip, a bundle or a download of several files.
 
@@ -207,7 +209,7 @@ ${webAllowed
 When every step is completed or cancelled, reply with a few plain lines: what you found, where it came from, and what is still missing.`
 }
 
-function answerPrompt(user, canFollowUp, canPropose, memory, knowledge) {
+function answerPrompt(user, canFollowUp, canPropose, memory, knowledge, canTask = false) {
   return `You are the SynergiFund agent, the analyst for a private real estate investment company. Today is ${today()}. You are answering ${who(user)}.
 ${memory.text ? `\n${memory.text}\n` : ""}${knowledge.team ? `\n${knowledge.team}\n` : ""}
 Write the answer to the person's question using only the evidence below. Rules:
@@ -229,7 +231,7 @@ Write the answer to the person's question using only the evidence below. Rules:
 - When zip_documents made a download, give its link exactly as written in its instructions (a markdown link) on a line of its own, and list what is in it briefly.
 - When a loan update was prepared, say which figures it changes (old → new) and where they come from (the document, or the person's message), and that it takes effect when the person taps Confirm on the card below your answer. Never say it was saved.
 - When check_records ran, lead with how many records need a look, then group them (a short table or bullets: property, what, why), most important first, each with its fix. If nothing was found, say the records look right.
-- When a rename was prepared, say what it will be renamed to and that it takes effect when the person taps Confirm on the card below your answer. Never say it was renamed. If the person says yes or confirm in the chat, tell them to tap Confirm on the card. The page shows the link as a download button at the very end of the answer, so never say "above" or "below" about it. Never make up a link.
+${canTask ? "- When a task was prepared, say what it is (and who it is for and when, if set) and that it is added to Tasks when the person taps Confirm on the card below your answer. Never say it was created. If the person says yes or confirm in the chat, tell them to tap Confirm on the card.\n" : ""}- When a rename was prepared, say what it will be renamed to and that it takes effect when the person taps Confirm on the card below your answer. Never say it was renamed. If the person says yes or confirm in the chat, tell them to tap Confirm on the card. The page shows the link as a download button at the very end of the answer, so never say "above" or "below" about it. Never make up a link.
 - When the person asked for an email, message, letter or note, the draft is the answer: follow the writing rules below.${knowledge.sees ? "\n- A house's summary and the team's notes explain what a house is and how it got here. Every figure, status and date you give comes from the records in the evidence; when a summary and the records differ, the records are right." : ""}${knowledge.edits ? "\n- When a team note was prepared, say what it says and that it is added to the team's knowledge when the person taps Confirm on the card below your answer. Never say it was saved." : ""}
 - When arv_analysis ran, use its numbers exactly and never work out an ARV or offer yourself. When it searched for comps, say they are sold houses from Redfin for that ZIP (public web data, not company records). Lead with the ARV and the maximum offer with its formula (ARV x 0.70 - renovation estimate), saying where the renovation estimate came from. When there is no renovation estimate, give the offer before repairs (offerBeforeRepairs, ARV x 0.70) and say to type the renovation estimate into the card to get the maximum offer. When there is a purchase or list price, say how it compares with the maximum offer (purchaseGap or listGap: above means it costs more than the maximum offer). Then a few short bullets: which comps were used and any adjustment, which were skipped and why, and any comp it flagged to check. If it found fewer than 3 usable comps, say the ARV is not reliable yet, what it searched (its summary says), and which skipped comps are worth a second look. Do not repeat the full comp table or the math: the page shows them in an ARV card under your answer, with buttons to copy the comp log and save it to the property.${canFollowUp ? "\n- If the evidence clearly cannot answer the question and specific lookups would, call request_more_data once with those steps instead of answering. Otherwise answer now." : ""}
 
@@ -359,6 +361,7 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
   const plannerTools = tools.filter((tool) => tool.name === "todo_write")
   const webAllowed = tools.some((tool) => tool.web)
   const canPropose = tools.some((tool) => tool.name === CHANGE_TOOL)
+  const canTask = tools.some((tool) => tool.name === TASK_TOOL)
   const history = historyMessages(thread)
   // What the Agent remembers about the person, and what it learns from this question, read alongside the answer.
   const remembering = memoryOn(user, thread)
@@ -435,7 +438,7 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
     signal,
     onText: leadTo(used),
     messages: [
-      { role: "system", content: answerPrompt(user, canFollowUp, canPropose, memory, knowledge) },
+      { role: "system", content: answerPrompt(user, canFollowUp, canPropose, memory, knowledge, canTask) },
       ...history,
       {
         role: "user",
@@ -469,7 +472,7 @@ export async function runAgent({ user, permissions, thread, prompt, attachments 
     early = { count: evidence.length, plan: planShape(todos), stop, used, call }
   }
 
-  const gatherMessages = [{ role: "system", content: gatherPrompt(user, webAllowed, canPropose, memory, knowledge) }, ...history]
+  const gatherMessages = [{ role: "system", content: gatherPrompt(user, webAllowed, canPropose, memory, knowledge, canTask) }, ...history]
   // `question`: answered early (answerEarly) from what each turn's lookups bring back.
   const gather = async (instruction, { question = "" } = {}) => {
     gatherMessages.push({ role: "user", content: instruction })

@@ -743,6 +743,85 @@ function RenameCard({ rename }) {
   )
 }
 
+// The tasks this answer prepared ("add a task for…"), one card each.
+function taskDraftsOf(rows) {
+  const found = new Map()
+  for (const row of rows) {
+    const step = row.toolResult
+    if (step?.UsedTool === "propose_task" && step.result?.task?.id) found.set(step.result.task.id, step.result.task)
+  }
+  return [...found.values()]
+}
+
+const TASK_STATES = {
+  saved: "Added to Tasks.",
+  cancelled: "Cancelled. No task was added.",
+  expired: "Not added: this has expired. Ask the agent again.",
+  closed: "This task can no longer be added.",
+}
+
+function dueLabel(day) {
+  if (!day) return ""
+  return new Date(`${day}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
+}
+
+// A task the Agent prepared. Only Confirm adds it (as the Tasks page would, emailing the person it is for).
+function TaskDraftCard({ draft }) {
+  const session = useSession()
+  const [status, setStatus] = useState(draft.status)
+  const [taskId, setTaskId] = useState(draft.taskId || "")
+  const [pending, setPending] = useState("")
+  const [error, setError] = useState("")
+  const canAdd = Boolean(session?.user && can(session.user, PERMISSIONS.tasksManage))
+  async function decide(action) {
+    setPending(action)
+    setError("")
+    try {
+      const data = await api(`/agent/tasks/${draft.id}/${action}`, { method: "POST" })
+      setStatus(data.task.status)
+      setTaskId(data.task.taskId || "")
+    } catch (err) {
+      setError(err.message)
+      if (err.status === 409 || err.status === 404) setStatus("closed")
+    } finally {
+      setPending("")
+    }
+  }
+  const rows = [
+    ["Task", draft.title],
+    ["Property", draft.address],
+    ["For", draft.assigneeName || "Not assigned"],
+    ["Due", dueLabel(draft.due) || "No due date"],
+    ...(draft.priority && draft.priority !== "Medium" ? [["Priority", draft.priority]] : []),
+    ...(draft.notes ? [["Notes", draft.notes]] : []),
+  ].filter(([, value]) => value)
+  return (
+    <section className="agent-arv agent-change" aria-label="Task to confirm" data-task={draft.id}>
+      <header className="agent-arv-head">
+        <span><Icon name="check" size={15} /> {status === "saved" ? "Task added" : status === "pending" ? "Task to confirm" : "Not added"}</span>
+        <small>{status === "saved" ? <Link href={taskId ? `/tasks?task=${taskId}` : "/tasks"}>Open in Tasks</Link> : ""}</small>
+      </header>
+      <ul className="agent-change-list">
+        {rows.map(([label, value]) => (
+          <li key={label}>
+            <span>{label}</span>
+            <span className="agent-change-figures"><b>{value}</b></span>
+          </li>
+        ))}
+      </ul>
+      {error && <p className="agent-arv-warn">{error}</p>}
+      {status !== "pending" && !error && <p className={status === "saved" ? "agent-change-note is-saved" : "agent-change-note"}>{TASK_STATES[status] || TASK_STATES.closed}</p>}
+      {status === "pending" && !canAdd && <p className="agent-change-note">You don't have access to create tasks, so this can't be added.</p>}
+      {status === "pending" && (
+        <footer className="agent-draft-foot">
+          <button type="button" className="agent-change-cancel" disabled={Boolean(pending)} onClick={() => decide("cancel")}>Cancel</button>
+          {canAdd && <button type="button" className="agent-arv-save" disabled={Boolean(pending)} onClick={() => decide("confirm")}>{pending === "confirm" ? "Adding…" : "Confirm"}</button>}
+        </footer>
+      )}
+    </section>
+  )
+}
+
 // The team notes this answer prepared ("remember for the team…"), one card each.
 function teamNotesOf(rows) {
   const found = new Map()
@@ -1204,6 +1283,7 @@ export function AgentMessages({ rows, streaming, empty = null, threadId = "", ti
               {!live && arvOf(turn.replies) && <ArvCard key={`arv-${question?.id || turnIndex}`} analysis={arvOf(turn.replies)} />}
               {!live && proposalsOf(turn.replies).map((proposal) => <ChangeCard key={proposal.id} proposal={proposal} />)}
               {!live && renamesOf(turn.replies).map((rename) => <RenameCard key={rename.id} rename={rename} />)}
+              {!live && taskDraftsOf(turn.replies).map((draft) => <TaskDraftCard key={draft.id} draft={draft} />)}
               {!live && teamNotesOf(turn.replies).map((draft) => <TeamNoteCard key={draft.id} draft={draft} />)}
               {!live && finalRow?.memoryNotes?.length > 0 && <MemoryNote notes={finalRow.memoryNotes} onOpen={onMemory} />}
               {!live && last && finalRow && !finalRow.error && <p className="agent-disclaimer">AI-generated content may be inaccurate.</p>}

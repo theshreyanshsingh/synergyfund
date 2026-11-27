@@ -1,6 +1,6 @@
 import { Router } from "express"
 import mongoose from "mongoose"
-import { ChatChannel, ChatMessage, ChatRead, ChatReport, DocumentFile, User } from "../models/index.js"
+import { ChatChannel, ChatMessage, ChatRead, ChatReport, DocumentFile, Property, User } from "../models/index.js"
 import { asyncHandler, sendError } from "../lib/http.js"
 import {
   MAX_MESSAGE,
@@ -88,6 +88,17 @@ function guestContacts(entries) {
     for (const id of property?.assignedUserIds || []) ids.add(String(id))
   }
   return ids
+}
+
+// Whether the AI teammate is on and reading property rooms. (Loaded when asked: the teammate's code uses this file.)
+async function teammateReads() {
+  try {
+    const { teammateSettings } = await import("../services/siteAgent.js")
+    const settings = await teammateSettings()
+    return Boolean(settings.on && settings.userId)
+  } catch {
+    return false
+  }
 }
 
 // Direct messages have their own page; channels and property rooms are on Channels.
@@ -216,6 +227,10 @@ chatRouter.get(
       people: visiblePeople.map((person) => ({ id: String(person._id), name: person.name, email: person.email, role: person.role, online: isOnline(person._id), ...(person.bot ? { bot: true } : {}) })),
       online: onlineIds(),
       blocked: (req.user.blockedUserIds || []).map(String),
+      // Admins: reported messages waiting for a decision.
+      ...(req.user.role === "admin" ? { reports: await ChatReport.countDocuments({ status: "Open" }) } : {}),
+      // Whether the AI teammate reads the property rooms (they show a note to people who haven't agreed to the AI notice).
+      teammateOn: await teammateReads(),
     })
   }),
 )
@@ -560,7 +575,97 @@ chatRouter.delete(
   }),
 )
 
-// Report a message to the admins: they are told at once (with a link to it) and can delete it or remove the person.
+// Reported messages, for admins (the Reported messages page): what was reported, as it read then, by whom, about whom
+// and where, and what was done. An admin can remove a reported message even in a conversation they aren't in (a direct
+// message or a private channel); nothing else in those conversations opens to them.
+function reportWhere(channel, property, members) {
+  if (!channel) return "A conversation that no longer exists"
+  if (channel.kind === "direct") return `Direct message: ${members.map((person) => person.name).join(", ") || "two people"}`
+  if (channel.kind === "property") return property?.address || channel.name
+  return `#${channel.name}${channel.private ? " (private)" : ""}`
+}
+
+function adminOnly(req, res) {
+  if (req.user.role === "admin") return true
+  sendError(res, 403, "Only admins see reported messages.")
+  return false
+}
+
+chatRouter.get(
+  "/reports",
+  asyncHandler(async (req, res) => {
+    if (!adminOnly(req, res)) return
+    const [open, handled] = await Promise.all([
+      ChatReport.find({ status: "Open" }).sort({ createdAt: -1 }).limit(200).lean(),
+      ChatReport.find({ status: { $ne: "Open" } }).sort({ resolvedAt: -1, createdAt: -1 }).limit(50).lean(),
+    ])
+    const reports = [...open, ...handled]
+    const messages = new Map((await ChatMessage.find({ _id: { $in: reports.map((report) => report.messageId) } }).select("_id deletedAt channelId parentId").lean()).map((item) => [String(item._id), item]))
+    const channelIds = [...new Set(reports.map((report) => String(report.channelId || "")).filter(Boolean))]
+    const channels = new Map((await ChatChannel.find({ _id: { $in: channelIds } }).lean()).map((item) => [String(item._id), item]))
+    const memberIds = [...channels.values()].filter((channel) => channel.kind === "direct").flatMap((channel) => channel.memberIds || [])
+    const names = new Map((await User.find({ _id: { $in: memberIds } }).select("_id name").lean()).map((person) => [String(person._id), person]))
+    const views = await Promise.all(reports.map(async (report) => {
+      const channel = channels.get(String(report.channelId || "")) || null
+      const message = messages.get(String(report.messageId)) || null
+      const property = channel ? await propertyForChannel(channel) : null
+      const members = channel?.kind === "direct" ? (channel.memberIds || []).map((id) => names.get(String(id))).filter(Boolean) : []
+      const visible = channel ? Boolean(await loadChannel(req.user, channel._id)) : false
+      return {
+        id: String(report._id),
+        status: report.status,
+        text: report.text || "",
+        reason: report.reason || "",
+        reporterName: report.reporterName || "Someone",
+        authorId: report.authorId ? String(report.authorId) : "",
+        authorName: report.authorName || "Someone",
+        where: reportWhere(channel, property, members),
+        createdAt: report.createdAt,
+        resolvedByName: report.resolvedByName || "",
+        resolvedAt: report.resolvedAt || null,
+        messageDeleted: !message || Boolean(message.deletedAt),
+        // A link to the conversation, for admins who are in it.
+        href: visible && channel ? chatHref(channel, message?.parentId) : "",
+      }
+    }))
+    res.json({ items: views, open: open.length })
+  }),
+)
+
+async function propertyForChannel(channel) {
+  if (channel.kind !== "property" || !channel.propertyId) return null
+  return Property.findById(channel.propertyId).select("_id address city assignedUserIds").lean()
+}
+
+// Settles a report (and every other open report of the same message): `remove` deletes the message for everyone.
+async function settleReport(req, res, remove) {
+  if (!adminOnly(req, res)) return
+  if (!mongoose.isValidObjectId(req.params.id)) return sendError(res, 404, "That report was not found.")
+  const report = await ChatReport.findById(req.params.id)
+  if (!report) return sendError(res, 404, "That report was not found.")
+  const message = await ChatMessage.findById(report.messageId)
+  const channel = message ? await ChatChannel.findById(message.channelId) : null
+  if (remove && message && !message.deletedAt) {
+    const deletedAt = new Date()
+    await ChatMessage.updateOne({ _id: message._id }, { $set: { deletedAt } })
+    message.deletedAt = deletedAt
+    if (channel) {
+      const property = channel.kind === "property" ? await Property.findById(channel.propertyId).select("_id address city assignedUserIds") : null
+      const people = await audience(channel, property)
+      emitToUsers(ids(people), "message:update", { message: presentMessage(message) })
+    }
+  }
+  const status = remove ? "Removed" : "Dismissed"
+  await ChatReport.updateMany({ messageId: report.messageId, status: "Open" }, { $set: { status, resolvedById: req.user._id, resolvedByName: req.user.name, resolvedAt: new Date() } })
+  await recordActivity({ user: req.user, title: remove ? "Reported message removed" : "Report dismissed", detail: `A message by ${report.authorName || "someone"}, reported by ${report.reporterName || "someone"}` })
+  res.json({ ok: true, status })
+}
+
+chatRouter.post("/reports/:id/remove", asyncHandler((req, res) => settleReport(req, res, true)))
+chatRouter.post("/reports/:id/dismiss", asyncHandler((req, res) => settleReport(req, res, false)))
+
+// Report a message to the admins: they are told at once (with a link to Reported messages) and can remove it there,
+// even from a conversation they aren't in, or remove the person in Members.
 chatRouter.post(
   "/messages/:id/report",
   asyncHandler(async (req, res) => {
@@ -591,7 +696,7 @@ chatRouter.post(
       exceptUserIds: [req.user._id],
       title: "Chat message reported",
       body: `${req.user.name} reported a message by ${message.userName || "someone"} in ${where}: "${quote}"${reason ? ` · Reason: ${reason}` : ""}`,
-      href: chatHref(channel, message.parentId),
+      href: "/chat/reports",
       event: "chat.reported",
     })
     await recordActivity({ user: req.user, title: "Chat message reported", detail: `A message by ${message.userName || "someone"} in ${where}${reason ? ` · ${reason}` : ""}` })

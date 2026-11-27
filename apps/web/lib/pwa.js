@@ -152,6 +152,18 @@ export async function enablePush() {
   refreshPushEndpoint()
 }
 
+// This browser's push address, if notifications are on here ("" if not, or if the browser can't say).
+export async function pushEndpoint() {
+  try {
+    if (!("serviceWorker" in navigator)) return ""
+    const registration = await navigator.serviceWorker.getRegistration()
+    const subscription = await registration?.pushManager?.getSubscription()
+    return subscription?.endpoint || ""
+  } catch {
+    return ""
+  }
+}
+
 export async function disablePush() {
   const registration = await navigator.serviceWorker.getRegistration()
   const subscription = await registration?.pushManager.getSubscription()

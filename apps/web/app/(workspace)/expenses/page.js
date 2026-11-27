@@ -25,6 +25,8 @@ export default function ExpensesPage() {
   const [error, setError] = useState("")
   const [propertyId, setPropertyId] = useState("")
   const [selected, setSelected] = useState(null)
+  // Reject or Ask for info: the reason or question, asked before the decision is sent.
+  const [asking, setAsking] = useState(null)
   const [busyId, setBusyId] = useState("")
   const deciding = useRef(false)
   const [proofs, setProofs] = useState([])
@@ -103,29 +105,41 @@ export default function ExpensesPage() {
     }
   }
 
-  // One decision at a time, so a double click cannot approve twice.
-  async function decide(id, action, confirmOverBudget = false) {
-    if (deciding.current && !confirmOverBudget) return
+  // One decision at a time, so a double click cannot approve twice. `note`: the reason for a rejection, or the
+  // question when asking for information (the person who filed it sees it).
+  async function decide(id, action, { confirmOverBudget = false, note = "" } = {}) {
+    if (deciding.current && !confirmOverBudget) return false
     deciding.current = true
     setBusyId(id)
     try {
       // The version on screen, so the server can tell if it changed since (an edit after it was opened).
       const seenAt = requests.find((item) => item.id === id)?.updatedAt
-      await api(`/expenses/${id}/decision`, { method: "POST", body: { action, confirmOverBudget, ...(seenAt ? { seenAt } : {}) } })
+      await api(`/expenses/${id}/decision`, { method: "POST", body: { action, confirmOverBudget, ...(note ? { note } : {}), ...(seenAt ? { seenAt } : {}) } })
       list.reload()
+      return true
     } catch (err) {
       if (err.status === 409 && window.confirm(`${err.message}\n\nApprove above the rehab budget?`)) {
-        await decide(id, action, true)
-        return
+        return decide(id, action, { confirmOverBudget: true, note })
       }
       // Changed since it was opened: show it as it is now.
       if (err.status === 412) list.reload()
       window.alert(err.message)
+      return false
     } finally {
       if (!confirmOverBudget) {
         deciding.current = false
         setBusyId("")
       }
+    }
+  }
+
+  async function sendNote(event) {
+    event.preventDefault()
+    const note = String(new FormData(event.currentTarget).get("note") || "").trim()
+    if (asking.action === "needs_information" && !note) return
+    if (await decide(asking.row.id, asking.action, { note })) {
+      setAsking(null)
+      setSelected(null)
     }
   }
 
@@ -208,7 +222,8 @@ export default function ExpensesPage() {
               {canApprove && row.book === "Request" && !["Approved", "Rejected"].includes(row.status) && (
                 <>
                   <button type="button" disabled={busyId === row.id} onClick={(event) => { event.stopPropagation(); decide(row.id, "approve") }}>Approve</button>
-                  <button type="button" disabled={busyId === row.id} onClick={(event) => { event.stopPropagation(); decide(row.id, "reject") }}>Reject</button>
+                  {row.status !== "Needs information" && <button type="button" disabled={busyId === row.id} onClick={(event) => { event.stopPropagation(); setAsking({ row, action: "needs_information" }) }}>Ask</button>}
+                  <button type="button" disabled={busyId === row.id} onClick={(event) => { event.stopPropagation(); setAsking({ row, action: "reject" }) }}>Reject</button>
                 </>
               )}
             </span>
@@ -245,9 +260,30 @@ export default function ExpensesPage() {
             setSelected(null)
           }}
           busy={busyId === selected.id}
-          onDecide={async (action) => { await decide(selected.id, action); setSelected(null) }}
+          onDecide={async (action) => {
+            if (action === "approve") {
+              if (await decide(selected.id, action)) setSelected(null)
+            } else setAsking({ row: selected, action })
+          }}
           onReapply={() => reapply(selected)}
         />
+      )}
+      {asking && (
+        <FormSheet
+          eyebrow="Expenses"
+          title={asking.action === "reject" ? "Reject this expense" : "Ask for information"}
+          hint={`${asking.row.title} · ${dollars(asking.row.amount)}. ${asking.row.requesterName || "The person who filed it"} is told${asking.action === "reject" ? " why." : " and can answer, then it comes back for review."}`}
+          onClose={() => setAsking(null)}
+          onSubmit={sendNote}
+          submitLabel={asking.action === "reject" ? "Reject" : "Send question"}
+          pending={busyId === asking.row.id}
+          pendingLabel="Sending…"
+        >
+          <label className="field wide">
+            <span>{asking.action === "reject" ? "Reason (optional)" : "What do you need to know?"}</span>
+            <textarea name="note" rows={3} maxLength={500} required={asking.action === "needs_information"} autoFocus placeholder={asking.action === "reject" ? "For example: Not for this house" : "For example: Which house was this for? Please add a clearer photo."} />
+          </label>
+        </FormSheet>
       )}
       {open && (
         <FormSheet eyebrow="Expenses" title="Add an expense" hint="Proof is required. An admin posts it onto the property after approval." onClose={() => setOpen(false)} onSubmit={submit} submitLabel="Submit request" pending={sending} pendingLabel="Sending…" error={error}>
@@ -357,6 +393,7 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camer
         {canApprove && (
           <div className="row-actions" style={{ marginTop: 16 }}>
             <button type="button" disabled={busy} onClick={() => onDecide("approve")}>Approve</button>
+            {item.status !== "Needs information" && <button type="button" disabled={busy} onClick={() => onDecide("needs_information")}>Ask for info</button>}
             <button type="button" disabled={busy} onClick={() => onDecide("reject")}>Reject</button>
           </div>
         )}
@@ -365,7 +402,10 @@ function ExpenseSheet({ item, properties, canEdit, canApprove, canReapply, camer
   }
 
   return (
-    <FormSheet eyebrow="Expenses" title={<span className="keep-case">{item.title}</span>} hint="Save sends this request back for review. You can still change the photos until it is approved or rejected." onClose={onClose} onSubmit={save} submitLabel="Save changes" pending={pending} error={error}>
+    <FormSheet eyebrow="Expenses" title={<span className="keep-case">{item.title}</span>} hint={item.status === "Needs information" ? "Answer in the note (or add photos), then send it back for review." : "Save sends this request back for review. You can still change the photos until it is approved or rejected."} onClose={onClose} onSubmit={save} submitLabel={item.status === "Needs information" ? "Send answer" : "Save changes"} pending={pending} error={error}>
+      {item.status === "Needs information" && item.reviewNote && (
+        <div className="expense-question" role="note"><span>Question from the reviewer</span><p>{item.reviewNote}</p></div>
+      )}
       {photosBlock}
       <div className="form-grid">
         {removed.map((id) => <input key={id} type="hidden" name="removeProof" value={id} />)}

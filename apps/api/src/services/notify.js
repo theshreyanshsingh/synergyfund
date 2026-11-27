@@ -27,18 +27,18 @@ function cleanDetails(details) {
   return (details || []).filter(([label, value]) => label && value != null && String(value).trim() !== "").map(([label, value]) => [String(label), String(value)])
 }
 
-function messageText({ name, title, body, details, href }) {
+function messageText({ name, title, body, details, href, button = "Open in SynergiFund" }) {
   const link = appLink(href)
   return [
     name ? `Hi ${name},` : "",
     body,
     cleanDetails(details).map(([label, value]) => `${label}: ${value}`).join("\n"),
-    link ? `Open in SynergiFund: ${link}` : "",
+    link ? `${button}: ${link}` : "",
     "You are receiving this because you are a member of the SynergiFund workspace.",
   ].filter(Boolean).join("\n\n")
 }
 
-function messageHtml({ name, title, body, details, href }) {
+function messageHtml({ name, title, body, details, href, button = "Open in SynergiFund" }) {
   const link = appLink(href)
   const rows = cleanDetails(details)
     .map(([label, value]) => `<tr><td style="padding:6px 12px 6px 0;color:#6b7280;font-size:13px;vertical-align:top;white-space:nowrap">${escapeHtml(label)}</td><td style="padding:6px 0;font-size:14px;color:#111827">${escapeHtml(value)}</td></tr>`)
@@ -50,7 +50,7 @@ function messageHtml({ name, title, body, details, href }) {
     ${name ? `<p style="margin:0 0 10px;font-size:15px">Hi ${escapeHtml(name)},</p>` : ""}
     <p style="margin:0 0 16px;font-size:15px;white-space:pre-line">${escapeHtml(body)}</p>
     ${rows ? `<table role="presentation" style="border-collapse:collapse;margin:0 0 20px">${rows}</table>` : ""}
-    ${link ? `<a href="${escapeHtml(link)}" style="display:inline-block;background:#111111;color:#ffffff;text-decoration:none;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:600">Open in SynergiFund</a>` : ""}
+    ${link ? `<a href="${escapeHtml(link)}" style="display:inline-block;background:#111111;color:#ffffff;text-decoration:none;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:600">${escapeHtml(button)}</a>` : ""}
     <p style="margin:24px 0 0;font-size:12px;color:#9ca3af">You are receiving this because you are a member of the SynergiFund workspace.</p>
   </div>
 </body></html>`
@@ -77,7 +77,8 @@ async function sendBatch(resend, emails, idempotencyKey) {
   return { error: last?.message || "The email could not be sent." }
 }
 
-export async function sendMail({ people, title, body, details, href, event }) {
+// `button`: the label on the link's button (Open in SynergiFund unless said).
+export async function sendMail({ people, title, body, details, href, event, button }) {
   const recipients = people.filter((person) => String(person.email || "").includes("@"))
   if (!recipients.length) return { status: "Failed", error: "Nobody on this notification has an email address.", sent: 0 }
   const resend = mailer()
@@ -95,8 +96,8 @@ export async function sendMail({ people, title, body, details, href, event }) {
     from,
     to: [person.email],
     subject: title,
-    text: messageText({ name: person.name, title, body, details, href }),
-    html: messageHtml({ name: person.name, title, body, details, href }),
+    text: messageText({ name: person.name, title, body, details, href, button }),
+    html: messageHtml({ name: person.name, title, body, details, href, button }),
     tags: [{ name: "event", value: String(event || "notice").replace(/[^a-zA-Z0-9_-]/g, "_") }],
   }))
   const errors = []

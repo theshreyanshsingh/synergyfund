@@ -2,7 +2,7 @@ import { Router } from "express"
 import { chatTitleFromPrompt } from "@synergifund/shared"
 import mongoose from "mongoose"
 import { AGENT_FEEDBACK_REASONS, MAX_FEEDBACK_NOTE, NOT_OWNED_STAGES, cityLine } from "@synergifund/shared"
-import { AgentMemory, AgentPrompt, AgentProposal, AgentRename, AgentSetting, AgentThread, AiMonth, AiUsage, DocumentFile, HouseSummary, Loan, Property, TeamNote, TeamNoteDraft, User } from "../models/index.js"
+import { AgentMemory, AgentPrompt, AgentProposal, AgentRename, AgentSetting, AgentTaskDraft, AgentThread, AiMonth, AiUsage, DocumentFile, HouseSummary, Loan, Property, TeamNote, TeamNoteDraft, User } from "../models/index.js"
 import { asyncHandler, blockContractors, requirePermission, sendError } from "../lib/http.js"
 import { presentProperty } from "../lib/serialize.js"
 import { teamToday, teamZoneName } from "../lib/dates.js"
@@ -15,6 +15,8 @@ import { presentSummary, summaryStatus, wantSummary } from "../services/agent/su
 import { HIDDEN_KINDS, documentReading, nudgeDocumentReader } from "../services/agent/documents.js"
 import { BRIEF_REPEAT, BRIEF_TEXT, MAX_REPEATING, REPEAT_EVERY, cleanRepeat, repeatName, startingDay } from "../services/agent/repeats.js"
 import { applyRename, freshRenames, presentRename } from "../services/agent/renames.js"
+import { freshTaskDrafts, presentTaskDraft } from "../services/agent/taskDrafts.js"
+import { createTask } from "./tasks.js"
 import { applyLoanProposal, applyProposal, changedSince, freshProposals, presentProposal } from "../services/agent/proposals.js"
 import { runAgent } from "../services/agent/run.js"
 import { resumeRun } from "../services/agent/stream.js"
@@ -320,6 +322,7 @@ agentRouter.get(
     await freshProposals(messages)
     await freshRenames(messages)
     await freshDrafts(messages)
+    await freshTaskDrafts(messages)
     res.json({ thread: { ...presentThread(thread), messages } })
   }),
 )
@@ -337,6 +340,7 @@ agentRouter.delete(
     await AgentProposal.deleteMany({ threadId: thread._id, status: "pending" })
     await AgentRename.deleteMany({ threadId: thread._id, status: "pending" })
     await TeamNoteDraft.deleteMany({ threadId: thread._id, status: "pending" })
+    await AgentTaskDraft.deleteMany({ threadId: thread._id, status: "pending" })
     if (!thread.temporary) await recordActivity({ user: req.user, title: "Agent chat deleted", detail: thread.title || "" })
     res.json({ ok: true })
   }),
@@ -1020,6 +1024,73 @@ agentRouter.post(
       return
     }
     res.json({ rename: presentRename(taken) })
+  }),
+)
+
+// A task the Agent prepared: Confirm creates it as the Tasks page would (createTask: the same checks, the assignee's email,
+// the activity log), with this person's own access; Cancel drops it.
+const TASK_CLOSED = {
+  saved: "This task was already added.",
+  cancelled: "This task was cancelled. Ask the agent again.",
+  expired: "This task has expired. Ask the agent again.",
+}
+
+async function openTaskDraft(req, res) {
+  const draft = await AgentTaskDraft.findOne({ _id: req.params.id, userId: req.user._id }).catch(() => null)
+  if (!draft) {
+    sendError(res, 404, "That task was not found.")
+    return null
+  }
+  const { status } = presentTaskDraft(draft)
+  if (status !== "pending") {
+    sendError(res, 409, TASK_CLOSED[status] || TASK_CLOSED.expired)
+    return null
+  }
+  return draft
+}
+
+agentRouter.post(
+  "/tasks/:id/confirm",
+  requirePermission("tasks.manage"),
+  asyncHandler(async (req, res) => {
+    const draft = await openTaskDraft(req, res)
+    if (!draft) return
+    // Taken first, so a second tap can't add it twice; put back if the task can't be made.
+    const taken = await AgentTaskDraft.findOneAndUpdate({ _id: draft._id, status: "pending" }, { status: "saved", decidedAt: new Date() }, { new: true })
+    if (!taken) return sendError(res, 409, TASK_CLOSED.saved)
+    const body = {
+      title: taken.title,
+      priority: taken.priority || "Medium",
+      notes: taken.notes || "",
+      ...(taken.propertyId ? { propertyId: String(taken.propertyId) } : {}),
+      ...(taken.assigneeId ? { assigneeId: String(taken.assigneeId) } : {}),
+      ...(taken.due ? { due: taken.due } : {}),
+    }
+    let made
+    try {
+      made = await createTask({ user: req.user, permissions: req.permissions, body })
+    } catch (error) {
+      await AgentTaskDraft.updateOne({ _id: taken._id }, { status: "pending", $unset: { decidedAt: 1 } })
+      throw error
+    }
+    if (made.error) {
+      await AgentTaskDraft.updateOne({ _id: taken._id }, { status: "pending", $unset: { decidedAt: 1 } })
+      return sendError(res, made.status, made.error)
+    }
+    taken.taskId = made.task._id
+    await taken.save()
+    res.json({ task: presentTaskDraft(taken), mail: made.mail })
+  }),
+)
+
+agentRouter.post(
+  "/tasks/:id/cancel",
+  asyncHandler(async (req, res) => {
+    const draft = await openTaskDraft(req, res)
+    if (!draft) return
+    const taken = await AgentTaskDraft.findOneAndUpdate({ _id: draft._id, status: "pending" }, { status: "cancelled", decidedAt: new Date() }, { new: true })
+    if (!taken) return sendError(res, 409, TASK_CLOSED.cancelled)
+    res.json({ task: presentTaskDraft(taken) })
   }),
 )
 

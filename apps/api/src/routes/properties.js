@@ -960,14 +960,55 @@ propertiesRouter.patch(
   }),
 )
 
+// What deleting a house would take with it: its money records (loans, draws, costs, expense requests, payments) and the
+// rest. Shown before the delete, so it is never a surprise.
+async function deletionCounts(property) {
+  const id = property._id
+  const [loans, draws, costs, costTotal, requests, bills, tasks, documents] = await Promise.all([
+    Loan.countDocuments({ propertyId: id }),
+    Draw.countDocuments({ propertyId: id }),
+    Expense.countDocuments({ propertyId: id }),
+    Expense.aggregate([{ $match: { propertyId: id } }, { $group: { _id: null, total: { $sum: "$amount" } } }]),
+    ExpenseRequest.countDocuments({ propertyId: id }),
+    Bill.countDocuments({ propertyId: id }),
+    Task.countDocuments({ propertyId: id }),
+    DocumentFile.countDocuments({ propertyId: id }),
+  ])
+  const counts = { loans, draws, costs, costTotal: Math.round((costTotal[0]?.total || 0) * 100) / 100, requests, bills, tasks, documents }
+  return { ...counts, money: loans + draws + costs + requests + bills > 0 }
+}
+
+function sameAddress(typed, address) {
+  const clean = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+  return Boolean(clean(typed)) && clean(typed) === clean(address)
+}
+
+propertiesRouter.get(
+  "/:id/delete-check",
+  requirePermission("properties.write"),
+  asyncHandler(async (req, res) => {
+    const property = await Property.findById(req.params.id).catch(() => null)
+    if (!property || !ownsProperty(req.user, property)) return sendError(res, 404, "That property is not available.")
+    res.json({ address: property.address, canDelete: req.user.role === "admin", ...(await deletionCounts(property)) })
+  }),
+)
+
+// Deleting a house removes everything filed on it, for good. Only an admin can, and a house with money records (loans,
+// draws, costs, expense requests, payments) needs its address typed to confirm. The team's activity log keeps its
+// entries (with the address). Most houses should move to Exit or Complete instead.
 propertiesRouter.delete(
   "/:id",
   requirePermission("properties.write"),
   asyncHandler(async (req, res) => {
-    const property = await Property.findById(req.params.id)
+    const property = await Property.findById(req.params.id).catch(() => null)
     if (!property || !ownsProperty(req.user, property)) {
       sendError(res, 404, "That property is not available.")
       return
+    }
+    if (req.user.role !== "admin") return sendError(res, 403, "Only an admin can delete a property. To take it off the active lists, move it to Exit or Complete.")
+    const counts = await deletionCounts(property)
+    if (counts.money && !sameAddress(req.body?.confirm, property.address)) {
+      return res.status(409).json({ error: `Type the address (${property.address}) to delete it with its loans, draws, costs and payments.`, ...counts })
     }
     const files = await DocumentFile.find({ propertyId: property._id })
     await Promise.all(files.map((file) => deleteStoredFile(file).catch(() => {})))
@@ -986,7 +1027,8 @@ propertiesRouter.delete(
       ReviewItem.deleteMany({ propertyId: property._id }),
       PhotoSet.deleteMany({ propertyId: property._id }),
       DocumentFile.deleteMany({ propertyId: property._id }),
-      Activity.deleteMany({ propertyId: property._id }),
+      // The activity log keeps the house's history, with its address.
+      Activity.updateMany({ propertyId: property._id }, { $set: { propertyName: property.address } }),
       ConstructionProject.deleteMany({ propertyId: property._id }),
       CalendarEvent.updateMany({ propertyId: property._id }, { $unset: { propertyId: 1 } }),
     ])
@@ -994,7 +1036,16 @@ propertiesRouter.delete(
     // Its summary and the team's notes on it.
     await forgetHouse(property._id)
     await property.deleteOne()
-    await recordActivity({ user: req.user, title: "Property deleted", detail: property.address })
+    const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`
+    const taken = [
+      counts.loans && plural(counts.loans, "loan", "loans"),
+      counts.draws && plural(counts.draws, "draw", "draws"),
+      counts.costs && `${plural(counts.costs, "cost", "costs")} ($${counts.costTotal.toLocaleString("en-US")})`,
+      counts.requests && plural(counts.requests, "expense request", "expense requests"),
+      counts.bills && plural(counts.bills, "payment", "payments"),
+      counts.documents && plural(counts.documents, "file", "files"),
+    ].filter(Boolean)
+    await recordActivity({ user: req.user, title: "Property deleted", detail: [property.address, taken.length ? `with ${taken.join(", ")}` : ""].filter(Boolean).join(" · ") })
     res.json({ ok: true })
   }),
 )

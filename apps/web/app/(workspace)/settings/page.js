@@ -11,6 +11,7 @@ import { AgentSettings } from "../../../components/agent/AgentSettings"
 import { TeammateSettings } from "../../../components/agent/TeammateSettings"
 import { PasswordInput } from "../../../components/ui/PasswordInput"
 import { BackupSettings } from "../../../components/settings/BackupSettings"
+import { pushEndpoint } from "../../../lib/pwa"
 
 const roleLabel = Object.fromEntries(ROLES.map((role) => [role.id, role.label]))
 
@@ -22,6 +23,7 @@ export default function SettingsPage() {
   const [error, setError] = useState("")
   const [pending, setPending] = useState(false)
   const [tab, setTab] = useState("profile")
+  const [everywhere, setEverywhere] = useState({ pending: false, message: "", error: "" })
   const admin = user?.role === "admin"
   const tabs = [
     { id: "profile", label: "Profile" },
@@ -64,6 +66,21 @@ export default function SettingsPage() {
     }
   }
 
+  // Every other phone and browser signs out (and stops getting notifications); this one stays signed in.
+  async function signOutEverywhere() {
+    if (!window.confirm("Sign out of SynergiFund on every other phone and computer? You stay signed in here.")) return
+    setEverywhere({ pending: true, message: "", error: "" })
+    try {
+      const keepEndpoint = await pushEndpoint()
+      const keepToken = window.SynergiFundNative?.pushToken || ""
+      const data = await api("/auth/sign-out-everywhere", { method: "POST", body: { keepEndpoint, keepToken } })
+      session.setUser(data.user)
+      setEverywhere({ pending: false, message: "Your other phones and computers are signed out. You're still signed in here.", error: "" })
+    } catch (err) {
+      setEverywhere({ pending: false, message: "", error: err.message })
+    }
+  }
+
   return (
     <div className="workspace">
       <div className="workspace-top">
@@ -99,6 +116,15 @@ export default function SettingsPage() {
               <label className="field"><span>Confirm</span><PasswordInput autoComplete="new-password" value={form.confirmPassword} onChange={(event) => setForm({ ...form, confirmPassword: event.target.value })} minLength={8} required /></label>
               <div className="settings-actions"><button className="primary" type="submit" disabled={pending}>{pending ? "Saving…" : "Update password"}</button></div>
             </form>
+            <div className="settings-send">
+              <div>
+                <h2>Signed-in devices</h2>
+                <p>Lost a phone, or signed in on a shared computer? Sign out everywhere else. They stop getting notifications too.</p>
+              </div>
+              {everywhere.error && <div className="banner settings-wide">{everywhere.error}</div>}
+              {everywhere.message && <p className="settings-note settings-wide">{everywhere.message}</p>}
+              <div className="settings-actions"><button type="button" onClick={signOutEverywhere} disabled={everywhere.pending}>{everywhere.pending ? "Signing out…" : "Sign out of other devices"}</button></div>
+            </div>
             <p className="settings-note">How SynergiFund handles your information: <Link href="/privacy">Privacy Policy</Link></p>
           </section>
         )}

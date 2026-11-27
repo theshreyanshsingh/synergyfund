@@ -235,13 +235,30 @@ export async function reviewProperty(propertyId, { reply = false, force = false 
     const channel = await propertyChannel(property._id)
     const watch = (await SiteWatch.findOne({ propertyId: property._id })) || new SiteWatch({ propertyId: property._id })
     const since = watch.lastReviewedAt || new Date(0)
-    const recent = (await ChatMessage.find({ channelId: channel?._id, deletedAt: null }).sort({ createdAt: -1 }).limit(40)).reverse()
+    const latest = (await ChatMessage.find({ channelId: channel?._id, deletedAt: null }).sort({ createdAt: -1 }).limit(40)).reverse()
+    const recentSets = await PhotoSet.find({ propertyId: property._id, createdAt: { $gt: since } }).sort({ createdAt: -1 }).limit(3)
+    const authorIds = [...new Set([...latest.map((message) => String(message.userId || "")), ...recentSets.map((set) => String(set.uploadedBy || ""))].filter(Boolean))]
+    const authors = new Map((await User.find({ _id: { $in: authorIds } }).select("name role bot aiConsentAt")).map((user) => [String(user._id), user]))
+    // Only what people who agreed to the AI notice wrote or shared goes to the AI model (Apple's rule on sharing with a
+    // third-party AI); their messages and photos are left out until they agree. (Messages with no author, like a call
+    // ending, carry no one's words.)
+    const agreed = (id) => {
+      if (!id) return true
+      const person = authors.get(String(id))
+      return Boolean(person && (person.bot || person.aiConsentAt))
+    }
+    const recent = latest.filter((message) => agreed(message.userId))
     const fresh = recent.filter((message) => message.createdAt > since && String(message.userId) !== String(bot._id))
-    const photoSets = await PhotoSet.find({ propertyId: property._id, createdAt: { $gt: since } }).sort({ createdAt: -1 }).limit(3)
+    const photoSets = recentSets.filter((set) => agreed(set.uploadedBy))
+    // Asked something by someone who hasn't agreed: say how to agree, without sending their message anywhere.
+    const askedBy = reply ? [...latest].reverse().find((item) => String(item.userId || "") !== String(bot._id) && item.kind !== "call") : null
+    if (askedBy?.userId && !agreed(askedBy.userId)) {
+      const posted = channel ? await postChatMessage({ channel, property, author: bot, text: `<@${askedBy.userId}> I can't read your messages yet: SynergiFund sends them to its AI only once you agree. Tap Agree in the note above this chat, then ask me again.` }) : null
+      await SiteWatch.updateOne({ propertyId: property._id }, { $set: { lastReviewedAt: askedBy.createdAt, ...(posted ? { lastReplyAt: new Date() } : {}) } }, { upsert: true })
+      return { skipped: "not agreed", message: posted ? posted.text : "" }
+    }
     if (!fresh.length && !photoSets.length && !reply && !force) return { skipped: "nothing new" }
 
-    const authorIds = [...new Set(recent.map((message) => String(message.userId)).filter(Boolean))]
-    const authors = new Map((await User.find({ _id: { $in: authorIds } }).select("name role bot")).map((user) => [String(user._id), user]))
     const who = (id, fallback) => {
       const person = authors.get(String(id))
       if (!person) return fallback || "Someone"

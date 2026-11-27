@@ -55,6 +55,7 @@ export default function PropertyDetailPage({ params }) {
   const [termsMessage, setTermsMessage] = useState("")
   const [editing, setEditing] = useState(null)
   const [reporting, setReporting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [editError, setEditError] = useState("")
   const [addingDraw, setAddingDraw] = useState(false)
   const [shots, setShots] = useState([])
@@ -79,6 +80,7 @@ export default function PropertyDetailPage({ params }) {
 
   const internal = session?.user?.role !== "contractor"
   const canWrite = session?.user && can(session.user, "properties.write")
+  const admin = session?.user?.role === "admin"
   const canPost = session?.user && can(session.user, "expenses.approve")
   const canRequest = session?.user && can(session.user, "expenses.submit") && !canPost
   const canDraws = session?.user && can(session.user, "draws.write")
@@ -230,10 +232,11 @@ export default function PropertyDetailPage({ params }) {
       meta={[cityLine(property), property.stage, property.strategy].filter(Boolean).join(" · ")}
       actions={[
         // Delete: last in the phone's Options list; on a computer, in the ⋯ menu rather than beside the everyday buttons.
-        canWrite && <button key="delete" type="button" className="danger header-actions-phone" onClick={() => removeProperty(id, property.address, router)}>Delete</button>,
+        // (Only an admin can delete a house.)
+        canWrite && admin && <button key="delete" type="button" className="danger header-actions-phone" onClick={() => setDeleting(true)}>Delete</button>,
         <button key="report" type="button" className="import-button" onClick={() => setReporting(true)}>Make report</button>,
         canWrite && <button key="modify" type="button" className="primary" onClick={() => { setEditError(""); setEditing(propertyForm(property, draws?.recordBudget)) }}>Modify</button>,
-        canWrite && <span key="more" className="header-actions-desk"><RowMenu label="More for this property" items={[{ label: "Delete property", danger: true, onClick: () => removeProperty(id, property.address, router) }]} /></span>,
+        canWrite && admin && <span key="more" className="header-actions-desk"><RowMenu label="More for this property" items={[{ label: "Delete property", danger: true, onClick: () => setDeleting(true) }]} /></span>,
       ].filter(Boolean)}
     >
       <div className="property-switch" role="tablist" aria-label="Property sections">
@@ -496,6 +499,7 @@ export default function PropertyDetailPage({ params }) {
       )}
 
       {reporting && <ReportSheet property={property} detail={detail.data} onClose={() => setReporting(false)} />}
+      {deleting && <DeletePropertySheet id={id} onClose={() => setDeleting(false)} onDeleted={() => router.push("/properties")} />}
 
       {section === "draws" && (
         <section className="panel property-card">
@@ -1072,12 +1076,69 @@ function ScopeLine({ item, showBudget, showMoney, canPost, canRequest, canProgre
   )
 }
 
-async function removeProperty(id, address, router) {
-  if (!window.confirm(`Delete ${address}? Its draws, loans, costs, photos and documents will be removed.`)) return
-  try {
-    await api(`/properties/${id}`, { method: "DELETE" })
-    router.push("/properties")
-  } catch (error) {
-    window.alert(`${address} could not be deleted: ${error.message}`)
+// Deleting a house (admins): first what goes with it. With money records (loans, draws, costs, payments) the address
+// must be typed; most houses should move to Exit or Complete instead, which keeps everything.
+function DeletePropertySheet({ id, onClose, onDeleted }) {
+  const [check, setCheck] = useState(null)
+  const [typed, setTyped] = useState("")
+  const [error, setError] = useState("")
+  const [pending, setPending] = useState(false)
+  useEffect(() => {
+    api(`/properties/${id}/delete-check`).then(setCheck).catch((err) => setError(err.message))
+  }, [id])
+  const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`
+  const lines = check ? [
+    check.loans && plural(check.loans, "loan", "loans"),
+    check.draws && plural(check.draws, "draw", "draws"),
+    check.costs && `${plural(check.costs, "posted cost", "posted costs")} (${money(check.costTotal)})`,
+    check.requests && plural(check.requests, "expense request", "expense requests"),
+    check.bills && plural(check.bills, "payment", "payments"),
+    check.tasks && plural(check.tasks, "task", "tasks"),
+    check.documents && plural(check.documents, "file or photo", "files and photos"),
+  ].filter(Boolean) : []
+  const ready = check && (!check.money || typed.trim())
+
+  async function submit(event) {
+    event.preventDefault()
+    setPending(true)
+    setError("")
+    try {
+      await api(`/properties/${id}`, { method: "DELETE", body: { confirm: typed } })
+      onDeleted()
+    } catch (err) {
+      setError(err.message)
+      setPending(false)
+    }
   }
+
+  return (
+    <FormSheet
+      eyebrow="Delete property"
+      title={check ? `Delete ${check.address}?` : "Delete this property?"}
+      hint="This can't be undone. To take a house off the active lists but keep its history, change its stage to Exit or Complete instead."
+      onClose={onClose}
+      onSubmit={submit}
+      submitLabel="Delete for good"
+      submitClassName="danger"
+      pending={pending}
+      pendingLabel="Deleting…"
+      error={error}
+      disabled={!ready}
+    >
+      {!check && !error && <p className="muted">Checking what's filed on it…</p>}
+      {check && (
+        <>
+          <p>{lines.length ? "These are deleted with it:" : "Nothing else is filed on it."}</p>
+          {lines.length > 0 && <ul className="delete-list">{lines.map((line) => <li key={line}>{line}</li>)}</ul>}
+          <p className="muted">The team's activity log keeps its history.</p>
+          {check.money && (
+            <label className="field wide">
+              <span>Type the address to confirm: <b>{check.address}</b></span>
+              <input value={typed} onChange={(event) => setTyped(event.target.value)} autoComplete="off" autoFocus />
+            </label>
+          )}
+        </>
+      )}
+    </FormSheet>
+  )
 }

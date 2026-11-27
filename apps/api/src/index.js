@@ -27,6 +27,7 @@ import { seedIfEmpty } from "./services/seed.js"
 import { startDocumentReader } from "./services/agent/documents.js"
 import { startRepeats } from "./services/agent/repeats.js"
 import { startSummaryWriter } from "./services/agent/summaries.js"
+import { startReminders } from "./services/reminders.js"
 import { rememberAppOrigin } from "./services/appUrl.js"
 import { recoverNotes } from "./services/callNotes.js"
 import { startTeammate } from "./services/siteAgent.js"
@@ -125,6 +126,8 @@ startDocumentReader()
 startRepeats()
 // The Agent writes a summary of each house in the background, and again when what it knows about the house changes.
 startSummaryWriter()
+// Each morning, everyone with something due today gets one reminder (services/reminders.js).
+startReminders()
 const server = http.createServer(app)
 attachChatSockets(server)
 server.listen(port, () => {

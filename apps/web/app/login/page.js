@@ -48,7 +48,7 @@ export default function LoginPage() {
           </label>
           <button className="primary" type="submit" disabled={pending}>{pending ? "Signing in…" : "Sign in"}</button>
         </div>
-        <div className="auth-links"><Link href="/privacy">Privacy Policy</Link></div>
+        <div className="auth-links"><Link href="/forgot-password">Forgot password?</Link><Link href="/privacy">Privacy Policy</Link></div>
       </form>
     </main>
   )

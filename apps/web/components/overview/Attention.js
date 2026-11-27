@@ -73,6 +73,7 @@ function dayLabel(value) {
 function attentionIcon(kind) {
   if (kind === "Draw") return "layers"
   if (kind === "Mortgage" || kind === "Loan") return "bank"
+  if (kind === "Payment") return "card"
   if (kind === "Insurance") return "file"
   if (kind === "Verify") return "alert"
   return "check"

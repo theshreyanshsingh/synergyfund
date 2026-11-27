@@ -30,13 +30,13 @@ export default function SupportPage() {
         <h2>Getting an account</h2>
         <p>
           SynergiFund is for the team, its contractors and the partners it works with. There is no public sign-up: a
-          workspace administrator creates each person's account and sends them their sign-in details.
+          workspace administrator creates each person's account, and the invitation email has a link to choose a password.
         </p>
 
         <h2>Signing in</h2>
         <ul>
-          <li>Sign in with the email and password your administrator gave you.</li>
-          <li>Forgot your password? Ask your administrator to set a new one, or email us.</li>
+          <li>Your invitation email has a link to choose your password. Then sign in with your email and that password.</li>
+          <li>Forgot your password? Tap Forgot password on the sign-in page and we'll email you a link to choose a new one.</li>
           <li>Changed your password and signed out elsewhere? That's on purpose: a new password signs out every other device.</li>
         </ul>
 

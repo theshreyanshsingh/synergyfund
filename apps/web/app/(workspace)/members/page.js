@@ -66,7 +66,7 @@ export default function MembersPage() {
       setNotice(null)
       if (draft.mode === "invite") {
         const created = await api("/members", { method: "POST", body: draft })
-        setIssued({ name: draft.name, email: draft.email, password: draft.password, mail: created.mail, kind: "invite" })
+        setIssued({ name: draft.name, email: draft.email, password: draft.password, link: created.link, mail: created.mail, kind: "invite" })
       } else {
         const updated = await api(`/members/${draft.id}`, {
           method: "PATCH",
@@ -79,7 +79,7 @@ export default function MembersPage() {
         }
         if (draft.nextPassword) {
           const reset = await api(`/members/${draft.id}/password`, { method: "POST", body: { password: draft.nextPassword } })
-          setIssued({ name: draft.name, email: draft.email, password: draft.nextPassword, mail: reset.mail, kind: "password" })
+          setIssued({ name: draft.name, email: draft.email, password: draft.nextPassword, link: reset.link, mail: reset.mail, kind: "password" })
         }
       }
       setDraft(null)
@@ -106,8 +106,24 @@ export default function MembersPage() {
     }
   }
 
+  // Emails them a link to choose a new password; their current password works until they use it.
+  async function sendPasswordLink() {
+    setPending(true)
+    setError("")
+    try {
+      const sent = await api(`/members/${draft.id}/password-link`, { method: "POST" })
+      setIssued({ name: draft.name, email: draft.email, password: "", link: sent.link, mail: sent.mail, kind: "link" })
+      setDraft(null)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setPending(false)
+    }
+  }
+
   async function copyAccess() {
-    await navigator.clipboard.writeText(`SynergiFund sign-in\n${issued.email}\n${issued.password}`)
+    const lines = ["SynergiFund sign-in", issued.email, issued.password, issued.link && !issued.password ? `Choose your password: ${issued.link}` : ""]
+    await navigator.clipboard.writeText(lines.filter(Boolean).join("\n"))
     setCopied(true)
   }
 
@@ -177,7 +193,7 @@ export default function MembersPage() {
               <div>
                 <p>Members</p>
                 <h2>{draft.mode === "invite" ? "Invite a member" : draft.name}</h2>
-                <span>{draft.mode === "invite" ? "Set a password and the access they start with. They can change the password in Settings." : draft.email}</span>
+                <span>{draft.mode === "invite" ? "Choose the access they start with. We email them a link to choose their own password." : draft.email}</span>
               </div>
               <button type="button" className="icon-btn" onClick={() => setDraft(null)} aria-label="Close">×</button>
             </header>
@@ -197,12 +213,12 @@ export default function MembersPage() {
                   <>
                     <label className="field"><span>Name</span><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required /></label>
                     <label className="field"><span>Email</span><input type="email" value={draft.email} onChange={(event) => setDraft({ ...draft, email: event.target.value })} required /></label>
-                    <label className="field"><span>Password</span><input value={draft.password} onChange={(event) => setDraft({ ...draft, password: event.target.value })} minLength={8} required /></label>
+                    <label className="field"><span>Password (optional)</span><input value={draft.password} onChange={(event) => setDraft({ ...draft, password: event.target.value })} minLength={8} placeholder="Leave blank: they choose one" autoComplete="new-password" /></label>
                   </>
                 )}
                 <label className="field"><span>Title</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="Optional" /></label>
                 {draft.mode === "edit" && (
-                  <label className="field"><span>New password</span><input value={draft.nextPassword} onChange={(event) => setDraft({ ...draft, nextPassword: event.target.value })} placeholder="Leave blank to keep it" /></label>
+                  <label className="field"><span>New password</span><input value={draft.nextPassword} onChange={(event) => setDraft({ ...draft, nextPassword: event.target.value })} placeholder="Leave blank to keep it" autoComplete="new-password" /></label>
                 )}
               </div>
               <div className="role-block">
@@ -231,6 +247,13 @@ export default function MembersPage() {
                     noun={["property", "properties"]}
                     emptyText={properties.data ? "No properties yet. You can assign houses after they exist." : "Loading properties…"}
                   />
+                </div>
+              )}
+              {draft.mode === "edit" && !draft.locked && draft.id !== session?.user?.id && (
+                <div className="role-block">
+                  <span>Password</span>
+                  <p className="muted assign-hint">Forgot their password? Email them a link to choose a new one. Their current password works until they use it.</p>
+                  <span><button type="button" className="tool" disabled={pending} onClick={sendPasswordLink}>Email a password link</button></span>
                 </div>
               )}
               {draft.locked && <p className="banner">Only a super admin can change an admin.</p>}
@@ -285,11 +308,11 @@ export default function MembersPage() {
             <header>
               <div>
                 <p>Ready to share</p>
-                <h2>{issued.name} can sign in</h2>
+                <h2>{issued.kind === "link" ? `Password link for ${issued.name}` : `${issued.name} can sign in`}</h2>
                 <span>
                   {issued.mail?.status === "Sent"
-                    ? `We emailed ${issued.kind === "invite" ? "the invitation" : "the new password"} to ${issued.email}. You can also share these details yourself.`
-                    : `The email to ${issued.email} did not send${issued.mail?.error ? `: ${issued.mail.error}` : ""}. Share these details with them yourself.`}
+                    ? `We emailed ${issued.kind === "invite" ? "the invitation" : "a link to choose a password"} to ${issued.email}.${issued.password ? " The email doesn't include the password: share it with them yourself." : " You can also send them the link yourself."}`
+                    : `The email to ${issued.email} did not send${issued.mail?.error ? `: ${issued.mail.error}` : ""}. Share ${issued.password ? "these details" : "the link"} with them yourself.`}
                 </span>
               </div>
               <button type="button" className="icon-btn" onClick={() => setIssued(null)} aria-label="Close">×</button>
@@ -298,13 +321,24 @@ export default function MembersPage() {
               <div className="credential">
                 <span>Email</span>
                 <strong>{issued.email}</strong>
-                <span>Password</span>
-                <strong>{issued.password}</strong>
+                {issued.password && (
+                  <>
+                    <span>Password</span>
+                    <strong>{issued.password}</strong>
+                  </>
+                )}
+                {issued.link && !issued.password && (
+                  <>
+                    <span>Link</span>
+                    <strong className="credential-link">{issued.link}</strong>
+                  </>
+                )}
               </div>
+              {issued.link && !issued.password && <p className="muted">The link works once, for {issued.kind === "invite" ? "7 days" : "3 days"}.</p>}
             </div>
             <footer>
               <button type="button" className="tool" onClick={() => setIssued(null)}>Done</button>
-              <button className="primary" type="button" onClick={copyAccess}>{copied ? "Copied" : "Copy sign-in"}</button>
+              <button className="primary" type="button" onClick={copyAccess}>{copied ? "Copied" : issued.password ? "Copy sign-in" : "Copy link"}</button>
             </footer>
           </section>
         </div>

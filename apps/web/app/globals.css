@@ -616,6 +616,8 @@ a { color: inherit; text-decoration: none; }
 .credential span { color: var(--muted); font-size: 12px; margin-top: 8px; }
 .credential span:first-child { margin-top: 0; }
 .credential strong { font-size: 15px; }
+/* A password link is long: it wraps instead of widening the sheet. */
+.credential strong.credential-link { font-size: 13px; font-weight: 500; word-break: break-all; }
 .modal-head, .split { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .modal h2 { margin: 0; font-size: 16px; }
 .icon-btn { border: 0; background: transparent; font-size: 20px; line-height: 1; }
@@ -2104,6 +2106,38 @@ a.agent-action { text-decoration: none; }
 .chat-nav-empty { margin: 2px 8px 4px 36px; color: var(--faint); font-size: 12px; }
 .chat-nav-row.chat-nav-browse { color: var(--faint); font-size: 13px; }
 .chat-nav-row.chat-nav-browse:hover { color: var(--text); }
+.chat-nav-row.chat-nav-reports { color: var(--bad); font-weight: 600; text-decoration: none; }
+.chat-nav-row.chat-nav-reports .chat-nav-count { margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--bad); color: #fff; font-size: 11px; line-height: 20px; text-align: center; }
+
+/* An expense sent back with a question: the question, above the form the contractor answers in. */
+.expense-question { margin: 0 0 14px; padding: 12px 14px; border-radius: 10px; background: var(--warn-bg, #fff7e6); border: 1px solid color-mix(in srgb, var(--warn, #b54708) 30%, transparent); }
+.expense-question span { display: block; color: var(--muted); font-size: 12px; font-weight: 600; }
+.expense-question p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Property chat while the AI teammate reads it, for someone who hasn't agreed to the AI notice. */
+.chat-ai-note { display: flex; align-items: center; gap: 10px; margin: 0 16px 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--muted); font-size: 13px; line-height: 1.45; }
+.chat-ai-note p { flex: 1; margin: 0; }
+.chat-ai-note > svg { flex: none; color: var(--text); }
+.chat-ai-note button { flex: none; }
+.chat-ai-note-error { color: var(--bad); }
+
+/* What deleting a house takes with it. */
+.delete-list { margin: 4px 0 8px; padding-left: 20px; }
+.delete-list li { margin: 2px 0; }
+
+/* Reported messages (admins). */
+.report-list { display: grid; gap: 12px; max-width: 760px; }
+.report-card { display: grid; gap: 10px; padding: 16px; }
+.report-card header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.report-card header .status-pill, .report-card header > :last-child:not(.muted) { margin-left: auto; }
+.report-text { margin: 0; padding: 10px 12px; border-left: 3px solid var(--line); border-radius: 0 8px 8px 0; background: var(--bg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.report-reason { margin: 0; font-size: 14px; }
+.report-reason span { display: block; color: var(--muted); font-size: 12px; }
+.report-card footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.report-card footer .row-actions { margin-left: auto; }
+.report-card.is-handled { opacity: .8; }
+.report-heading { margin: 24px 0 10px; font-size: 15px; }
+.report-empty { color: var(--muted); }
 .chat-member-role { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--hover); color: var(--muted); font-size: 12px; font-style: normal; font-weight: 650; vertical-align: 1px; }
 .chat-browse { display: grid; gap: 4px; }
 .chat-browse-search { width: 100%; margin-bottom: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--white); color: var(--text); font: inherit; }

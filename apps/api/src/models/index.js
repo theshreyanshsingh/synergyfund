@@ -731,6 +731,8 @@ export const Activity = register(
       title: { type: String, required: true },
       detail: String,
       propertyId: { type: Schema.Types.ObjectId, ref: "Property" },
+      // The house's address, kept once the house is deleted (its history stays).
+      propertyName: String,
     },
     { timestamps: true },
   ),
@@ -1201,10 +1203,15 @@ export const ChatReport = register(
       authorName: String,
       text: String,
       reason: String,
+      // Open, then Removed (an admin deleted the message) or Dismissed (an admin kept it). Every report of the same
+      // message is settled together.
       status: { type: String, default: "Open" },
+      resolvedById: { type: Schema.Types.ObjectId, ref: "User" },
+      resolvedByName: String,
+      resolvedAt: Date,
     },
     { timestamps: true },
-  ).index({ messageId: 1, reporterId: 1 }),
+  ).index({ messageId: 1, reporterId: 1 }).index({ status: 1, createdAt: -1 }),
 )
 
 export const ChatRead = register(
@@ -1218,4 +1225,73 @@ export const ChatRead = register(
     },
     { timestamps: true },
   ).index({ userId: 1, channelId: 1 }, { unique: true }),
+)
+
+// A session someone signed out of (its id from the token), so the token stops working before it would expire. The row
+// goes once the token would have expired anyway.
+export const SignedOutSession = register(
+  "SignedOutSession",
+  new Schema(
+    {
+      sid: { type: String, required: true, unique: true },
+      expiresAt: { type: Date, required: true },
+    },
+    { timestamps: true },
+  ).index({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+)
+
+// A link to set a password: "Forgot password" (an hour), one an admin sends (3 days) or an invitation (a week). Only a hash of the link's
+// secret is kept. It works once, and a newer link for the same person replaces it. The row goes once it has expired.
+export const PasswordLink = register(
+  "PasswordLink",
+  new Schema(
+    {
+      userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
+      tokenHash: { type: String, required: true, unique: true },
+      purpose: { type: String, enum: ["reset", "admin", "invite"], required: true },
+      expiresAt: { type: Date, required: true },
+      usedAt: Date,
+    },
+    { timestamps: true },
+  ).index({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+)
+
+// A task the Agent prepared from what the person asked ("add a task for Mel to call the plumber Friday"). Only the
+// person's Confirm creates it, with their own access, as the Tasks page would (services/agent/taskDrafts.js).
+export const AgentTaskDraft = register(
+  "AgentTaskDraft",
+  new Schema(
+    {
+      userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+      threadId: { type: Schema.Types.ObjectId, ref: "AgentThread" },
+      title: { type: String, required: true },
+      propertyId: { type: Schema.Types.ObjectId, ref: "Property" },
+      address: String,
+      assigneeId: { type: Schema.Types.ObjectId, ref: "User" },
+      assigneeName: String,
+      due: String,
+      priority: String,
+      notes: String,
+      // pending, then saved (taskId) or cancelled; expired once expiresAt passes.
+      status: { type: String, default: "pending" },
+      taskId: { type: Schema.Types.ObjectId, ref: "Task" },
+      decidedAt: Date,
+      expiresAt: Date,
+    },
+    { timestamps: true },
+  ),
+)
+
+// When a once-a-day job last ran (the morning reminders), so a restart never sends them twice in a day. Its _id is the
+// job's name: the database always keeps _id unique, so two runs can't both claim a day, even before other indexes exist.
+export const ScheduledRun = register(
+  "ScheduledRun",
+  new Schema(
+    {
+      _id: { type: String, required: true },
+      day: String,
+      at: Date,
+    },
+    { timestamps: true },
+  ),
 )

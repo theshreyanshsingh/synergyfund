@@ -3,8 +3,9 @@
 import { useEffect, useRef } from "react"
 
 // A form in a sheet. Its error shows at the top of the form, and comes into view when it appears: on a phone you tap
-// Save at the bottom of a long form, and a message out of sight looks like nothing happened.
-export function FormSheet({ eyebrow, title, hint, onClose, onSubmit, submitLabel, pending, pendingLabel, error, children }) {
+// Save at the bottom of a long form, and a message out of sight looks like nothing happened. `submitClassName`: "danger"
+// for a submit that removes something; `disabled`: the submit waits until the form is ready.
+export function FormSheet({ eyebrow, title, hint, onClose, onSubmit, submitLabel, pending, pendingLabel, error, submitClassName = "primary", disabled = false, children }) {
   const banner = useRef(null)
   useEffect(() => {
     if (error) banner.current?.scrollIntoView({ block: "nearest", behavior: "smooth" })
@@ -27,7 +28,7 @@ export function FormSheet({ eyebrow, title, hint, onClose, onSubmit, submitLabel
         {onSubmit && (
           <footer>
             <button type="button" className="tool" onClick={onClose}>Cancel</button>
-            <button className="primary" type="submit" disabled={pending}>{pending ? pendingLabel || "Saving…" : submitLabel}</button>
+            <button className={submitClassName} type="submit" disabled={pending || disabled}>{pending ? pendingLabel || "Saving…" : submitLabel}</button>
           </footer>
         )}
       </form>

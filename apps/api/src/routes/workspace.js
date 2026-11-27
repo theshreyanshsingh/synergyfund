@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { Router } from "express"
 import { BEHIND_STATUSES, can, drawPulled, ensureTaskPermissions, insurancePolicies, isPaidOff, loanStatus, loanType, LOAN_TYPES, isRole, NOT_OWNED_STAGES, PAYING_ENTITIES, PAYMENT_CATEGORIES, PAYMENT_RECURRENCES, permissionOverrides, permissionsFor, PERMISSIONS, loansEndedWithSale, policyActive, policyName, policyPaymentAmount, policyTitle, propertyDrawFigures, ROLES } from "@synergifund/shared"
 import {
@@ -37,6 +38,7 @@ import { stressRows } from "../services/stress.js"
 import { removeDraftReceipts } from "../services/receiptCleanup.js"
 import { assigneeMap, presentTask } from "./tasks.js"
 import { captureField, readCaptures } from "../services/photoPlace.js"
+import { mailPasswordLink } from "../services/passwordLinks.js"
 
 export const workspaceRouter = Router()
 
@@ -756,7 +758,7 @@ workspaceRouter.get(
         detail: item.detail || "",
         actorName: item.actorName || "",
         propertyId: item.propertyId ? String(item.propertyId) : "",
-        property: item.propertyId ? names.get(String(item.propertyId)) || "Removed property" : "",
+        property: item.propertyId ? names.get(String(item.propertyId)) || (item.propertyName ? `${item.propertyName} (deleted)` : "Removed property") : "",
         createdAt: item.createdAt,
       })),
     })
@@ -807,9 +809,15 @@ workspaceRouter.post(
     if (!access) return
     const name = String(req.body.name || "").trim()
     const email = String(req.body.email || "").trim().toLowerCase()
+    // A password is optional: without one, the invitation's link is how they choose theirs (the email never carries a
+    // password). Until then the account has a random password nobody knows.
     const password = String(req.body.password || "")
-    if (name.length < 2 || !email.includes("@") || password.length < 8) {
-      sendError(res, 400, "Enter a name, email, and a password of at least 8 characters.")
+    if (name.length < 2 || !email.includes("@")) {
+      sendError(res, 400, "Enter a name and an email.")
+      return
+    }
+    if (password && password.length < 8) {
+      sendError(res, 400, "Use a password of at least 8 characters, or leave it empty to email them a link to choose one.")
       return
     }
     if (await User.findOne({ email })) {
@@ -819,7 +827,7 @@ workspaceRouter.post(
     const user = await User.create({
       name,
       email,
-      passwordHash: await bcrypt.default.hash(password, 10),
+      passwordHash: await bcrypt.default.hash(password || randomBytes(32).toString("base64url"), 10),
       role: access.role,
       title: String(req.body.title || "").trim(),
       extraPermissions: access.extraPermissions,
@@ -827,22 +835,19 @@ workspaceRouter.post(
     })
     const assigned = access.role === "admin" ? [] : await syncAssignments(user, req.body.propertyIds)
     const roleName = ROLES.find((item) => item.id === user.role)?.label || user.role
-    const mail = await notify({
-      userIds: [user._id],
-      title: "You're invited to SynergiFund",
-      body: `${req.user.name} created your SynergiFund account. Sign in with the details below, then change your password in Settings.`,
+    const { mail, link } = await mailPasswordLink(user, "invite", {
+      by: req.user.name,
+      passwordSet: Boolean(password),
       details: [
         ["Sign-in email", email],
-        ["Temporary password", password],
         ["Role", roleName],
         ["Properties", assigned.map((property) => property.address).join(", ")],
         ["Invited by", req.user.name],
       ],
-      href: "/login",
-      event: "member.invited",
     })
     await recordActivity({ user: req.user, title: "Member invited", detail: `${user.name} · ${roleName} · invitation email ${mail.status === "Sent" ? "sent" : "not sent"}`, alertExcept: [user._id] })
-    res.status(201).json({ user: publicUser(user), mail })
+    // The link is shown to the admin too, to send another way if the email doesn't arrive.
+    res.status(201).json({ user: publicUser(user), mail, link })
   }),
 )
 
@@ -929,16 +934,27 @@ workspaceRouter.post(
     await NativeDevice.deleteMany({ userId: user._id })
     // Their open chat connections end too (they could otherwise keep reading channels on a lost phone).
     disconnectChat([user._id])
-    const mail = await notify({
-      userIds: [user._id],
-      title: "Your SynergiFund password was reset",
-      body: `${req.user.name} set a new password for your account. Sign in with it, then change it in Settings.`,
-      details: [["Sign-in email", user.email], ["New password", password], ["Reset by", req.user.name]],
-      href: "/login",
-      event: "member.password",
-    })
+    // The email doesn't carry the password (the admin shares it); it has a link to choose their own instead.
+    const { mail, link } = await mailPasswordLink(user, "admin", { by: req.user.name, passwordSet: true, details: [["Sign-in email", user.email], ["Changed by", req.user.name]] })
     await recordActivity({ user: req.user, title: "Member password set", detail: user.name, alertExcept: [user._id] })
-    res.json({ user: publicUser(user), mail })
+    res.json({ user: publicUser(user), mail, link })
+  }),
+)
+
+// Emails someone a link to choose a new password (their current one works until they use it). The same people as
+// "set a password", since the link is shown to the admin too.
+workspaceRouter.post(
+  "/members/:id/password-link",
+  requirePermission("members.manage"),
+  asyncHandler(async (req, res) => {
+    const user = await User.findById(req.params.id).catch(() => null)
+    if (user?.bot) return sendError(res, 400, "The AI teammate is managed in Settings › Agent.")
+    if (!user) return sendError(res, 404, "That person was not found.")
+    if (user.role === "admin" && !req.permissions.includes(PERMISSIONS.superAdmin)) return sendError(res, 403, "Only a super admin can change an admin.")
+    if (hasMoreAccess(req, user)) return sendError(res, 403, "Only a super admin can reset the password of someone with access you don't have.")
+    const { mail, link } = await mailPasswordLink(user, "admin", { by: req.user.name, details: [["Sign-in email", user.email], ["Sent by", req.user.name]] })
+    await recordActivity({ user: req.user, title: "Password link sent", detail: `${user.name} · email ${mail.status === "Sent" ? "sent" : "not sent"}`, alertExcept: [user._id] })
+    res.json({ mail, link })
   }),
 )
 
@@ -1577,7 +1593,7 @@ function optionalNumber(value) {
 
 // What needs doing: everything overdue, and what comes up within the Overview's window (30, 60 or 90 days). Tasks keep
 // to the coming week (two for High or Verify), and loan maturities show at least 60 days ahead.
-function attentionItems({ properties, budgetsByProperty, draws, drawsByProperty, loans, bills, tasks, names, days = 30 }) {
+export function attentionItems({ properties, budgetsByProperty, draws, drawsByProperty, loans, bills, tasks, names, days = 30 }) {
   const today = todayKey()
   const week = shiftKey(today, 7)
   const twoWeeks = shiftKey(today, 14)
@@ -1652,14 +1668,16 @@ function attentionItems({ properties, budgetsByProperty, draws, drawsByProperty,
       href: "/loans",
     })
   }
+  // Unpaid payments from Payments: mortgages within the window; the others (taxes, insurance, HOA, utilities…) once
+  // they are overdue or due within a week, so monthly bills don't crowd the list.
   for (const bill of bills) {
     const due = dateKey(bill.due)
     const mortgage = bill.category === "Mortgage" || /mortgage/i.test(bill.title || "")
-    if (!mortgage || bill.status === "Paid" || !due) continue
-    if (due > until) continue
+    if (bill.status === "Paid" || !due) continue
+    if (due > (mortgage ? until : week < until ? week : until)) continue
     items.push({
       id: `bill-${bill._id}`,
-      kind: "Mortgage",
+      kind: mortgage ? "Mortgage" : "Payment",
       title: bill.title,
       property: names.get(String(bill.propertyId || "")) || "",
       date: due,

@@ -137,7 +137,7 @@ export function ChatApp({ mode = "channels" }) {
   const loadBoot = useCallback(async () => {
     try {
       const data = await api("/chat/bootstrap")
-      setBoot({ me: data.me, canCreateChannels: data.canCreateChannels })
+      setBoot({ me: data.me, canCreateChannels: data.canCreateChannels, reports: data.reports || 0, teammateOn: Boolean(data.teammateOn) })
       setChannels(data.channels)
       setPeopleList(data.people)
       setOnline(new Set(data.online))
@@ -520,6 +520,7 @@ export function ChatApp({ mode = "channels" }) {
         status={status}
         filter={filter}
         canCreate={boot.canCreateChannels}
+        reports={boot.reports || 0}
         onFilter={setFilter}
         onSearch={runSearch}
         onOpen={(id) => open(id)}
@@ -556,6 +557,7 @@ export function ChatApp({ mode = "channels" }) {
             onDelete={remove}
             draft={draftFor(active.id)}
             onDraft={(value) => saveDraft(active.id, value)}
+            teammateOn={Boolean(boot.teammateOn)}
           />
         ) : (
           <div className="chat-empty-main">
@@ -635,7 +637,7 @@ export function ChatApp({ mode = "channels" }) {
   )
 }
 
-function ChatNav({ mode, error, onDismissError, channels, people, peopleList, me, online, activeId, status, filter, canCreate, onFilter, onSearch, onOpen, onCreate, onBrowse, onDirect, onPerson }) {
+function ChatNav({ mode, error, onDismissError, channels, people, peopleList, me, online, activeId, status, filter, canCreate, reports = 0, onFilter, onSearch, onOpen, onCreate, onBrowse, onDirect, onPerson }) {
   const direct = mode === "direct"
   const [collapsed, setCollapsed] = useState({})
   const [permission, setPermission] = useState("granted")
@@ -721,6 +723,10 @@ function ChatNav({ mode, error, onDismissError, channels, people, peopleList, me
         </div>
       )}
       <div className="chat-nav-list">
+        {/* Admins: reported messages waiting for a decision. */}
+        {reports > 0 && (
+          <Link href="/chat/reports" className="chat-nav-row chat-nav-reports"><Icon name="alert" size={15} /><span>Reported messages</span><b className="chat-nav-count">{reports}</b></Link>
+        )}
         {!direct && section("channels", "Channels", rooms, (channel) => row(channel, <Icon name={channel.private ? "lock" : "hash"} size={15} />), canCreate && (
           <button type="button" className="chat-nav-add" aria-label="Create a channel" title="Create a channel" onClick={onCreate}><Icon name="plus" size={14} /></button>
         ), canCreate && (
@@ -841,7 +847,38 @@ function Typing({ names }) {
   )
 }
 
-function Conversation({ channel, feed, people, me, isAdmin, online, members, unreadAfter, typingNames, error, onDismissError, onBack, onDetails, onLoadOlder, onSend, onUpload, onReact, onReply, onEdit, onDelete, draft, onDraft }) {
+// In a property room while the AI teammate reads it: says so to someone who hasn't agreed to the AI notice, whose
+// messages and photos it leaves out until they agree.
+function TeammateNotice() {
+  const session = useSession()
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState("")
+  if (!session?.user || session.user.aiConsent) return null
+  async function agree() {
+    setPending(true)
+    setError("")
+    try {
+      const data = await api("/auth/me/ai-consent", { method: "POST", body: { agree: true } })
+      session.setUser(data.user)
+    } catch (err) {
+      setError(err.message)
+      setPending(false)
+    }
+  }
+  return (
+    <div className="chat-ai-note" role="note">
+      <Icon name="spark" size={15} />
+      <p>
+        An AI teammate reads this chat to keep the house's progress up to date. Your messages and photos are left out until you
+        agree that they can be sent to an outside AI model (through OpenRouter). <Link href="/privacy">Privacy policy</Link>
+        {error && <span className="chat-ai-note-error"> {error}</span>}
+      </p>
+      <button type="button" className="tool" disabled={pending} onClick={agree}>{pending ? "Saving…" : "Agree"}</button>
+    </div>
+  )
+}
+
+function Conversation({ channel, feed, people, me, isAdmin, online, members, unreadAfter, typingNames, error, onDismissError, onBack, onDetails, onLoadOlder, onSend, onUpload, onReact, onReply, onEdit, onDelete, draft, onDraft, teammateOn = false }) {
   const items = feed?.items || []
   const scroll = useStickyScroll(items, channel.id)
   const composer = useRef(null)
@@ -930,6 +967,7 @@ function Conversation({ channel, feed, people, me, isAdmin, online, members, unr
         )}
       </div>
       <Typing names={typingNames} />
+      {channel.kind === "property" && teammateOn && <TeammateNotice />}
       <ChatComposer
         ref={composer}
         placeholder={placeholderFor(channel, people, me)}

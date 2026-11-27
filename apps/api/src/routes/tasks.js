@@ -296,47 +296,73 @@ tasksRouter.patch(
   }),
 )
 
+// Catches what the readers below would answer with sendError, for createTask (which answers instead of responding).
+function answerCatcher() {
+  const caught = { status: 400, error: "" }
+  return {
+    caught,
+    status(code) {
+      caught.status = code
+      return this
+    },
+    json(body) {
+      caught.error = body?.error || "The task could not be saved."
+      return this
+    },
+  }
+}
+
+// Creates a task as POST /tasks does, for `req` (the person, their permissions, and the fields in req.body): checks,
+// saves, emails the assignee and records it. Answers { task, mail }, or { status, error }. The Agent's task cards use it
+// too (routes/agent.js), so a task made there follows the same rules. The caller checks tasks.manage.
+export async function createTask(req) {
+  const answer = answerCatcher()
+  const title = cleanTitle(req.body.title)
+  if (!title) return { status: 400, error: "Describe what needs to happen." }
+  const assignee = await readAssignee(req, answer)
+  if (!assignee) return answer.caught
+  const place = await readProperty(req, answer)
+  if (!place) return answer.caught
+  const due = readDue(req, answer)
+  if (!due) return answer.caught
+  const status = TASK_STATUSES.includes(req.body.status) ? req.body.status : "Not started"
+  const task = new Task({
+    title,
+    propertyId: place.property?._id,
+    assigneeId: assignee.assignee?._id,
+    owner: assignee.assignee?.name || "",
+    due: due.due || "",
+    priority: TASK_PRIORITIES.includes(req.body.priority) ? req.body.priority : "Medium",
+    labels: cleanLabels(req.body.labels),
+    notes: String(req.body.notes || "").slice(0, 20000),
+    createdBy: req.user._id,
+    createdByName: req.user.name,
+    status: status === "Completed" ? "Completed" : status,
+    done: status === "Completed",
+    previousStatus: status === "Completed" ? "Not started" : undefined,
+    history: [{ at: new Date(), byName: req.user.name, text: "Created" }],
+  })
+  await task.save()
+  // A task added for yourself on Home (quiet) needs no notice that you assigned it to yourself.
+  const forSelf = req.body.quiet === true && assignee.assignee && String(assignee.assignee._id) === String(req.user._id)
+  const mail = forSelf ? { status: "Skipped" } : await mailAssignee({ user: req.user, task, assignee: assignee.assignee })
+  await recordActivity({
+    user: req.user,
+    title: "Task created",
+    detail: [task.title, task.owner ? `Assigned to ${task.owner}` : "Unassigned", task.due ? `Due ${task.due}` : ""].filter(Boolean).join(" · "),
+    propertyId: task.propertyId,
+  })
+  return { task, mail }
+}
+
 tasksRouter.post(
   "/",
   requirePermission(PERMISSIONS.tasksManage),
   asyncHandler(async (req, res) => {
-    const title = cleanTitle(req.body.title)
-    if (!title) return sendError(res, 400, "Describe what needs to happen.")
-    const assignee = await readAssignee(req, res)
-    if (!assignee) return
-    const place = await readProperty(req, res)
-    if (!place) return
-    const due = readDue(req, res)
-    if (!due) return
-    const status = TASK_STATUSES.includes(req.body.status) ? req.body.status : "Not started"
-    const task = new Task({
-      title,
-      propertyId: place.property?._id,
-      assigneeId: assignee.assignee?._id,
-      owner: assignee.assignee?.name || "",
-      due: due.due || "",
-      priority: TASK_PRIORITIES.includes(req.body.priority) ? req.body.priority : "Medium",
-      labels: cleanLabels(req.body.labels),
-      notes: String(req.body.notes || "").slice(0, 20000),
-      createdBy: req.user._id,
-      createdByName: req.user.name,
-      status: status === "Completed" ? "Completed" : status,
-      done: status === "Completed",
-      previousStatus: status === "Completed" ? "Not started" : undefined,
-      history: [{ at: new Date(), byName: req.user.name, text: "Created" }],
-    })
-    await task.save()
-    // A task added for yourself on Home (quiet) needs no notice that you assigned it to yourself.
-    const forSelf = req.body.quiet === true && assignee.assignee && String(assignee.assignee._id) === String(req.user._id)
-    const mail = forSelf ? { status: "Skipped" } : await mailAssignee({ user: req.user, task, assignee: assignee.assignee })
-    await recordActivity({
-      user: req.user,
-      title: "Task created",
-      detail: [task.title, task.owner ? `Assigned to ${task.owner}` : "Unassigned", task.due ? `Due ${task.due}` : ""].filter(Boolean).join(" · "),
-      propertyId: task.propertyId,
-    })
-    const [item] = await presentList(req, [task])
-    res.status(201).json({ task: item, mail })
+    const made = await createTask(req)
+    if (made.error) return sendError(res, made.status, made.error)
+    const [item] = await presentList(req, [made.task])
+    res.status(201).json({ task: item, mail: made.mail })
   }),
 )
 

@@ -24,6 +24,7 @@ const KIND_ICONS = [
   [/^property\./, "building"],
   [/^(member|teammate)\./, "users"],
   [/^agent\./, "spark"],
+  [/^reminder\./, "calendar"],
 ]
 
 function kindIcon(event) {

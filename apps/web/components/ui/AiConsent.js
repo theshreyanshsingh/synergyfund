@@ -30,10 +30,10 @@ export function AiConsent({ what = "The Agent", compact = false, onAgree = null 
     <section className={compact ? "ai-consent is-compact" : "ai-consent"} aria-label="About AI in SynergiFund">
       <h3>{what} uses AI from outside companies</h3>
       <p>
-        SynergiFund's Agent, Talk, receipt reading and AI call notes are powered by AI models from other companies,
-        reached through OpenRouter. When you use them, what's needed for your request is sent to that model: your question
-        or what you say, files and photos you add, and the workspace records looked up to answer. It isn't used for
-        advertising.
+        SynergiFund's Agent, Talk, receipt reading, AI call notes and the AI teammate in property chats are powered by AI
+        models from other companies, reached through OpenRouter. When you use them, what's needed is sent to that model:
+        your question or what you say, files and photos you add, your messages and photos in property chats the teammate
+        reads, and the workspace records looked up to answer. It isn't used for advertising.
       </p>
       {error && <p className="ai-consent-error" role="alert">{error}</p>}
       <div className="ai-consent-actions">

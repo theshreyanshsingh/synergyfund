@@ -17,7 +17,7 @@ export const ASKS = ["How can I help you?", "What are we working on?", "What's o
 export const SUGGESTIONS = [
   { text: "What's on my plate this week?", send: true },
   { text: "Which houses are under contract?", send: true, needs: PERMISSIONS.propertiesRead },
-  { text: "Create a task", fill: "Create a task: ", needs: PERMISSIONS.tasksEdit },
+  { text: "Create a task", fill: "Create a task: ", needs: PERMISSIONS.tasksManage },
   { text: "Summarize a property", fill: "Summarize the property at ", needs: PERMISSIONS.propertiesRead },
 ]
 

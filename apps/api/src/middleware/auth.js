@@ -1,24 +1,45 @@
+import { randomUUID } from "node:crypto"
 import jwt from "jsonwebtoken"
 import { permissionsFor } from "@synergifund/shared"
-import { User } from "../models/index.js"
+import { SignedOutSession, User } from "../models/index.js"
 import { sendError } from "../lib/http.js"
 import { publicUser } from "../lib/serialize.js"
 import { restoreRunning } from "../services/backup.js"
 
-// Takes the user (or just an id, for a user who never reset their password).
+// Takes the user (or just an id, for a user who never reset their password). `sid` names this one session, so signing
+// out can end it alone (SignedOutSession) while the person's other devices stay signed in.
 export function signSession(user) {
   const id = user && typeof user === "object" && "passwordHash" in user ? user._id : user
-  return jwt.sign({ sub: String(id), sv: Number(user?.sessionVersion) || 0 }, process.env.JWT_SECRET, { expiresIn: "7d" })
+  return jwt.sign({ sub: String(id), sv: Number(user?.sessionVersion) || 0, sid: randomUUID() }, process.env.JWT_SECRET, { expiresIn: "7d" })
+}
+
+// The sign-in cookie is sent only over https on the live site (NODE_ENV=production, set by ecosystem.config.cjs), and
+// over plain http in local development. COOKIE_SECURE=true or false overrides that.
+export function secureCookies() {
+  const setting = String(process.env.COOKIE_SECURE || "").trim().toLowerCase()
+  if (setting === "true") return true
+  if (setting === "false") return false
+  return process.env.NODE_ENV === "production"
+}
+
+function cookieOptions() {
+  return { httpOnly: true, sameSite: "lax", secure: secureCookies(), path: "/" }
 }
 
 export function setSessionCookie(res, token) {
-  res.cookie("sf_session", token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: false,
-    path: "/",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  })
+  res.cookie("sf_session", token, { ...cookieOptions(), maxAge: 7 * 24 * 60 * 60 * 1000 })
+}
+
+export function clearSessionCookie(res) {
+  res.clearCookie("sf_session", cookieOptions())
+}
+
+// Ends one session: its token stops working at once, though it hasn't expired. Tokens from before session ids existed
+// can't be ended one at a time; they expire within a week, and Sign out everywhere ends them.
+export async function endSession(payload) {
+  if (!payload?.sid) return
+  const expiresAt = new Date((Number(payload.exp) || Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60) * 1000)
+  await SignedOutSession.updateOne({ sid: String(payload.sid) }, { $setOnInsert: { expiresAt } }, { upsert: true })
 }
 
 // A download link for the phone app: it saves files outside the page, so it has no sign-in cookie. The link works for
@@ -72,8 +93,15 @@ export async function requireAuth(req, res, next) {
       sendError(res, 401, "Sign in to continue.")
       return
     }
-    const user = await User.findById(payload.sub)
-    // A session from before a password reset or change no longer works.
+    const [user, signedOut] = await Promise.all([
+      User.findById(payload.sub),
+      payload.sid ? SignedOutSession.exists({ sid: String(payload.sid) }) : null,
+    ])
+    // A session someone signed out of, or from before a password reset or change, no longer works.
+    if (signedOut) {
+      sendError(res, 401, "Sign in to continue.")
+      return
+    }
     if (!user || (payload.sv || 0) !== (user.sessionVersion || 0)) {
       // Mid-restore the people are being put back: not signed out yet, just not ready.
       if (restoreRunning()) {
